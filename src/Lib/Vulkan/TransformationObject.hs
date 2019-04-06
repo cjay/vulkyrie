@@ -13,7 +13,7 @@ module Lib.Vulkan.TransformationObject
 
 import           Data.Bits                      ((.|.))
 import           Foreign.Ptr                    (castPtr)
-import           Foreign.Storable
+import           Foreign.Storable hiding (poke)
 import           GHC.Generics                   (Generic)
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
@@ -53,7 +53,7 @@ updateTransObj device extent uniBuf = do
             , view = lookAt (vec3 0 0 (-1)) (vec3 2 2 2) (vec3 0 0 0)
             , proj = perspective 0.1 20 (45/360*2*pi) aspectRatio
             }
-      liftIO $ poke (castPtr uboPtr) (scalar ubo)
+      poke (castPtr uboPtr) (scalar ubo)
       liftIO $ vkUnmapMemory device uniBuf
 
 createTransObjBuffers

@@ -7,7 +7,8 @@
 module Lib (runVulkanProgram) where
 
 import           Control.Exception                    (displayException)
-import           Control.Monad                        (forM_)
+import           Control.Monad                        (forM_, when)
+import           Data.IORef
 import           Data.Maybe                           (fromJust)
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
@@ -92,8 +93,10 @@ runVulkanProgram = runProgram checkStatus $ do
     logInfo $ "Createad vertex shader module: " ++ show shaderVert
     logInfo $ "Createad fragment shader module: " ++ show shaderFrag
 
-    rendFinS <- createSemaphore dev
-    imAvailS <- createSemaphore dev
+    curFrameRef <- liftIO $ newIORef 0
+    rendFinS <- createSemaphores dev
+    imAvailS <- createSemaphores dev
+    inFlightF <- createFences dev
     commandPool <- createCommandPool dev queues
     logInfo $ "Createad command pool: " ++ show commandPool
 
@@ -148,15 +151,17 @@ runVulkanProgram = runProgram checkStatus $ do
       transObjMemories <- newArrayRes $ map fst transObjBuffers
 
       let rdata = RenderData
-            { renderFinished = rendFinS
-            , imageAvailable = imAvailS
-            , device         = dev
-            , swapChainInfo  = swInfo
-            , deviceQueues   = queues
-            , imgIndexPtr    = imgIPtr
-            , commandBuffers = cmdBuffersPtr
-            , memories       = transObjMemories
-            , memoryMutator  = updateTransObj dev (swExtent swInfo)
+            { device             = dev
+            , swapChainInfo      = swInfo
+            , deviceQueues       = queues
+            , imgIndexPtr        = imgIPtr
+            , currentFrame       = curFrameRef
+            , renderFinishedSems = rendFinS
+            , imageAvailableSems = imAvailS
+            , inFlightFences     = inFlightF
+            , commandBuffers     = cmdBuffersPtr
+            , memories           = transObjMemories
+            , memoryMutator      = updateTransObj dev (swExtent swInfo)
             }
 
       logInfo $ "Createad image views: " ++ show imgViews
@@ -166,14 +171,34 @@ runVulkanProgram = runProgram checkStatus $ do
       cmdBuffers <- peekArray swapChainLen cmdBuffersPtr
       logInfo $ "Createad command buffers: " ++ show cmdBuffers
 
+      -- part of dumb fps counter
+      frameCount <- liftIO $ newIORef @Int 0
+      currentSec <- liftIO $ newIORef @Int 0
+
       glfwMainLoop window $ do
         return () -- do some app logic
 
-        runVk $ vkQueueWaitIdle . presentQueue $ deviceQueues rdata
+        -- Not needed anymore after waiting for inFlightFence has been implemented:
+        -- runVk $ vkQueueWaitIdle . presentQueue $ deviceQueues rdata
 
         drawFrame rdata
 
-        runVk $ vkDeviceWaitIdle dev
+        -- part of dumb fps counter
+        seconds <- getTime
+        liftIO $ do
+          cur <- readIORef currentSec
+          if floor seconds /= cur then do
+            count <- readIORef frameCount
+            when (cur /= 0) $ print count
+            writeIORef currentSec (floor seconds)
+            writeIORef frameCount 0
+          else do
+            modifyIORef frameCount $ \c -> c + 1
+
+      -- Doesn't seem to be necessary, not sure why. Theoretically things need
+      -- to be idle before being destroyed. If needed, this comes after the main
+      -- loop:
+      -- runVk $ vkDeviceWaitIdle dev
 
 checkStatus :: Either VulkanException () -> IO ()
 checkStatus (Right ()) = pure ()
