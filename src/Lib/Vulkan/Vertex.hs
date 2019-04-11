@@ -24,8 +24,9 @@ import           Lib.Program.Foreign
 
 -- | Preparing Vertex data to make an interleaved array.
 data Vertex = Vertex
-  { pos   :: Vec2f
-  , color :: Vec3f
+  { pos      :: Vec2f
+  , color    :: Vec3f
+  , texCoord :: Vec2f
   } deriving (Eq, Show, Generic)
 
 -- We need an instance of PrimBytes to fit Vertex into a DataFrame.
@@ -44,7 +45,7 @@ vertIBD = createVk
 -- a vulkan function with no copy.
 --
 -- However, we must make sure the created DataFrame is pinned!
-vertIADs :: Vector VkVertexInputAttributeDescription 2
+vertIADs :: Vector VkVertexInputAttributeDescription 3
 vertIADs = ST.runST $ do
     mv <- ST.newPinnedDataFrame
     ST.writeDataFrame mv 1 . scalar $ createVk
@@ -59,4 +60,9 @@ vertIADs = ST.runST $ do
         &* set @"offset" 8 -- Sadly, no macro here to auto-compute this.
                            -- Perhaps, we could try to add such functionality
                            -- to (G)PrimBytes class?..
+    ST.writeDataFrame mv 3 . scalar $ createVk
+        $  set @"location" 2
+        &* set @"binding" 0
+        &* set @"format" VK_FORMAT_R32G32_SFLOAT
+        &* set @"offset" 20
     ST.unsafeFreezeDataFrame mv
