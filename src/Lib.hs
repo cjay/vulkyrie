@@ -67,7 +67,7 @@ indices = fromJust $ fromList (D @3)
   ]
 
 data OnDemand = OnDemand
-  { oldChainLen      :: Int
+  { oldSwapchainLen  :: Int
   , descriptorSets   :: [VkDescriptorSet]
   , transObjMemories :: Ptr VkDeviceMemory
   }
@@ -136,34 +136,34 @@ runVulkanProgram = runProgram checkStatus $ do
       -- the IORef, so reset the IORef now:
       liftIO $ atomicWriteIORef windowSizeChanged False
 
-      scsd <- querySwapChainSupport pdev vulkanSurface
-      swInfo <- createSwapChain dev scsd queues vulkanSurface
-      let swapChainLen = length (swImgs swInfo)
-      imgViews <- mapM (flip (createImageView dev) (swImgFormat swInfo)) (swImgs swInfo)
+      scsd <- querySwapchainSupport pdev vulkanSurface
+      swapInfo <- createSwapchain dev scsd queues vulkanSurface
+      let swapchainLen = length (swapImgs swapInfo)
+      imgViews <- mapM (flip (createImageView dev) (swapImgFormat swapInfo)) (swapImgs swapInfo)
 
       -- things that only need to be recreated when the swapchain length changes
       let redoOnDemand = do
-            transObjBuffers <- createTransObjBuffers pdev dev swapChainLen
+            transObjBuffers <- createTransObjBuffers pdev dev swapchainLen
             descriptorBufferInfos <- mapM (transObjBufferInfo . snd) transObjBuffers
             descriptorTextureInfo <- textureImageInfo textureView textureSampler
 
-            descriptorPool <- createDescriptorPool dev swapChainLen
-            descriptorSetLayouts <- newArrayRes $ replicate swapChainLen descriptorSetLayout
-            descriptorSets <- createDescriptorSets dev descriptorPool swapChainLen descriptorSetLayouts
+            descriptorPool <- createDescriptorPool dev swapchainLen
+            descriptorSetLayouts <- newArrayRes $ replicate swapchainLen descriptorSetLayout
+            descriptorSets <- createDescriptorSets dev descriptorPool swapchainLen descriptorSetLayouts
 
             forM_ (zip descriptorBufferInfos descriptorSets) $
               \(bufInfo, dSet) -> prepareDescriptorSet dev bufInfo descriptorTextureInfo dSet
 
             transObjMemories <- newArrayRes $ map fst transObjBuffers
 
-            let val = OnDemand { oldChainLen = swapChainLen, .. }
+            let val = OnDemand { oldSwapchainLen = swapchainLen, .. }
             liftIO $ writeIORef onDemand $ Just val
             return val
 
       OnDemand {..} <- liftIO (readIORef onDemand) >>= \case
         Nothing -> redoOnDemand
-        Just OnDemand { oldChainLen }
-          | oldChainLen /= swapChainLen -> do
+        Just OnDemand { oldSwapchainLen }
+          | oldSwapchainLen /= swapchainLen -> do
               -- no idea if this can actually happen
               logInfo "Swap chain length changed, recreating length dependents"
               redoOnDemand
@@ -171,20 +171,20 @@ runVulkanProgram = runProgram checkStatus $ do
         -- TODO temporary workaround here
         Just _ -> redoOnDemand
 
-      renderPass <- createRenderPass dev swInfo
+      renderPass <- createRenderPass dev swapInfo
       pipelineLayout <- createPipelineLayout dev descriptorSetLayout
       graphicsPipeline
-        <- createGraphicsPipeline dev swInfo
+        <- createGraphicsPipeline dev swapInfo
                                   vertIBD vertIADs
                                   [shaderVert, shaderFrag]
                                   renderPass
                                   pipelineLayout
 
       framebuffers
-        <- createFramebuffers dev renderPass swInfo imgViews
+        <- createFramebuffers dev renderPass swapInfo imgViews
 
       cmdBuffersPtr <- createCommandBuffers dev graphicsPipeline commandPool
-                                         renderPass pipelineLayout swInfo
+                                         renderPass pipelineLayout swapInfo
                                          vertexBuffer
                                          (fromIntegral $ dimSize1 indices, indexBuffer)
                                          framebuffers
@@ -192,7 +192,7 @@ runVulkanProgram = runProgram checkStatus $ do
 
       let rdata = RenderData
             { device             = dev
-            , swapChainInfo      = swInfo
+            , swapchainInfo      = swapInfo
             , deviceQueues       = queues
             , imgIndexPtr        = imgIPtr
             , currentFrame       = curFrameRef
@@ -201,14 +201,14 @@ runVulkanProgram = runProgram checkStatus $ do
             , inFlightFences     = inFlightF
             , commandBuffers     = cmdBuffersPtr
             , memories           = transObjMemories
-            , memoryMutator      = updateTransObj dev (swExtent swInfo)
+            , memoryMutator      = updateTransObj dev (swapExtent swapInfo)
             }
 
       logInfo $ "Createad image views: " ++ show imgViews
       logInfo $ "Createad renderpass: " ++ show renderPass
       logInfo $ "Createad pipeline: " ++ show graphicsPipeline
       logInfo $ "Createad framebuffers: " ++ show framebuffers
-      cmdBuffers <- peekArray swapChainLen cmdBuffersPtr
+      cmdBuffers <- peekArray swapchainLen cmdBuffersPtr
       logInfo $ "Createad command buffers: " ++ show cmdBuffers
 
       -- part of dumb fps counter
