@@ -24,7 +24,7 @@ import           Lib.Program.Foreign
 
 -- | Preparing Vertex data to make an interleaved array.
 data Vertex = Vertex
-  { pos      :: Vec2f
+  { pos      :: Vec3f
   , color    :: Vec3f
   , texCoord :: Vec2f
   } deriving (Eq, Show, Generic)
@@ -51,18 +51,18 @@ vertIADs = ST.runST $ do
     ST.writeDataFrame mv 1 . scalar $ createVk
         $  set @"location" 0
         &* set @"binding" 0
-        &* set @"format" VK_FORMAT_R32G32_SFLOAT
+        &* set @"format" VK_FORMAT_R32G32B32_SFLOAT
         &* set @"offset" 0
     ST.writeDataFrame mv 2 . scalar $ createVk
         $  set @"location" 1
         &* set @"binding" 0
         &* set @"format" VK_FORMAT_R32G32B32_SFLOAT
-        &* set @"offset" 8 -- Sadly, no macro here to auto-compute this.
-                           -- Perhaps, we could try to add such functionality
-                           -- to (G)PrimBytes class?..
+        &* set @"offset" 12 -- Sadly, no macro here to auto-compute this.
+                            -- Perhaps, we could try to add such functionality
+                            -- to (G)PrimBytes class?..
     ST.writeDataFrame mv 3 . scalar $ createVk
         $  set @"location" 2
         &* set @"binding" 0
         &* set @"format" VK_FORMAT_R32G32_SFLOAT
-        &* set @"offset" 20
+        &* set @"offset" 24
     ST.unsafeFreezeDataFrame mv
