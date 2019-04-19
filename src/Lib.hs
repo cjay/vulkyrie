@@ -6,7 +6,10 @@
 {-# LANGUAGE Strict              #-}
 {-# LANGUAGE TemplateHaskell     #-}
 {-# LANGUAGE TypeApplications    #-}
-module Lib (runVulkanProgram) where
+module Lib
+  ( runVulkanProgram
+  , WhichDemo (..)
+  ) where
 
 import           Control.Concurrent.MVar
 import           Control.Exception                    (displayException)
@@ -17,6 +20,7 @@ import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Numeric.DataFrame
 import           Numeric.Dimensions
+import           System.Directory                     (doesFileExist)
 
 import           Lib.GLFW
 import           Lib.Program
@@ -46,8 +50,8 @@ import           Lib.Vulkan.VertexBuffer
 --   Note: in this program, `n >= 3` requirement is also forced in `Lib/Vulkan/VertexBuffer.hs`,
 --         where it is not strictly necessary but allows to avoid specifying DataFrame constraints
 --         in function signatures (such as, e.g. `KnownDim n`).
-vertices :: DataFrame Vertex '[XN 3]
-vertices = fromJust $ fromList (D @3)
+rectVertices :: DataFrame Vertex '[XN 3]
+rectVertices = fromJust $ fromList (D @3)
   [ -- rectangle
     --              coordinate                  color        texture coordinate
     scalar $ Vertex (vec3 (-0.5) (-0.5)   0.0 ) (vec3 1 0 0) (vec2 0 0)
@@ -68,8 +72,8 @@ vertices = fromJust $ fromList (D @3)
   -- , scalar $ Vertex (vec2   0.7 (-0.8)) (vec3 1 0 0.4)
   ]
 
-indices :: DataFrame Word16 '[XN 3]
-indices = fromJust $ fromList (D @3)
+rectIndices :: DataFrame Word32 '[XN 3]
+rectIndices = fromJust $ fromList (D @3)
   [ -- rectangle
     0, 1, 2, 2, 3, 0
     -- rectangle
@@ -78,8 +82,10 @@ indices = fromJust $ fromList (D @3)
   -- , 4, 5, 6
   ]
 
-runVulkanProgram :: IO ()
-runVulkanProgram = runProgram checkStatus $ do
+data WhichDemo = Squares | Chalet
+
+runVulkanProgram :: WhichDemo -> IO ()
+runVulkanProgram demo = runProgram checkStatus $ do
     windowSizeChanged <- liftIO $ newIORef False
     window <- initGLFWWindow 800 600 "vulkan-triangles-GLFW" windowSizeChanged
 
@@ -118,6 +124,14 @@ runVulkanProgram = runProgram checkStatus $ do
     -- we need this later, but don't want to realloc every swapchain recreation.
     imgIPtr <- mallocRes
 
+    (vertices, indices) <- case demo of
+      Squares -> return (rectVertices, rectIndices)
+      Chalet -> do
+        modelExist <- liftIO $ doesFileExist "models/chalet.obj"
+        when (not modelExist) $
+          throwVkMsg "Get models/chalet.obj and textures/chalet.jpg from the links in https://vulkan-tutorial.com/Loading_models"
+        loadModel "models/chalet.obj"
+
     vertexBuffer <-
       createVertexBuffer pdev dev commandPool (graphicsQueue queues) vertices
 
@@ -126,7 +140,10 @@ runVulkanProgram = runProgram checkStatus $ do
 
     descriptorSetLayout <- createDescriptorSetLayout dev
 
-    texture <- createTextureImage pdev dev commandPool (graphicsQueue queues) "textures/texture.jpg"
+    let texturePath = case demo of
+          Squares -> "textures/texture.jpg"
+          Chalet -> "textures/chalet.jpg"
+    texture <- createTextureImage pdev dev commandPool (graphicsQueue queues) texturePath
     textureView <- createTextureImageView dev texture
     textureSampler <- createTextureSampler dev
     depthFormat <- findDepthFormat pdev
