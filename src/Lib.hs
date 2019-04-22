@@ -12,7 +12,6 @@ module Lib
   ) where
 
 import           Control.Concurrent.MVar
-import           Control.Exception                    (displayException)
 import           Control.Monad                        (forM_, when)
 import           Data.IORef
 import           Data.Maybe                           (fromJust)
@@ -139,13 +138,16 @@ runVulkanProgram demo = runProgram checkStatus $ do
       createIndexBuffer pdev dev commandPool (graphicsQueue queues) indices
 
     descriptorSetLayout <- createDescriptorSetLayout dev
+    pipelineLayout <- createPipelineLayout dev descriptorSetLayout
 
     let texturePath = case demo of
           Squares -> "textures/texture.jpg"
-          Chalet -> "textures/chalet.jpg"
+          Chalet  -> "textures/chalet.jpg"
     texture <- createTextureImage pdev dev commandPool (graphicsQueue queues) texturePath
     textureView <- createTextureImageView dev texture
     textureSampler <- createTextureSampler dev
+    descriptorTextureInfo <- textureImageInfo textureView textureSampler
+
     depthFormat <- findDepthFormat pdev
 
     -- handling lifetime of swapchain manually. createSwapChain does not deallocate via continuation.
@@ -167,14 +169,13 @@ runVulkanProgram demo = runProgram checkStatus $ do
     -- The code below re-runs when the swapchain was re-created and has a
     -- different number of images than before:
     _ <- flip finally (destroySwapchainIfNecessary dev swapchainResource)
-      $ whileStatus DifferentLength $ do
-      logInfo "Creating things that depend on the swapchain length.."
+      $ asyncRedo $ \signalDifferentLength -> do
+      logInfo "New thread: Creating things that depend on the swapchain length.."
       swapInfo0 <- liftIO $ readIORef swapInfoRef
       let swapchainLen0 = length (swapImgs swapInfo0)
 
       (transObjMems, transObjBufs) <- unzip <$> createTransObjBuffers pdev dev swapchainLen0
       descriptorBufferInfos <- mapM transObjBufferInfo transObjBufs
-      descriptorTextureInfo <- textureImageInfo textureView textureSampler
 
       descriptorPool <- createDescriptorPool dev swapchainLen0
       descriptorSetLayouts <- newArrayRes $ replicate swapchainLen0 descriptorSetLayout
@@ -187,14 +188,12 @@ runVulkanProgram demo = runProgram checkStatus $ do
 
       -- The code below re-runs when the swapchain was re-created and has the
       -- same number of images as before, or continues from enclosing scope.
-      whileStatus SameLength $ do
-        logInfo "Creating things that depend on the swapchain, not only its length.."
+      asyncRedo $ \signalSameLength -> do
+        logInfo "New thread: Creating things that depend on the swapchain, not only its length.."
         swapInfo <- liftIO $ readIORef swapInfoRef
         let swapchainLen = length (swapImgs swapInfo)
         imgViews <- mapM (\image -> createImageView dev image (swapImgFormat swapInfo) VK_IMAGE_ASPECT_COLOR_BIT) (swapImgs swapInfo)
-
         renderPass <- createRenderPass dev swapInfo depthFormat
-        pipelineLayout <- createPipelineLayout dev descriptorSetLayout
         graphicsPipeline
           <- createGraphicsPipeline dev swapInfo
                                     vertIBD vertIADs
@@ -203,10 +202,8 @@ runVulkanProgram demo = runProgram checkStatus $ do
                                     pipelineLayout
 
         depthImgView <- createDepthImgView pdev dev commandPool (graphicsQueue queues) (swapExtent swapInfo)
-
         framebuffers
           <- createFramebuffers dev renderPass swapInfo imgViews depthImgView
-
         cmdBuffersPtr <- createCommandBuffers dev graphicsPipeline commandPool
                                           renderPass pipelineLayout swapInfo
                                           vertexBuffer
@@ -239,7 +236,7 @@ runVulkanProgram demo = runProgram checkStatus $ do
         frameCount <- liftIO $ newIORef @Int 0
         currentSec <- liftIO $ newIORef @Int 0
 
-        status <- glfwMainLoop window $ do
+        glfwMainLoop window $ do
           return () -- do some app logic
 
           -- Not needed anymore after waiting for inFlightFence has been implemented:
@@ -270,22 +267,20 @@ runVulkanProgram demo = runProgram checkStatus $ do
           if needRecreation || sizeChanged then do
             beforeSwapchainCreation
             let oldSwapchainLen = length (swapImgs swapInfo)
-            -- TODO this is effectively a wait for the queue to become idle as long as it's not decoupled from the loops
-            --      -> need coroutines/threads that yield before the wait and deallocations
-            runVk $ vkWaitForFences dev (fromIntegral _MAX_FRAMES_IN_FLIGHT) inFlightF VK_TRUE (maxBound :: Word64)
             logInfo "Recreating swapchain.."
             newScsd <- querySwapchainSupport pdev vulkanSurface
             newSwapInfo <- createSwapchain dev newScsd queues vulkanSurface swapchainResource
             liftIO $ writeIORef swapInfoRef newSwapInfo
-            let newSwapchainLen = length (swapImgs swapInfo)
-            return $ if oldSwapchainLen /= newSwapchainLen then DifferentLength else SameLength
-            -- for testing, because different length is unlikely to happen:
-            -- return DifferentLength
-          else return OK
-        when (status == Exit) $ runVk $ vkDeviceWaitIdle dev
-        return status
+            let newSwapchainLen = length (swapImgs newSwapInfo)
+            (if oldSwapchainLen /= newSwapchainLen
+             then signalDifferentLength
+             else signalSameLength) SigRedo
+            frameIndex <- liftIO $ readIORef (currentFrame rdata)
+            let inFlightFencePtr = (inFlightFences rdata) `ptrAtIndex` frameIndex
+            runVk $ vkWaitForFences dev 1 inFlightFencePtr VK_TRUE (maxBound :: Word64)
+            logInfo "Old thread finished waiting before deallocating."
+            return AbortLoop
+          else return ContinueLoop
+    -- TODO fix exit via glfw window close
+    runVk $ vkDeviceWaitIdle dev
     return ()
-
-checkStatus :: Either VulkanException () -> IO ()
-checkStatus (Right ()) = pure ()
-checkStatus (Left err) = putStrLn $ displayException err
