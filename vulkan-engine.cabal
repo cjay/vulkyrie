@@ -1,14 +1,13 @@
-name:                vulkan-triangles
-version:             0.3.0.0
-synopsis:            Haskell-vulkan program rendering triangles
-description:         An example of using vulkan-api bindings to create a GLFW window
-                     and render some simple geometry.
-homepage:            https://github.com/achirkin/genvulkan#readme
+name:                vulkan-engine
+version:             0.1.0.0
+synopsis:            Haskell-Vulkan experiment, not yet an engine
+description:         ...
+homepage:            https://github.com/cjay/vulkan-engine
 license:             BSD3
 license-file:        LICENSE
-author:              Artem Chirkin
-maintainer:          chirkin@arch.ethz.ch
-copyright:           Copyright: (c) 2018 Artem Chirkin
+author:              Johannes Krause
+maintainer:          cjay@brainuse.de
+copyright:           Copyright: (c) 2018-2019 Johannes Krause, Artem Chirkin
 category:            vulkan, bsd3, graphics, library, opengl
 build-type:          Simple
 cabal-version:       >=1.22
@@ -68,12 +67,12 @@ library
     else
         ghc-options: -O2
 
-executable vulkan-triangles
+executable vulkan-experiment
     hs-source-dirs:      app
     main-is:             Main.hs
     ghc-options:         -threaded
     build-depends:       base
-                       , vulkan-triangles
+                       , vulkan-engine
     default-language:    Haskell2010
     if flag(dev)
         cpp-options: -DDEVELOPMENT
@@ -85,5 +84,4 @@ executable vulkan-triangles
 
 source-repository head
     type:     git
-    location: https://github.com/achirkin/vulkan
-    subdir:   vulkan-triangles
+    location: https://github.com/cjay/vulkan-engine
