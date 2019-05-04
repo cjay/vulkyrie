@@ -9,8 +9,10 @@ module Lib.Vulkan.Presentation
   ( SwapchainInfo (..)
   , createSurface
   , createSwapchain
+  , createSwapchainSlot
   ) where
 
+import           Control.Concurrent.MVar
 import           Data.Maybe                           (fromMaybe)
 import           Data.Semigroup
 import qualified Graphics.UI.GLFW                     as GLFW
@@ -102,8 +104,13 @@ createSwapchain :: VkDevice
                 -> SwapchainSupportDetails
                 -> DevQueues
                 -> VkSurfaceKHR
+                -> MVar VkSwapchainKHR
+                -> Maybe (MVar VkSwapchainKHR)
                 -> Program r SwapchainInfo
-createSwapchain dev scsd queues surf = do
+createSwapchain dev scsd queues surf slot mayOldSlot = do
+  mayOldSwapchain <- liftIO $ tryTakeMVar slot
+  liftIO $ sequence_ $ putMVar <$> mayOldSlot <*> mayOldSwapchain
+
   surfFmt <- chooseSwapSurfaceFormat scsd
   let spMode = chooseSwapPresentMode scsd
       sExtent = chooseSwapExtent scsd
@@ -141,12 +148,11 @@ createSwapchain dev scsd queues surf = do
         &* set @"compositeAlpha" VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
         &* set @"presentMode" spMode
         &* set @"clipped" VK_TRUE
-        &* set @"oldSwapchain" VK_NULL_HANDLE
+        &* set @"oldSwapchain" (maybe VK_NULL_HANDLE id mayOldSwapchain)
 
-  swapchain <- allocResource
-    (\swapchain -> liftIO $ vkDestroySwapchainKHR dev swapchain VK_NULL) $
-    withVkPtr swCreateInfo $ \swciPtr -> allocaPeek
+  swapchain <- withVkPtr swCreateInfo $ \swciPtr -> allocaPeek
     $ runVk . vkCreateSwapchainKHR dev swciPtr VK_NULL
+  liftIO $ putMVar slot swapchain
 
   swapImgs <- asListVk
     $ \x -> runVk . vkGetSwapchainImagesKHR dev swapchain x
@@ -157,3 +163,18 @@ createSwapchain dev scsd queues surf = do
         , swapImgFormat = getField @"format" surfFmt
         , swapExtent    = sExtent
         }
+
+
+destroySwapchainIfNecessary :: VkDevice
+                            -> MVar VkSwapchainKHR
+                            -> Program r ()
+destroySwapchainIfNecessary dev slot = do
+  maySwapchain <- liftIO $ tryTakeMVar slot
+  liftIO $ sequence_ $ flip (vkDestroySwapchainKHR dev) VK_NULL <$> maySwapchain
+
+
+createSwapchainSlot :: VkDevice -> Program r (MVar VkSwapchainKHR)
+createSwapchainSlot dev =
+  allocResource
+    (destroySwapchainIfNecessary dev)
+    (liftIO newEmptyMVar)

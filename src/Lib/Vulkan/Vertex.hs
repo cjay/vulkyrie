@@ -14,6 +14,7 @@ module Lib.Vulkan.Vertex
 import           Codec.Wavefront
 import qualified Control.Monad.ST                         as ST
 import           Data.Maybe
+import           Data.Set                                 (Set)
 import qualified Data.Set                                 as Set
 import qualified Data.Vector                              as Vec
 import           GHC.Generics                             (Generic)
