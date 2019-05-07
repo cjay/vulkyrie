@@ -8,7 +8,6 @@
 {-# LANGUAGE TypeApplications    #-}
 module Lib
   ( runVulkanProgram
-  , WhichDemo (..)
   ) where
 
 import qualified Control.Concurrent.Event             as Event
@@ -83,10 +82,8 @@ rectIndices = fromJust $ fromList (D @3)
   -- , 4, 5, 6
   ]
 
-data WhichDemo = Squares | Chalet
-
-runVulkanProgram :: WhichDemo -> IO ()
-runVulkanProgram demo = runProgram checkStatus $ do
+runVulkanProgram :: IO ()
+runVulkanProgram = runProgram checkStatus $ do
   windowSizeChanged <- liftIO $ newIORef False
   window <- initGLFWWindow 800 600 "vulkan-triangles-GLFW" windowSizeChanged
 
@@ -95,12 +92,14 @@ runVulkanProgram demo = runProgram checkStatus $ do
   vulkanSurface <- createSurface vulkanInstance window
   logInfo $ "Createad surface: " ++ show vulkanSurface
 
+  -- TODO terminate when normal exception happens?
   glfwWaitEventsMeanwhile $ do
     (_, pdev) <- pickPhysicalDevice vulkanInstance (Just vulkanSurface)
     logInfo $ "Selected physical device: " ++ show pdev
     msaaSamples <- getMaxUsableSampleCount pdev
 
     (dev, queues) <- createGraphicsDevice pdev vulkanSurface
+    let gfxQ = graphicsQueue queues
     logInfo $ "Createad device: " ++ show dev
     logInfo $ "Createad queues: " ++ show queues
 
@@ -130,29 +129,20 @@ runVulkanProgram demo = runProgram checkStatus $ do
     -- we need this later, but don't want to realloc every swapchain recreation.
     imgIndexPtr <- mallocRes
 
-    (vertices, indices) <- case demo of
-      Squares -> return (rectVertices, rectIndices)
-      Chalet -> do
-        modelExist <- liftIO $ doesFileExist "models/chalet.obj"
-        when (not modelExist) $
-          throwVkMsg "Get models/chalet.obj and textures/chalet.jpg from the links in https://vulkan-tutorial.com/Loading_models"
-        loadModel "models/chalet.obj"
+    let (vertices, indices) = (rectVertices, rectIndices)
 
     vertexBuffer <-
-      createVertexBuffer pdev dev commandPool (graphicsQueue queues) vertices
+      createVertexBuffer pdev dev commandPool gfxQ vertices
 
     indexBuffer <-
-      createIndexBuffer pdev dev commandPool (graphicsQueue queues) indices
+      createIndexBuffer pdev dev commandPool gfxQ indices
 
     descriptorSetLayout <- createDescriptorSetLayout dev
     pipelineLayout <- createPipelineLayout dev descriptorSetLayout
 
-    let texturePath = case demo of
-          Squares -> "textures/texture.jpg"
-          Chalet  -> "textures/chalet.jpg"
-    (textureView, mipLevels) <- createTextureImageView pdev dev commandPool (graphicsQueue queues) texturePath
-    textureSampler <- createTextureSampler dev mipLevels
-    descriptorTextureInfo <- textureImageInfo textureView textureSampler
+    let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.png"]
+    descriptorTextureInfos <- mapM
+      (createTextureInfo pdev dev commandPool gfxQ) texturePaths
 
     depthFormat <- findDepthFormat pdev
 
@@ -189,7 +179,7 @@ runVulkanProgram demo = runProgram checkStatus $ do
       descriptorSets <- createDescriptorSets dev descriptorPool swapchainLen0 descriptorSetLayouts
 
       forM_ (zip descriptorBufferInfos descriptorSets) $
-        \(bufInfo, dSet) -> prepareDescriptorSet dev bufInfo descriptorTextureInfo dSet
+        \(bufInfo, dSet) -> prepareDescriptorSet dev dSet 0 [bufInfo] []
 
       transObjMemories <- newArrayRes $ transObjMems
 
@@ -211,18 +201,19 @@ runVulkanProgram demo = runProgram checkStatus $ do
                                     pipelineLayout
                                     msaaSamples
 
-        colorAttImgView <- createColorAttImgView pdev dev commandPool (graphicsQueue queues)
+        colorAttImgView <- createColorAttImgView pdev dev commandPool gfxQ
                            (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
-        depthAttImgView <- createDepthAttImgView pdev dev commandPool (graphicsQueue queues)
+        depthAttImgView <- createDepthAttImgView pdev dev commandPool gfxQ
                            (swapExtent swapInfo) msaaSamples
         framebuffers
           <- createFramebuffers dev renderPass swapInfo imgViews depthAttImgView colorAttImgView
-        cmdBuffersPtr <- createCommandBuffers dev graphicsPipeline commandPool
+        cmdBuffersPtr <- createStaticCommandBuffers dev graphicsPipeline commandPool
                                           renderPass pipelineLayout swapInfo
                                           vertexBuffer
                                           (fromIntegral $ dimSize1 indices, indexBuffer)
                                           framebuffers
                                           descriptorSets
+        dynCmdBuffers <- sequence $ replicate _MAX_FRAMES_IN_FLIGHT $ allocateCommandBuffer dev commandPool
 
         let rdata = RenderData
               { dev
@@ -238,6 +229,13 @@ runVulkanProgram demo = runProgram checkStatus $ do
               , cmdBuffersPtr
               , memories           = transObjMemories
               , memoryMutator      = updateTransObj dev (swapExtent swapInfo)
+              , descrSetMutator    = updateDescrSet dev descriptorTextureInfos
+              , dynCmdBuffers
+              , recCmdBuffer       = recordCommandBuffer graphicsPipeline
+                                          renderPass pipelineLayout swapInfo
+                                          vertexBuffer (fromIntegral $ dimSize1 indices, indexBuffer)
+              , descriptorSets
+              , framebuffers
               }
 
         logInfo $ "Createad image views: " ++ show imgViews
@@ -295,3 +293,13 @@ runVulkanProgram demo = runProgram checkStatus $ do
         else liftIO $ sequence_ $ replicate 2 $ Event.wait frameFinishedEvent
         -- logInfo "Finished waiting after main loop termination before deallocating."
     return ()
+
+
+updateDescrSet :: VkDevice
+               -> [VkDescriptorImageInfo]
+               -> VkDescriptorSet
+               -> Program r ()
+updateDescrSet dev texInfos descrSet = do
+  seconds <- getTime
+  let texIx = floor seconds `mod` 2
+  prepareDescriptorSet dev descrSet 1 [] [texInfos !! texIx]

@@ -1,8 +1,6 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
-// see https://www.khronos.org/opengl/wiki/Interface_Block_(GLSL) for
-// difference between block name and instance name
 layout(binding = 0) uniform TransformationObject {
   mat4 model;
   mat4 view;

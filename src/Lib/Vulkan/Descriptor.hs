@@ -21,6 +21,7 @@ import           Lib.Program
 import           Lib.Program.Foreign
 
 
+-- TODO make pool size dynamic
 createDescriptorPool :: VkDevice -> Int -> Program r VkDescriptorPool
 createDescriptorPool dev n =
   allocResource (liftIO . flip (vkDestroyDescriptorPool dev) VK_NULL) $
@@ -35,12 +36,13 @@ createDescriptorPool dev n =
             &* set @"descriptorCount" (fromIntegral n)
           , createVk @VkDescriptorPoolSize
             $  set @"type" VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-            &* set @"descriptorCount" (fromIntegral n)
+            &* set @"descriptorCount" (fromIntegral n * 2)
           ]
         &* set @"maxSets" (fromIntegral n)
       ) $ \ciPtr -> runVk $ vkCreateDescriptorPool dev ciPtr VK_NULL pPtr
 
 
+-- TODO make list dynamic
 createDescriptorSetLayout :: VkDevice -> Program r VkDescriptorSetLayout
 createDescriptorSetLayout dev =
   let dslCreateInfo = createVk @VkDescriptorSetLayoutCreateInfo
@@ -56,6 +58,12 @@ createDescriptorSetLayout dev =
               &* set @"pImmutableSamplers" VK_NULL
             , createVk @VkDescriptorSetLayoutBinding
               $  set @"binding" 1
+              &* set @"descriptorType" VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+              &* set @"descriptorCount" 1
+              &* set @"stageFlags" VK_SHADER_STAGE_FRAGMENT_BIT
+              &* set @"pImmutableSamplers" VK_NULL
+            , createVk @VkDescriptorSetLayoutBinding
+              $  set @"binding" 2
               &* set @"descriptorType" VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
               &* set @"descriptorCount" 1
               &* set @"stageFlags" VK_SHADER_STAGE_FRAGMENT_BIT
@@ -84,35 +92,39 @@ createDescriptorSets dev descriptorPool n layoutsPtr =
       peekArray n dsPtr
 
 prepareDescriptorSet :: VkDevice
-                     -> VkDescriptorBufferInfo
-                     -> VkDescriptorImageInfo
                      -> VkDescriptorSet
+                     -> Word32
+                     -> [VkDescriptorBufferInfo]
+                     -> [VkDescriptorImageInfo]
                      -> Program r ()
-prepareDescriptorSet dev bufferInfo imageInfo descriptorSet =
-  let descriptorWrites =
-        [ createVk @VkWriteDescriptorSet
+prepareDescriptorSet dev descriptorSet offset uniformBufferInfos imageInfos =
+  let uniformWrite bufferInfo binding =
+        createVk @VkWriteDescriptorSet
           $  set @"sType" VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET
           &* set @"pNext" VK_NULL
           &* set @"dstSet" descriptorSet
-          &* set @"dstBinding" 0
+          &* set @"dstBinding" binding
           &* set @"dstArrayElement" 0
           &* set @"descriptorType" VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
           &* set @"descriptorCount" 1
           &* setVkRef @"pBufferInfo" bufferInfo
           &* set @"pImageInfo" VK_NULL
           &* set @"pTexelBufferView" VK_NULL
-        , createVk @VkWriteDescriptorSet
+      imageWrite imageInfo binding =
+        createVk @VkWriteDescriptorSet
           $  set @"sType" VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET
           &* set @"pNext" VK_NULL
           &* set @"dstSet" descriptorSet
-          &* set @"dstBinding" 1
+          &* set @"dstBinding" binding
           &* set @"dstArrayElement" 0
           &* set @"descriptorType" VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
           &* set @"descriptorCount" 1
           &* set @"pBufferInfo" VK_NULL
           &* setVkRef @"pImageInfo" imageInfo
           &* set @"pTexelBufferView" VK_NULL
-        ]
+      descriptorWrites = zipWith ($)
+        (map uniformWrite uniformBufferInfos ++ map imageWrite imageInfos)
+        [offset..]
   in liftIO $ withArray descriptorWrites $ \dwPtr ->
       vkUpdateDescriptorSets dev
         (fromIntegral $ length descriptorWrites) dwPtr

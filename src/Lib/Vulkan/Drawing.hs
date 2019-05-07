@@ -9,7 +9,9 @@
 module Lib.Vulkan.Drawing
   ( RenderData (..)
   , createFramebuffers
-  , createCommandBuffers
+  , allocateCommandBuffer
+  , recordCommandBuffer
+  , createStaticCommandBuffers
   , createFrameSemaphores
   , createFrameFences
   , drawFrame
@@ -21,6 +23,7 @@ import qualified Control.Concurrent.Event                 as Event
 import           Control.Concurrent.MVar
 import           Control.Monad                            (forM_, when)
 import           Data.IORef
+import           Foreign.Marshal.Array                    (withArray)
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
@@ -65,18 +68,104 @@ createFramebuffers dev renderPass SwapchainInfo{ swapExtent } swapImgViews depth
           runVk $ vkCreateFramebuffer dev fbciPtr VK_NULL fbPtr
 
 
-createCommandBuffers :: VkDevice
-                     -> VkPipeline
-                     -> VkCommandPool
-                     -> VkRenderPass
-                     -> VkPipelineLayout
-                     -> SwapchainInfo
-                     -> VkBuffer -- vertex data
-                     -> (Word32, VkBuffer) -- nr of indices and index data
-                     -> [VkFramebuffer]
-                     -> [VkDescriptorSet]
-                     -> Program r (Ptr VkCommandBuffer)
-createCommandBuffers
+allocateCommandBuffer :: VkDevice
+                      -> VkCommandPool
+                      -> Program r VkCommandBuffer
+allocateCommandBuffer dev commandPool = do
+  allocResource
+    (\cmdBuf -> liftIO $ withArray [cmdBuf] $ \cbsPtr ->
+        vkFreeCommandBuffers dev commandPool 1 cbsPtr)
+    $ do
+    let allocInfo = createVk @VkCommandBufferAllocateInfo
+          $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
+          &* set @"pNext" VK_NULL
+          &* set @"commandPool" commandPool
+          &* set @"level" VK_COMMAND_BUFFER_LEVEL_PRIMARY
+          &* set @"commandBufferCount" 1
+
+    allocaPeek $ \cbsPtr -> withVkPtr allocInfo $ \aiPtr ->
+      runVk $ vkAllocateCommandBuffers dev aiPtr cbsPtr
+
+
+recordCommandBuffer :: VkPipeline
+                    -> VkRenderPass
+                    -> VkPipelineLayout
+                    -> SwapchainInfo
+                    -> VkBuffer -- vertex data
+                    -> (Word32, VkBuffer) -- nr of indices and index data
+                    -> VkCommandBuffer
+                    -> VkFramebuffer
+                    -> VkDescriptorSet
+                    -> Program r ()
+recordCommandBuffer
+    pipeline rpass pipelineLayout SwapchainInfo{ swapExtent }
+    vertexBuffer (nIndices, indexBuffer)
+    cmdBuffer framebuffer descriptorSet = do
+  vertexBufArr <- newArrayRes [vertexBuffer]
+  vertexOffArr <- newArrayRes [0]
+  -- begin commands
+  let cmdBufBeginInfo = createVk @VkCommandBufferBeginInfo
+        $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
+        &* set @"pNext" VK_NULL
+        &* set @"flags" VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+
+  withVkPtr cmdBufBeginInfo
+    $ runVk . vkBeginCommandBuffer cmdBuffer
+
+  -- render pass
+  let renderPassBeginInfo = createVk @VkRenderPassBeginInfo
+        $  set @"sType" VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
+        &* set @"pNext" VK_NULL
+        &* set @"renderPass" rpass
+        &* set @"framebuffer" framebuffer
+        &* setVk @"renderArea"
+            (  setVk @"offset"
+                ( set @"x" 0 &* set @"y" 0 )
+            &* set @"extent" swapExtent
+            )
+        -- TODO only the first command buffer should clear
+        &* setListCountAndRef @"clearValueCount" @"pClearValues"
+            [ ( createVk @VkClearValue
+                $ setVk @"color"
+                  $ setVec @"float32" (vec4 0 0 0.2 1)
+              )
+            , ( createVk @VkClearValue
+                $ setVk @"depthStencil"
+                  $  set @"depth" 1.0
+                  &* set @"stencil" 0
+              )
+            ]
+
+  withVkPtr renderPassBeginInfo $ \rpbiPtr ->
+    liftIO $ vkCmdBeginRenderPass cmdBuffer rpbiPtr VK_SUBPASS_CONTENTS_INLINE
+
+  -- basic drawing commands
+  liftIO $ vkCmdBindPipeline cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
+  liftIO $ vkCmdBindVertexBuffers
+              cmdBuffer 0 1 vertexBufArr vertexOffArr
+  liftIO $ vkCmdBindIndexBuffer cmdBuffer indexBuffer 0 VK_INDEX_TYPE_UINT32
+  dsPtr <- newArrayRes [descriptorSet]
+  liftIO $ vkCmdBindDescriptorSets cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 1 dsPtr 0 VK_NULL
+  liftIO $ vkCmdDrawIndexed cmdBuffer nIndices 1 0 0 0
+
+  -- finishing up
+  liftIO $ vkCmdEndRenderPass cmdBuffer
+
+  runVk $ vkEndCommandBuffer cmdBuffer
+
+
+createStaticCommandBuffers :: VkDevice
+                           -> VkPipeline
+                           -> VkCommandPool
+                           -> VkRenderPass
+                           -> VkPipelineLayout
+                           -> SwapchainInfo
+                           -> VkBuffer -- vertex data
+                           -> (Word32, VkBuffer) -- nr of indices and index data
+                           -> [VkFramebuffer]
+                           -> [VkDescriptorSet]
+                           -> Program r (Ptr VkCommandBuffer)
+createStaticCommandBuffers
     dev pipeline commandPool rpass pipelineLayout SwapchainInfo{ swapExtent }
     vertexBuffer
     (nIndices, indexBuffer) fbs descriptorSets
@@ -84,7 +173,7 @@ createCommandBuffers
   -- allocate a pointer to an array of command buffer handles
   cbsPtr <- mallocArrayRes buffersCount
   vertexBufArr <- newArrayRes [vertexBuffer]
-  vertexOffArr <- newArrayRes [0]
+  -- vertexOffArr <- newArrayRes [0]
 
   allocResource
     (const $ liftIO $ vkFreeCommandBuffers dev commandPool (fromIntegral buffersCount) cbsPtr)
@@ -101,57 +190,57 @@ createCommandBuffers
     commandBuffers <- peekArray buffersCount cbsPtr
 
     -- record command buffers
-    forM_ (zip3 fbs descriptorSets commandBuffers) $
-      \(frameBuffer, descriptorSet, cmdBuffer) -> do
+    -- forM_ (zip3 fbs descriptorSets commandBuffers) $
+    --   \(frameBuffer, descriptorSet, cmdBuffer) -> do
 
-      -- begin commands
-      let cmdBufBeginInfo = createVk @VkCommandBufferBeginInfo
-            $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
-            &* set @"pNext" VK_NULL
-            &* set @"flags" VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT
+    --   -- begin commands
+    --   let cmdBufBeginInfo = createVk @VkCommandBufferBeginInfo
+    --         $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
+    --         &* set @"pNext" VK_NULL
+    --         &* set @"flags" VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT
 
-      withVkPtr cmdBufBeginInfo
-        $ runVk . vkBeginCommandBuffer cmdBuffer
+    --   withVkPtr cmdBufBeginInfo
+    --     $ runVk . vkBeginCommandBuffer cmdBuffer
 
-      -- render pass
-      let renderPassBeginInfo = createVk @VkRenderPassBeginInfo
-            $  set @"sType" VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
-            &* set @"pNext" VK_NULL
-            &* set @"renderPass" rpass
-            &* set @"framebuffer" frameBuffer
-            &* setVk @"renderArea"
-                (  setVk @"offset"
-                   ( set @"x" 0 &* set @"y" 0 )
-                &* set @"extent" swapExtent
-                )
-            &* setListCountAndRef @"clearValueCount" @"pClearValues"
-                [ ( createVk @VkClearValue
-                    $ setVk @"color"
-                      $ setVec @"float32" (vec4 0 0 0.2 1)
-                  )
-                , ( createVk @VkClearValue
-                    $ setVk @"depthStencil"
-                      $  set @"depth" 1.0
-                      &* set @"stencil" 0
-                  )
-                ]
+    --   -- render pass
+    --   let renderPassBeginInfo = createVk @VkRenderPassBeginInfo
+    --         $  set @"sType" VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
+    --         &* set @"pNext" VK_NULL
+    --         &* set @"renderPass" rpass
+    --         &* set @"framebuffer" frameBuffer
+    --         &* setVk @"renderArea"
+    --             (  setVk @"offset"
+    --                ( set @"x" 0 &* set @"y" 0 )
+    --             &* set @"extent" swapExtent
+    --             )
+    --         &* setListCountAndRef @"clearValueCount" @"pClearValues"
+    --             [ ( createVk @VkClearValue
+    --                 $ setVk @"color"
+    --                   $ setVec @"float32" (vec4 0 0 0.2 1)
+    --               )
+    --             , ( createVk @VkClearValue
+    --                 $ setVk @"depthStencil"
+    --                   $  set @"depth" 1.0
+    --                   &* set @"stencil" 0
+    --               )
+    --             ]
 
-      withVkPtr renderPassBeginInfo $ \rpibPtr ->
-        liftIO $ vkCmdBeginRenderPass cmdBuffer rpibPtr VK_SUBPASS_CONTENTS_INLINE
+    --   withVkPtr renderPassBeginInfo $ \rpibPtr ->
+    --     liftIO $ vkCmdBeginRenderPass cmdBuffer rpibPtr VK_SUBPASS_CONTENTS_INLINE
 
-      -- basic drawing commands
-      liftIO $ vkCmdBindPipeline cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
-      liftIO $ vkCmdBindVertexBuffers
-                 cmdBuffer 0 1 vertexBufArr vertexOffArr
-      liftIO $ vkCmdBindIndexBuffer cmdBuffer indexBuffer 0 VK_INDEX_TYPE_UINT32
-      dsPtr <- newArrayRes [descriptorSet]
-      liftIO $ vkCmdBindDescriptorSets cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 1 dsPtr 0 VK_NULL
-      liftIO $ vkCmdDrawIndexed cmdBuffer nIndices 1 0 0 0
+    --   -- basic drawing commands
+    --   liftIO $ vkCmdBindPipeline cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
+    --   liftIO $ vkCmdBindVertexBuffers
+    --              cmdBuffer 0 1 vertexBufArr vertexOffArr
+    --   liftIO $ vkCmdBindIndexBuffer cmdBuffer indexBuffer 0 VK_INDEX_TYPE_UINT32
+    --   dsPtr <- newArrayRes [descriptorSet]
+    --   liftIO $ vkCmdBindDescriptorSets cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 1 dsPtr 0 VK_NULL
+    --   liftIO $ vkCmdDrawIndexed cmdBuffer nIndices 1 0 0 0
 
-      -- finishing up
-      liftIO $ vkCmdEndRenderPass cmdBuffer
+    --   -- finishing up
+    --   liftIO $ vkCmdEndRenderPass cmdBuffer
 
-      runVk $ vkEndCommandBuffer cmdBuffer
+    --   runVk $ vkEndCommandBuffer cmdBuffer
 
     return cbsPtr
 
@@ -187,6 +276,14 @@ data RenderData
     -- ^ one per swapchain image
   , memoryMutator      :: forall r. VkDeviceMemory -> Program r ()
     -- ^ to execute on memories[*imgIndexPtr] before drawing
+  , descrSetMutator    :: forall r. VkDescriptorSet -> Program r ()
+    -- ^ update textures
+  , dynCmdBuffers      :: [VkCommandBuffer]
+    -- ^ one per frame-in-flight. recorded every frame.
+  , recCmdBuffer       :: forall r. VkCommandBuffer -> VkFramebuffer -> VkDescriptorSet -> Program r ()
+    -- ^ update dynCmdBuffer
+  , descriptorSets     :: [VkDescriptorSet]
+  , framebuffers       :: [VkFramebuffer]
   }
 
 drawFrame :: RenderData -> Program r Bool
@@ -213,10 +310,17 @@ drawFrame RenderData {..} = do
           dev swapchain maxBound
           imageAvailable VK_NULL_HANDLE imgIndexPtr
     imgIndex <- fromIntegral <$> peek imgIndexPtr
-    let bufPtr = cmdBuffersPtr `ptrAtIndex` imgIndex
+    let cmdBufPtr = cmdBuffersPtr `ptrAtIndex` imgIndex
     let memoryPtr = memories `ptrAtIndex` imgIndex
     mem <- peek memoryPtr
     memoryMutator mem
+
+    let dynCmdBuffer = dynCmdBuffers !! frameIndex
+        descrSet = descriptorSets !! imgIndex
+        framebuffer = framebuffers !! imgIndex
+    descrSetMutator descrSet
+    recCmdBuffer dynCmdBuffer framebuffer descrSet
+    dynCmdBufPtr <- newArrayRes [dynCmdBuffer]
 
     -- Submitting the command buffer
     let submitInfo = createVk @VkSubmitInfo
@@ -226,7 +330,7 @@ drawFrame RenderData {..} = do
           &* setListRef @"pWaitSemaphores"   [imageAvailable]
           &* setListRef @"pWaitDstStageMask" [VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT]
           &* set @"commandBufferCount" 1
-          &* set @"pCommandBuffers" bufPtr
+          &* set @"pCommandBuffers" dynCmdBufPtr
           &* set @"signalSemaphoreCount" 1
           &* setListRef @"pSignalSemaphores" [renderFinished]
 

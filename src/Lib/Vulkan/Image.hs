@@ -6,7 +6,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 module Lib.Vulkan.Image
-  ( createTextureImageView
+  ( createTextureInfo
+  , createTextureImageView
   , createTextureSampler
   , textureImageInfo
   , createImageView
@@ -34,6 +35,17 @@ import           Lib.Program.Foreign
 import           Lib.Vulkan.Buffer
 import           Lib.Vulkan.Command
 
+
+createTextureInfo :: VkPhysicalDevice
+                  -> VkDevice
+                  -> VkCommandPool
+                  -> VkQueue
+                  -> FilePath
+                  -> Program r VkDescriptorImageInfo
+createTextureInfo pdev dev cmdPool queue path = do
+    (textureView, mipLevels) <- createTextureImageView pdev dev cmdPool queue path
+    textureSampler <- createTextureSampler dev mipLevels
+    textureImageInfo textureView textureSampler
 
 
 createTextureImageView :: VkPhysicalDevice
