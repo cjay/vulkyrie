@@ -6,6 +6,8 @@
 {-# LANGUAGE TypeApplications #-}
 module Lib.Vulkan.Command
   ( createCommandPool
+  , allocateCommandBuffers
+  , allocateCommandBuffer
   , runCommandsAsync
   , runCommandsOnce
   ) where
@@ -36,6 +38,39 @@ createCommandPool dev DevQueues{..} =
       ) $ \ciPtr -> runVk $ vkCreateCommandPool dev ciPtr VK_NULL pPtr
 
 
+-- TODO return in dataframe?
+allocateCommandBuffers :: VkDevice
+                       -> VkCommandPool
+                       -> Int
+                       -> Program r [VkCommandBuffer]
+allocateCommandBuffers dev cmdPool buffersCount = do
+  -- allocate a pointer to an array of command buffer handles
+  cbsPtr <- mallocArrayRes buffersCount
+
+  allocResource
+    (const $ liftIO $
+      vkFreeCommandBuffers dev cmdPool (fromIntegral buffersCount) cbsPtr)
+    $ do
+    let allocInfo = createVk @VkCommandBufferAllocateInfo
+          $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
+          &* set @"pNext" VK_NULL
+          &* set @"commandPool" cmdPool
+          &* set @"level" VK_COMMAND_BUFFER_LEVEL_PRIMARY
+          &* set @"commandBufferCount" (fromIntegral buffersCount)
+
+    withVkPtr allocInfo $ \aiPtr ->
+      runVk $ vkAllocateCommandBuffers dev aiPtr cbsPtr
+    peekArray buffersCount cbsPtr
+
+
+allocateCommandBuffer :: VkDevice
+                      -> VkCommandPool
+                      -> Program r VkCommandBuffer
+allocateCommandBuffer dev cmdPool = do
+  bufs <- allocateCommandBuffers dev cmdPool 1
+  return $ head bufs
+
+
 -- | Starts in separate thread, but waits until command buffer has been submitted
 --
 --   Deferres deallocation of resources until execution by the queue is done.
@@ -44,19 +79,19 @@ runCommandsAsync :: VkDevice
                  -> VkQueue
                  -> (VkCommandBuffer -> Program () a)
                  -> Program r a
-runCommandsAsync dev commandPool cmdQueue action = do
+runCommandsAsync dev cmdPool cmdQueue action = do
   fin <- liftIO newEmptyMVar
   _ <- liftIO $ forkIO $ runProgram (\res -> tryPutMVar fin res >> return ()) $ do
     -- create command buffer
     let allocInfo = createVk @VkCommandBufferAllocateInfo
           $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
           &* set @"level" VK_COMMAND_BUFFER_LEVEL_PRIMARY
-          &* set @"commandPool" commandPool
+          &* set @"commandPool" cmdPool
           &* set @"commandBufferCount" 1
           &* set @"pNext" VK_NULL
 
     cmdBufs <- allocResource
-      (liftIO . flip withDFPtr (vkFreeCommandBuffers dev commandPool 1))
+      (liftIO . flip withDFPtr (vkFreeCommandBuffers dev cmdPool 1))
       (withVkPtr allocInfo $ \aiPtr -> allocaPeekDF $ runVk . vkAllocateCommandBuffers dev aiPtr)
     -- record command buffer
     let cmdbBI = createVk @VkCommandBufferBeginInfo
@@ -99,19 +134,19 @@ runCommandsOnce :: VkDevice
                 -> VkQueue
                 -> (VkCommandBuffer -> Program r a)
                 -> Program r a
-runCommandsOnce dev commandPool cmdQueue action = do
+runCommandsOnce dev cmdPool cmdQueue action = do
     -- create command buffer
     let allocInfo = createVk @VkCommandBufferAllocateInfo
           $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
           &* set @"level" VK_COMMAND_BUFFER_LEVEL_PRIMARY
-          &* set @"commandPool" commandPool
+          &* set @"commandPool" cmdPool
           &* set @"commandBufferCount" 1
           &* set @"pNext" VK_NULL
 
     bracket
       (withVkPtr allocInfo $ \aiPtr -> allocaPeekDF $
           runVk . vkAllocateCommandBuffers dev aiPtr)
-      (liftIO . flip withDFPtr (vkFreeCommandBuffers dev commandPool 1))
+      (liftIO . flip withDFPtr (vkFreeCommandBuffers dev cmdPool 1))
       $ \cmdBufs -> do
         -- record command buffer
         let cmdbBI = createVk @VkCommandBufferBeginInfo

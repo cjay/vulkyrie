@@ -197,14 +197,13 @@ createGraphicsPipeline
         runVk . vkCreateGraphicsPipelines dev VK_NULL 1 gpciPtr VK_NULL
 
 
-createPipelineLayout :: VkDevice -> VkDescriptorSetLayout -> Program r VkPipelineLayout
-createPipelineLayout dev dsl = do
+createPipelineLayout :: VkDevice -> [VkDescriptorSetLayout] -> Program r VkPipelineLayout
+createPipelineLayout dev descrSetLayouts = do
   let plCreateInfo = createVk @VkPipelineLayoutCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
         &* set @"pNext" VK_NULL
         &* set @"flags" 0
-        &* set @"setLayoutCount"         1       -- Optional
-        &* setListRef @"pSetLayouts"     [dsl]   -- Optional
+        &* setListCountAndRef @"setLayoutCount" @"pSetLayouts" descrSetLayouts   -- Optional
         &* set @"pushConstantRangeCount" 0       -- Optional
         &* set @"pPushConstantRanges"    VK_NULL -- Optional
   allocResource

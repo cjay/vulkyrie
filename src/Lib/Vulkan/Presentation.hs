@@ -111,6 +111,7 @@ createSwapchain dev scsd queues surf slot mayOldSlot = do
   mayOldSwapchain <- liftIO $ tryTakeMVar slot
   liftIO $ sequence_ $ putMVar <$> mayOldSlot <*> mayOldSwapchain
 
+  -- TODO not necessary every time I think
   surfFmt <- chooseSwapSurfaceFormat scsd
   let spMode = chooseSwapPresentMode scsd
       sExtent = chooseSwapExtent scsd

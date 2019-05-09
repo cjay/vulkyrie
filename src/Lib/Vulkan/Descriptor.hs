@@ -7,8 +7,11 @@
 {-# LANGUAGE TypeApplications    #-}
 module Lib.Vulkan.Descriptor
   ( createDescriptorPool
-  , createDescriptorSets
+  , allocateDescriptorSets
+  , allocateDescriptorSetsForLayout
   , prepareDescriptorSet
+  , uniformBinding
+  , samplerBinding
   , createDescriptorSetLayout
   ) where
 
@@ -36,60 +39,73 @@ createDescriptorPool dev n =
             &* set @"descriptorCount" (fromIntegral n)
           , createVk @VkDescriptorPoolSize
             $  set @"type" VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-            &* set @"descriptorCount" (fromIntegral n * 2)
+            &* set @"descriptorCount" (fromIntegral n)
           ]
         &* set @"maxSets" (fromIntegral n)
       ) $ \ciPtr -> runVk $ vkCreateDescriptorPool dev ciPtr VK_NULL pPtr
 
 
--- TODO make list dynamic
-createDescriptorSetLayout :: VkDevice -> Program r VkDescriptorSetLayout
-createDescriptorSetLayout dev =
+uniformBinding :: Word32 -> VkDescriptorSetLayoutBinding
+uniformBinding bindId =
+  createVk @VkDescriptorSetLayoutBinding
+    $  set @"binding" bindId
+    &* set @"descriptorType" VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+    &* set @"descriptorCount" 1
+    &* set @"stageFlags" VK_SHADER_STAGE_VERTEX_BIT
+    &* set @"pImmutableSamplers" VK_NULL
+
+
+samplerBinding :: Word32 -> VkDescriptorSetLayoutBinding
+samplerBinding bindId =
+  createVk @VkDescriptorSetLayoutBinding
+    $  set @"binding" bindId
+    &* set @"descriptorType" VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+    &* set @"descriptorCount" 1
+    &* set @"stageFlags" VK_SHADER_STAGE_FRAGMENT_BIT
+    &* set @"pImmutableSamplers" VK_NULL
+
+
+createDescriptorSetLayout :: VkDevice
+                          -> [VkDescriptorSetLayoutBinding]
+                          -> Program r VkDescriptorSetLayout
+createDescriptorSetLayout dev bindings =
   let dslCreateInfo = createVk @VkDescriptorSetLayoutCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
         &* set @"pNext" VK_NULL
         &* set @"flags" 0
-        &* setListCountAndRef @"bindingCount" @"pBindings"
-            [ createVk @VkDescriptorSetLayoutBinding
-              $  set @"binding" 0
-              &* set @"descriptorType" VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-              &* set @"descriptorCount" 1
-              &* set @"stageFlags" VK_SHADER_STAGE_VERTEX_BIT
-              &* set @"pImmutableSamplers" VK_NULL
-            , createVk @VkDescriptorSetLayoutBinding
-              $  set @"binding" 1
-              &* set @"descriptorType" VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-              &* set @"descriptorCount" 1
-              &* set @"stageFlags" VK_SHADER_STAGE_FRAGMENT_BIT
-              &* set @"pImmutableSamplers" VK_NULL
-            , createVk @VkDescriptorSetLayoutBinding
-              $  set @"binding" 2
-              &* set @"descriptorType" VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-              &* set @"descriptorCount" 1
-              &* set @"stageFlags" VK_SHADER_STAGE_FRAGMENT_BIT
-              &* set @"pImmutableSamplers" VK_NULL
-            ]
+        &* setListCountAndRef @"bindingCount" @"pBindings" bindings
   in allocResource
      (\dsl -> liftIO $ vkDestroyDescriptorSetLayout dev dsl VK_NULL) $
      withVkPtr dslCreateInfo $ \dslciPtr -> allocaPeek $
        runVk . vkCreateDescriptorSetLayout dev dslciPtr VK_NULL
 
 
-createDescriptorSets :: VkDevice
-                     -> VkDescriptorPool
-                     -> Int
-                     -> Ptr VkDescriptorSetLayout
-                     -> Program r [VkDescriptorSet]
-createDescriptorSets dev descriptorPool n layoutsPtr =
+allocateDescriptorSetsForLayout :: VkDevice
+                                -> VkDescriptorPool
+                                -> Int
+                                -> VkDescriptorSetLayout
+                                -> Program r [VkDescriptorSet]
+allocateDescriptorSetsForLayout dev descriptorPool n layout =
+  allocateDescriptorSets dev descriptorPool n (replicate n layout)
+
+
+allocateDescriptorSets :: VkDevice
+                       -> VkDescriptorPool
+                       -> Int
+                       -> [VkDescriptorSetLayout]
+                       -> Program r [VkDescriptorSet]
+allocateDescriptorSets dev descriptorPool n layouts = do
+  layoutsPtr <- newArrayRes layouts
   let dsai = createVk @VkDescriptorSetAllocateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
         &* set @"pNext" VK_NULL
         &* set @"descriptorPool" descriptorPool
         &* set @"descriptorSetCount" (fromIntegral n)
         &* set @"pSetLayouts" layoutsPtr
-  in allocaArray n $ \dsPtr -> withVkPtr dsai $ \dsaiPtr -> do
-      runVk $ vkAllocateDescriptorSets dev dsaiPtr dsPtr
-      peekArray n dsPtr
+  allocaArray n $ \dsPtr -> withVkPtr dsai $ \dsaiPtr -> do
+    runVk $ vkAllocateDescriptorSets dev dsaiPtr dsPtr
+    peekArray n dsPtr
+
 
 prepareDescriptorSet :: VkDevice
                      -> VkDescriptorSet

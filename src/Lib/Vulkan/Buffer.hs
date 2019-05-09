@@ -74,8 +74,8 @@ copyBuffer :: VkDevice
            -> VkCommandPool
            -> VkQueue
            -> VkBuffer -> VkBuffer -> VkDeviceSize -> Program r ()
-copyBuffer dev commandPool cmdQueue srcBuffer dstBuffer bSize =
-  runCommandsOnce dev commandPool cmdQueue $ \cmdBuf -> do
+copyBuffer dev cmdPool cmdQueue srcBuffer dstBuffer bSize =
+  runCommandsOnce dev cmdPool cmdQueue $ \cmdBuf -> do
     let copyRegion = createVk @VkBufferCopy
           $  set @"srcOffset" 0
           &* set @"dstOffset" 0
