@@ -9,7 +9,7 @@ module Lib.Vulkan.Descriptor
   ( createDescriptorPool
   , allocateDescriptorSets
   , allocateDescriptorSetsForLayout
-  , prepareDescriptorSet
+  , updateDescriptorSet
   , uniformBinding
   , samplerBinding
   , createDescriptorSetLayout
@@ -107,13 +107,13 @@ allocateDescriptorSets dev descriptorPool n layouts = do
     peekArray n dsPtr
 
 
-prepareDescriptorSet :: VkDevice
+updateDescriptorSet :: VkDevice
                      -> VkDescriptorSet
                      -> Word32
                      -> [VkDescriptorBufferInfo]
                      -> [VkDescriptorImageInfo]
                      -> Program r ()
-prepareDescriptorSet dev descriptorSet offset uniformBufferInfos imageInfos =
+updateDescriptorSet dev descriptorSet offset uniformBufferInfos imageInfos =
   let uniformWrite bufferInfo binding =
         createVk @VkWriteDescriptorSet
           $  set @"sType" VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET

@@ -81,9 +81,9 @@ rect2Indices = fromJust $ fromList (D @3)
 runVulkanProgram :: IO ()
 runVulkanProgram = runProgram checkStatus $ do
   windowSizeChanged <- liftIO $ newIORef False
-  window <- initGLFWWindow 800 600 "vulkan-triangles-GLFW" windowSizeChanged
+  window <- initGLFWWindow 800 600 "vulkan-experiment" windowSizeChanged
 
-  vulkanInstance <- createGLFWVulkanInstance "vulkan-triangles-instance"
+  vulkanInstance <- createGLFWVulkanInstance "vulkan-experiment-instance"
 
   vulkanSurface <- createSurface vulkanInstance window
   logInfo $ "Createad surface: " ++ show vulkanSurface
@@ -155,11 +155,11 @@ runVulkanProgram = runProgram checkStatus $ do
       allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
 
     forM_ (zip descriptorBufferInfos frameDescrSets) $
-      \(bufInfo, descrSet) -> prepareDescriptorSet dev descrSet 0 [bufInfo] []
+      \(bufInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [bufInfo] []
 
     forM_ materialDescrSetsPerFrame $ \materialDescrSets ->
       forM_ (zip descrTextureInfos materialDescrSets) $
-        \(texInfo, descrSet) -> prepareDescriptorSet dev descrSet 0 [] [texInfo]
+        \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
 
     transObjMemories <- newArrayRes $ transObjMems
 
@@ -183,7 +183,7 @@ runVulkanProgram = runProgram checkStatus $ do
 
     -- The code below re-runs when the swapchain was re-created
     asyncRedo $ \redoWithNewSwapchain -> do
-      logInfo "New thread: Creating things that depend on the swapchain, not only its length.."
+      logInfo "New thread: Creating things that depend on the swapchain.."
       -- need this for delayed destruction of the old swapchain if it gets replaced
       oldSwapchainSlot <- createSwapchainSlot dev
       swapInfo <- liftIO $ readIORef swapInfoRef
@@ -197,6 +197,7 @@ runVulkanProgram = runProgram checkStatus $ do
                                   pipelineLayout
                                   msaaSamples
 
+      -- TODO pool fences
       colorAttImgView <- createColorAttImgView pdev dev cmdPool gfxQ
                           (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
       depthAttImgView <- createDepthAttImgView pdev dev cmdPool gfxQ
@@ -204,6 +205,7 @@ runVulkanProgram = runProgram checkStatus $ do
       framebuffers
         <- createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
 
+      -- TODO need mutex for cmdPool or a pool of command pools due to concurrent commandPool access by vkFreeCommandBuffers
       dynCmdBuffers <- sequence $ replicate maxFramesInFlight $ allocateCommandBuffer dev cmdPool
 
       let rdata = RenderData
@@ -289,5 +291,5 @@ updateDescrSet :: VkDevice
 updateDescrSet dev texInfos descrSet = do
   -- seconds <- getTime
   -- let texIx = floor seconds `mod` 2
-  -- prepareDescriptorSet dev descrSet 1 [] [texInfos !! texIx]
-  prepareDescriptorSet dev descrSet 1 [] [texInfos !! 0]
+  -- updateDescriptorSet dev descrSet 1 [] [texInfos !! texIx]
+  updateDescriptorSet dev descrSet 1 [] [texInfos !! 0]

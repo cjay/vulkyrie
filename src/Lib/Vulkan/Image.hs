@@ -135,6 +135,7 @@ generateMipmaps pdev image format width height mipLevels cmdBuf = do
   where
 
   nextLen l = if l > 1 then l `div` 2 else 1
+
   barrierStruct mipLevel oldLayout newLayout srcAccessMask dstAccessMask =
     createVk @VkImageMemoryBarrier
     $  set @"sType" VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER
@@ -153,6 +154,7 @@ generateMipmaps pdev image format width height mipLevels cmdBuf = do
         )
     &* set @"srcAccessMask" srcAccessMask
     &* set @"dstAccessMask" dstAccessMask
+
   blitStruct mipLevel srcWidth srcHeight =
     createVk @VkImageBlit
     $  setAt @"srcOffsets" @0
@@ -191,6 +193,7 @@ generateMipmaps pdev image format width height mipLevels cmdBuf = do
         &* set @"baseArrayLayer" 0
         &* set @"layerCount" 1
         )
+
   createLvl (mipLevel, srcWidth, srcHeight) = do
     let barrier = barrierStruct (mipLevel - 1)
           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
@@ -301,6 +304,7 @@ data TransitionDependent = TransitionDependent
   , dstStageMask  :: VkPipelineStageFlags
   }
 
+
 dependents :: ImageLayoutTransition -> TransitionDependent
 dependents Undef_TransDst =
   TransitionDependent
@@ -338,6 +342,7 @@ dependents Undef_ColorAtt =
   , srcStageMask    = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
   , dstStageMask    = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
   }
+
 
 transitionImageLayout :: VkImage
                       -> VkFormat

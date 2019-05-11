@@ -18,6 +18,7 @@ import           Graphics.Vulkan.Marshal.Create
 import           Lib.Program
 import           Lib.Program.Foreign
 
+
 createSemaphore :: VkDevice -> Program r VkSemaphore
 createSemaphore dev =
   allocResource
@@ -29,6 +30,7 @@ createSemaphore dev =
         &* set @"flags" 0
       ) $ \ciPtr -> runVk $ vkCreateSemaphore dev ciPtr VK_NULL sPtr
 
+
 createFence :: VkDevice -> Bool -> Program r VkFence
 createFence dev signaled =
   allocResource
@@ -39,4 +41,3 @@ createFence dev signaled =
         &* set @"pNext" VK_NULL
         &* set @"flags" (if signaled then VK_FENCE_CREATE_SIGNALED_BIT else 0)
       ) $ \ciPtr -> runVk $ vkCreateFence dev ciPtr VK_NULL sPtr
-

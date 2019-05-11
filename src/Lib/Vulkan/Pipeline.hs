@@ -37,7 +37,7 @@ createGraphicsPipeline :: ( KnownDim (n :: k)
                        -> VkSampleCountFlagBits
                        -> Program r VkPipeline
 createGraphicsPipeline
-    dev SwapchainInfo{ swapExtent } bindDesc attrDescs shaderDescs renderPass pipelineLayout msaaSamples=
+    dev SwapchainInfo{ swapExtent } bindDesc attrDescs shaderDescs renderPass pipelineLayout msaaSamples =
   let -- vertex input
       vertexInputInfo = createVk @VkPipelineVertexInputStateCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO

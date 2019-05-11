@@ -122,6 +122,7 @@ recordCommandBuffer
   liftIO $ vkCmdBindPipeline cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
   liftIO $ vkCmdBindVertexBuffers cmdBuffer 0 1 vertexBufArr vertexOffArr
 
+  -- TODO memleak?
   frameDsPtr <- newArrayRes [frameDescrSet]
   liftIO $ vkCmdBindDescriptorSets cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 1 frameDsPtr 0 VK_NULL
 
@@ -179,6 +180,7 @@ data RenderData
   , framebuffers       :: [VkFramebuffer]
     -- ^ one per swapchain image
   }
+
 
 drawFrame :: RenderData -> Program r Bool
 drawFrame RenderData {..} = do

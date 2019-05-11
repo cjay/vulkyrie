@@ -121,8 +121,8 @@ createSwapchain dev scsd queues surf slot mayOldSlot = do
   let maxIC = getField @"maxImageCount" $ capabilities scsd
       minIC = getField @"minImageCount" $ capabilities scsd
       imageCount = if maxIC <= 0
-                  then minIC + 1
-                  else min maxIC (minIC + 1)
+                   then minIC + 1
+                   else min maxIC (minIC + 1)
 
   -- write VkSwapchainCreateInfoKHR
   let swCreateInfo = createVk @VkSwapchainCreateInfoKHR
