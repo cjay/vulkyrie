@@ -1,11 +1,4 @@
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE DeriveGeneric       #-}
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE Strict              #-}
-{-# LANGUAGE TypeApplications    #-}
 module Lib.Vulkan.Sync
   ( createSemaphore
   , createFence

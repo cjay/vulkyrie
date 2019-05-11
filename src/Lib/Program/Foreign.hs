@@ -1,8 +1,5 @@
-{-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE KindSignatures      #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE Strict              #-}
-{-# LANGUAGE TypeApplications    #-}
 -- | Collection of functions adapted from @Foreign@ module hierarchy
 module Lib.Program.Foreign
     ( Ptr, plusPtr, Storable.sizeOf

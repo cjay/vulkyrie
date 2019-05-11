@@ -1,8 +1,4 @@
-{-# LANGUAGE DataKinds        #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE PolyKinds        #-}
 {-# LANGUAGE Strict           #-}
-{-# LANGUAGE TypeApplications #-}
 module Lib.Vulkan.VertexBuffer
   ( createVertexBuffer
   , createIndexBuffer

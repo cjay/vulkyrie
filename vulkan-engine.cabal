@@ -42,25 +42,31 @@ library
                         Lib.Vulkan.Vertex
                         Lib.Vulkan.VertexBuffer
     build-depends:      base >= 4.9 && < 5
-                      , vulkan-api >= 1.1.4.0
-                      , GLFW-b >= 3.2.1
+                      , concurrent-extra
                       , containers
-                      , template-haskell
                       , directory
-                      , process
-                      , filepath
-                      , transformers
-                      , mtl
-                      , monad-logger
+                      , dimensions >=1.0.1 && < 2
                       , easytensor >=1.0.1 && < 2
                       , easytensor-vulkan >=1.0.1 && < 2
-                      , dimensions >=1.0.1 && < 2
-                      , time
+                      , filepath
+                      , GLFW-b >= 3.2.1
                       , JuicyPixels
+                      , monad-logger
+                      , mtl
+                      , process
+                      , template-haskell
+                      , time
+                      , transformers
                       , vector
+                      , vulkan-api >= 1.1.4.0
                       , wavefront
-                      , concurrent-extra
-    default-language:   Haskell2010
+    default-language:    Haskell2010
+    default-extensions:  DataKinds
+                       , LambdaCase
+                       , NamedFieldPuns
+                       , RecordWildCards
+                       , ScopedTypeVariables
+                       , TypeApplications
     if flag(dev)
         cpp-options: -DDEVELOPMENT
         ghc-options: -O0 -Wall

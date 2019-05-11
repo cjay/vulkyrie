@@ -1,8 +1,5 @@
 {-# LANGUAGE CPP                   #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StrictData            #-}
 -- | Provide a `Program` monad to execute vulkan actions, carry state,
 --   manage allocated resources, and process exceptions.

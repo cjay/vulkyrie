@@ -1,10 +1,5 @@
-{-# LANGUAGE DataKinds        #-}
 {-# LANGUAGE DeriveGeneric    #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE PolyKinds        #-}
-{-# LANGUAGE RecordWildCards  #-}
 {-# LANGUAGE Strict           #-}
-{-# LANGUAGE TypeApplications #-}
 module Lib.Vulkan.Vertex
   ( Vertex (..), vertIBD, vertIADs
   , loadModel
@@ -14,7 +9,6 @@ module Lib.Vulkan.Vertex
 import           Codec.Wavefront
 import qualified Control.Monad.ST                         as ST
 import           Data.Maybe
-import           Data.Set                                 (Set)
 import qualified Data.Set                                 as Set
 import qualified Data.Vector                              as Vec
 import           GHC.Generics                             (Generic)

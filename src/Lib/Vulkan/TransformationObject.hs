@@ -1,10 +1,5 @@
-{-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE DeriveGeneric       #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE Strict              #-}
-{-# LANGUAGE TypeApplications    #-}
 module Lib.Vulkan.TransformationObject
   ( updateTransObj
   , createTransObjBuffers

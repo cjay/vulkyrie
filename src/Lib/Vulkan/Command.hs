@@ -1,9 +1,4 @@
-{-# LANGUAGE DataKinds        #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE PolyKinds        #-}
-{-# LANGUAGE RecordWildCards  #-}
 {-# LANGUAGE Strict           #-}
-{-# LANGUAGE TypeApplications #-}
 module Lib.Vulkan.Command
   ( createCommandPool
   , allocateCommandBuffers

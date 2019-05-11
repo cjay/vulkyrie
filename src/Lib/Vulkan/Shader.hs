@@ -1,6 +1,4 @@
-{-# LANGUAGE DataKinds        #-}
 {-# LANGUAGE Strict           #-}
-{-# LANGUAGE TypeApplications #-}
 module Lib.Vulkan.Shader
   ( createVkShaderStageCI
   , createVulkanShaderModule

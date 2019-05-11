@@ -1,10 +1,4 @@
-{-# OPTIONS_GHC -fno-warn-orphans  #-}
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE Strict                #-}
-{-# LANGUAGE TypeApplications      #-}
 module Lib.Vulkan.Presentation
   ( SwapchainInfo (..)
   , createSurface

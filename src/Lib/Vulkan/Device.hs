@@ -1,7 +1,4 @@
-{-# LANGUAGE DataKinds        #-}
-{-# LANGUAGE RecordWildCards  #-}
 {-# LANGUAGE Strict           #-}
-{-# LANGUAGE TypeApplications #-}
 module Lib.Vulkan.Device
     ( pickPhysicalDevice
     , isDeviceSuitable
