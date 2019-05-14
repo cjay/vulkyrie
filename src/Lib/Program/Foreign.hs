@@ -1,8 +1,13 @@
 {-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE Strict              #-}
+{-# LANGUAGE MagicHash           #-}
+{-# LANGUAGE UnboxedTuples       #-}
 -- | Collection of functions adapted from @Foreign@ module hierarchy
 module Lib.Program.Foreign
     ( Ptr, plusPtr, Storable.sizeOf
+    , withVkPtr
+    , withArrayLen
+    , withVkArrayLen
     , alloca, allocaArray
     , peek, peekArray, poke
     , ptrAtIndex
@@ -11,6 +16,7 @@ module Lib.Program.Foreign
     , mallocRes, mallocArrayRes, newArrayRes
     ) where
 
+import qualified GHC.Base
 
 import           Control.Concurrent.MVar
 import           Control.Monad.IO.Class
@@ -28,11 +34,24 @@ import           Numeric.PrimBytes
 import           Lib.Program
 
 
+withVkPtr :: VulkanMarshal a
+          => a
+          -> (Ptr a -> Program' b)
+          -> Program r b
+withVkPtr x = liftIOWith (withPtr x)
+{-# INLINE withVkPtr #-}
 
-alloca :: Storable a
-       => (Ptr a -> Program' b)
-       -> Program r b
-alloca = liftIOWith Foreign.alloca
+-- | This should probably be in Graphics.Vulkan.Marshal
+withArrayLen :: (Storable a, VulkanMarshal a) => [a] -> (Word32 -> Ptr a -> IO b) -> IO b
+withArrayLen xs pf = do
+  ret <- Foreign.withArrayLen xs (pf . fromIntegral)
+  touch xs
+  return ret
+{-# INLINE withArrayLen #-}
+
+withVkArrayLen :: (Storable a, VulkanMarshal a) => [a] -> (Word32 -> Ptr a -> Program' b) -> Program r b
+withVkArrayLen xs pf = liftIOWith (withArrayLen xs . curry) (uncurry pf)
+{-# INLINE withVkArrayLen #-}
 
 -- | Despite its name, this command does not copy data from a created pointer.
 --   It uses `newVkData` function inside.
@@ -43,6 +62,21 @@ allocaPeekVk pf = Program $ \ref c -> do
   locVar <- liftIO newEmptyMVar
   a <- newVkData (\ptr -> unProgram (pf ptr) ref (putMVar locVar))
   takeMVar locVar >>= c . (a <$)
+{-# INLINE allocaPeekVk #-}
+
+
+
+
+-- | Prevent earlier GC of given value
+touch :: a -> IO ()
+touch x = GHC.Base.IO $ \s -> case GHC.Base.touch# x s of s' -> (# s', () #)
+{-# INLINE touch #-}
+
+alloca :: Storable a
+       => (Ptr a -> Program' b)
+       -> Program r b
+alloca = liftIOWith Foreign.alloca
+{-# INLINE alloca #-}
 
 allocaPeekDF :: forall a (ns :: [Nat]) r
               . (PrimBytes a, Dimensions ns)
@@ -57,31 +91,38 @@ allocaPeekDF pf
     withDataFramePtr mdf $ \ptr -> unProgram (pf ptr) ref (putMVar locVar)
     df <- unsafeFreezeDataFrame mdf
     takeMVar locVar >>= c . (df <$)
+{-# INLINE allocaPeekDF #-}
 
 allocaArray :: Storable a
             => Int
             -> (Ptr a -> Program' b)
             -> Program r b
 allocaArray = liftIOWith . Foreign.allocaArray
+{-# INLINE allocaArray #-}
 
 
 allocaPeek :: Storable a
            => (Ptr a -> Program (Either VulkanException a) ())
            -> Program r a
 allocaPeek f = alloca $ \ptr -> f ptr >> liftIO (Storable.peek ptr)
+{-# INLINE allocaPeek #-}
 
 
 peekArray :: Storable a => Int -> Ptr a -> Program r [a]
 peekArray n = liftIO . Foreign.peekArray n
+{-# INLINE peekArray #-}
 
 peek :: Storable a => Ptr a -> Program r a
 peek = liftIO . Storable.peek
+{-# INLINE peek #-}
 
 poke :: Storable a => Ptr a -> a -> Program r ()
 poke p v = liftIO $ Storable.poke p v
+{-# INLINE poke #-}
 
 ptrAtIndex :: forall a. Storable a => Ptr a -> Int -> Ptr a
 ptrAtIndex ptr i = ptr `plusPtr` (i * Storable.sizeOf @a undefined)
+{-# INLINE ptrAtIndex #-}
 
 
 -- | Get size of action output and then get the result,
@@ -104,6 +145,7 @@ asListVk action = alloca $ \counterPtr -> do
 --   Use `locally` to bound the scope of resource allocation.
 mallocArrayRes :: Storable a => Int -> Program r (Ptr a)
 mallocArrayRes n = Program $ \_ c -> Foreign.allocaArray n (c . Right)
+{-# INLINE mallocArrayRes #-}
 
 -- | Allocate some memory for Storable and release it after continuation finishes.
 --   Uses @alloca@ from @Foreign@ inside.
@@ -111,6 +153,7 @@ mallocArrayRes n = Program $ \_ c -> Foreign.allocaArray n (c . Right)
 --   Use `locally` to bound the scope of resource allocation.
 mallocRes :: Storable a => Program r (Ptr a)
 mallocRes = Program $ \_ c -> Foreign.alloca (c . Right)
+{-# INLINE mallocRes #-}
 
 -- | Temporarily store a list of storable values in memory
 --   and release it after continuation finishes.
@@ -119,3 +162,4 @@ mallocRes = Program $ \_ c -> Foreign.alloca (c . Right)
 --   Use `locally` to bound the scope of resource allocation.
 newArrayRes :: Storable a => [a] -> Program r (Ptr a)
 newArrayRes xs = Program $ \_ c -> Foreign.withArray xs (c . Right)
+{-# INLINE newArrayRes #-}

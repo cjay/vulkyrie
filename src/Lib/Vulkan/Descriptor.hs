@@ -135,8 +135,6 @@ updateDescriptorSet dev descriptorSet offset uniformBufferInfos imageInfos =
       descriptorWrites = zipWith ($)
         (map uniformWrite uniformBufferInfos ++ map imageWrite imageInfos)
         [offset..]
-  in liftIO $ withArray descriptorWrites $ \dwPtr ->
-      vkUpdateDescriptorSets dev
-        (fromIntegral $ length descriptorWrites) dwPtr
-        0 VK_NULL
+  in withVkArrayLen descriptorWrites $ \dwLen dwPtr ->
+      liftIO $ vkUpdateDescriptorSets dev dwLen dwPtr 0 VK_NULL
 

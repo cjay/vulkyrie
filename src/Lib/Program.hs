@@ -22,7 +22,7 @@ module Lib.Program
       -- * Development build and debugging
     , isDev, inDev
       -- * Vulkan marshal utilies
-    , liftIOWith, withVkPtr
+    , liftIOWith
       -- * Other
     , getTime
     , LoopControl (..)
@@ -322,13 +322,6 @@ liftIOWith iof pf = Program $ \ref c ->
   iof (\a -> unProgram (pf a) ref pure) >>= c
 {-# INLINE liftIOWith #-}
 
-
-withVkPtr :: VulkanMarshal a
-          => a
-          -> (Ptr a -> Program' b)
-          -> Program r b
-withVkPtr x = liftIOWith (withPtr x)
-{-# INLINE withVkPtr #-}
 
 -- | Low latency time in seconds since the start
 getTime :: Program r Double
