@@ -113,7 +113,7 @@ runVulkanProgram = runProgram checkStatus $ do
     frameFinishedEvent <- liftIO $ Event.new
     frameOnQueueVars <- liftIO $ sequence $ replicate maxFramesInFlight $ newEmptyMVar
 
-    cmdPool <- createCommandPool dev queues
+    cmdPool <- createCommandPool dev queues (ResetCmdBuf True)
     logInfo $ "Createad command pool: " ++ show cmdPool
 
     -- we need this later, but don't want to realloc every swapchain recreation.
@@ -157,6 +157,8 @@ runVulkanProgram = runProgram checkStatus $ do
 
     transObjMemories <- newArrayRes $ transObjMems
 
+    dynCmdBuffers <- sequence $ replicate maxFramesInFlight $ allocateCommandBuffer dev cmdPool
+
     let beforeSwapchainCreation :: Program r ()
         beforeSwapchainCreation = do
           -- wait as long as window has width=0 and height=0
@@ -192,15 +194,13 @@ runVulkanProgram = runProgram checkStatus $ do
                                   msaaSamples
 
       -- TODO pool fences
+      -- TODO need mutex for cmdPool or a pool of command pools due to concurrent commandPool access by vkFreeCommandBuffers
       colorAttImgView <- createColorAttImgView pdev dev cmdPool gfxQ
                           (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
       depthAttImgView <- createDepthAttImgView pdev dev cmdPool gfxQ
                           (swapExtent swapInfo) msaaSamples
       framebuffers
         <- createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
-
-      -- TODO need mutex for cmdPool or a pool of command pools due to concurrent commandPool access by vkFreeCommandBuffers
-      dynCmdBuffers <- sequence $ replicate maxFramesInFlight $ allocateCommandBuffer dev cmdPool
 
       let rdata = RenderData
             { dev

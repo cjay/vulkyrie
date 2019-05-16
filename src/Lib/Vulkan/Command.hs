@@ -1,6 +1,7 @@
-{-# LANGUAGE Strict           #-}
+{-# LANGUAGE Strict     #-}
 module Lib.Vulkan.Command
   ( createCommandPool
+  , ResetCmdBufFlag (..)
   , allocateCommandBuffers
   , allocateCommandBuffer
   , runCommandsAsync
@@ -21,14 +22,17 @@ import           Lib.Vulkan.Device
 import           Lib.Vulkan.Sync
 
 
-createCommandPool :: VkDevice -> DevQueues -> Program r VkCommandPool
-createCommandPool dev DevQueues{..} =
+newtype ResetCmdBufFlag = ResetCmdBuf Bool deriving Eq
+
+
+createCommandPool :: VkDevice -> DevQueues -> ResetCmdBufFlag -> Program r VkCommandPool
+createCommandPool dev DevQueues{ graphicsFamIdx } (ResetCmdBuf resetFlag) =
   allocResource (liftIO . flip (vkDestroyCommandPool dev) VK_NULL) $
     allocaPeek $ \pPtr -> withVkPtr
       ( createVk
         $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO
         &* set @"pNext" VK_NULL
-        &* set @"flags" VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
+        &* set @"flags" (if resetFlag then VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT else 0)
         &* set @"queueFamilyIndex" graphicsFamIdx
       ) $ \ciPtr -> runVk $ vkCreateCommandPool dev ciPtr VK_NULL pPtr
 
