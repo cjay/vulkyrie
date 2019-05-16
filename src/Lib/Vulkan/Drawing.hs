@@ -22,6 +22,7 @@ import           Graphics.Vulkan.Marshal.Create
 import           Graphics.Vulkan.Marshal.Create.DataFrame
 import           Numeric.DataFrame
 
+import           Lib.MetaResource
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Vulkan.Device
@@ -133,11 +134,11 @@ recordCommandBuffer
 
 
 createFrameSemaphores :: VkDevice -> Program r (Ptr VkSemaphore)
-createFrameSemaphores dev = newArrayRes =<< (sequence $ replicate maxFramesInFlight (createSemaphore dev))
+createFrameSemaphores dev = newArrayRes =<< (sequence $ replicate maxFramesInFlight (auto $ metaSemaphore dev))
 
 
 createFrameFences :: VkDevice -> Program r (Ptr VkFence)
-createFrameFences dev = newArrayRes =<< (sequence $ replicate maxFramesInFlight (createFence dev True))
+createFrameFences dev = newArrayRes =<< (sequence $ replicate maxFramesInFlight (auto $ metaFence dev True))
 
 
 data RenderData
