@@ -11,7 +11,7 @@ module Lib.Program
     ( Program (..), Program', runProgram
     , MonadIO (..)
       -- * Resource management
-    , allocResource, allocResource', locally
+    , later, allocResource, allocResource', locally
       -- * State manipulation
     , ProgramState (..), MonadState (..), modify, modify', gets
       -- * Exception handling
@@ -29,6 +29,7 @@ module Lib.Program
     , checkStatus
     , asyncRedo
     , occupyThreadAndFork
+    , forkProg
     ) where
 
 
@@ -96,6 +97,14 @@ runProgram :: (Either VulkanException a -> IO r)
 runProgram c p = iProgState >>= newIORef >>= flip (unProgram p) c
 
 
+-- | Run given prog after the continuation finishes. Intended for freeing resources.
+later :: Program' ()
+      -> Program r ()
+later prog = Program $ \ref c ->
+    c (Right ()) >>= \r -> r <$ unProgram prog ref pure
+{-# INLINE later #-}
+
+
 -- | Allocate some resource and return it,
 --   free that resource after the continuation is executed.
 --
@@ -109,6 +118,7 @@ allocResource free alloc = Program $ \ref c ->
     Left e -> c (Left e)
     Right a -> c (Right a) >>= \r -> r <$ unProgram (free a) ref pure
 {-# INLINE allocResource #-}
+
 
 -- | The same as `allocResource`, but does not prepend a
 --   resource release action to the continuation.
@@ -404,3 +414,7 @@ occupyThreadAndFork mainProg deputyProg = Program $ \ref c -> do
   exitCode <- catch (unProgram mainProg ref pure >>= checkStatus >> return ExitSuccess) $
                     \(exitCode :: ExitCode) -> return exitCode
   c (Right ()) >> exitWith exitCode
+
+
+forkProg :: Program () () -> Program r ThreadId
+forkProg prog = liftIO $ forkIO $ runProgram checkStatus prog
