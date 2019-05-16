@@ -24,6 +24,7 @@ library
     hs-source-dirs:     src
     exposed-modules:    Lib
                         Lib.GLFW
+                        Lib.MetaResource
                         Lib.Program
                         Lib.Program.Foreign
                         Lib.Vulkan.Buffer
