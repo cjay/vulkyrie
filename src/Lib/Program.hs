@@ -26,10 +26,12 @@ module Lib.Program
       -- * Other
     , getTime
     , LoopControl (..)
+    , loop
     , checkStatus
     , asyncRedo
     , occupyThreadAndFork
     , forkProg
+    , touchIORef
     ) where
 
 
@@ -347,7 +349,14 @@ getTime = do
     return seconds
 
 
-data LoopControl = ContinueLoop | AbortLoop deriving Eq
+data LoopControl a = ContinueLoop | AbortLoop a deriving Eq
+
+
+loop :: Program r (LoopControl a) -> Program r a
+loop action = go
+  where go = action >>= \case
+          ContinueLoop -> go
+          AbortLoop a -> return a
 
 
 checkStatus :: Either VulkanException () -> IO ()
@@ -418,3 +427,7 @@ occupyThreadAndFork mainProg deputyProg = Program $ \ref c -> do
 
 forkProg :: Program () () -> Program r ThreadId
 forkProg prog = liftIO $ forkIO $ runProgram checkStatus prog
+
+-- | to make sure IORef writes arrive in other threads
+touchIORef :: IORef a -> Program r ()
+touchIORef ref = liftIO $ atomicModifyIORef' ref (\x -> (x, ()))

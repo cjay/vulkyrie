@@ -1,5 +1,5 @@
+{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE TypeSynonymInstances #-}
-{-# LANGUAGE FlexibleInstances #-}
 module Lib.MetaResource
   ( MetaResource
   , create
@@ -14,11 +14,11 @@ module Lib.MetaResource
 import           Graphics.Vulkan.Core_1_0
 import           Lib.Program
 
--- | drop in replacement for Lib.Program.allocResource
 data MetaResource r a = MetaResource { destroy :: a -> Program' (), create :: Program r a }
 
+-- | drop in replacement for Lib.Program.allocResource
 metaResource :: (a -> Program' ()) -- ^ destroy resource
-             -> Program r a -- ^ allocate resource
+             -> Program r a        -- ^ allocate resource
              -> MetaResource r a
 metaResource destroy create = MetaResource {..}
 {-# INLINE metaResource #-}

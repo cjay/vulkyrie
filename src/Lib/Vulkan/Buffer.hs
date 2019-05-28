@@ -1,4 +1,4 @@
-{-# LANGUAGE Strict           #-}
+{-# LANGUAGE Strict #-}
 module Lib.Vulkan.Buffer
   ( createBuffer
   , copyBuffer
@@ -14,7 +14,6 @@ import           Numeric.DataFrame
 
 import           Lib.Program
 import           Lib.Program.Foreign
-import           Lib.Vulkan.Command
 
 
 createBuffer :: VkPhysicalDevice
@@ -66,17 +65,13 @@ createBuffer pdev dev bSize bUsage bMemPropFlags = do
     return (vertexBufferMemory, buf)
 
 
-copyBuffer :: VkDevice
-           -> VkCommandPool
-           -> VkQueue
-           -> VkBuffer -> VkBuffer -> VkDeviceSize -> Program r ()
-copyBuffer dev cmdPool cmdQueue srcBuffer dstBuffer bSize =
-  runCommandsOnce dev cmdPool cmdQueue $ \cmdBuf -> do
-    let copyRegion = createVk @VkBufferCopy
-          $  set @"srcOffset" 0
-          &* set @"dstOffset" 0
-          &* set @"size" bSize
-    withVkPtr copyRegion $ liftIO . vkCmdCopyBuffer cmdBuf srcBuffer dstBuffer 1
+copyBuffer :: VkCommandBuffer -> VkBuffer -> VkBuffer -> VkDeviceSize -> Program r ()
+copyBuffer cmdBuf srcBuffer dstBuffer bSize = do
+  let copyRegion = createVk @VkBufferCopy
+        $  set @"srcOffset" 0
+        &* set @"dstOffset" 0
+        &* set @"size" bSize
+  withVkPtr copyRegion $ liftIO . vkCmdCopyBuffer cmdBuf srcBuffer dstBuffer 1
 
 
 -- | Return an index of a memory type for a device

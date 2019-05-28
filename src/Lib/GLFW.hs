@@ -55,7 +55,7 @@ initGLFWWindow w h n windowSizeChanged = do
 
 
 -- | Repeats until WindowShouldClose flag is set. Returns true if program should exit.
-glfwMainLoop :: GLFW.Window -> Program' LoopControl -> Program r Bool
+glfwMainLoop :: GLFW.Window -> Program' (LoopControl ()) -> Program r Bool
 glfwMainLoop w action = go
   where
     go = do

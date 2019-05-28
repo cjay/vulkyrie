@@ -32,8 +32,10 @@ library
                         Lib.Vulkan.Descriptor
                         Lib.Vulkan.Device
                         Lib.Vulkan.Drawing
+                        Lib.Vulkan.Engine
                         Lib.Vulkan.Image
                         Lib.Vulkan.Instance
+                        Lib.Vulkan.Queue
                         Lib.Vulkan.Pipeline
                         Lib.Vulkan.Presentation
                         Lib.Vulkan.Shader
@@ -42,11 +44,13 @@ library
                         Lib.Vulkan.TransformationObject
                         Lib.Vulkan.Vertex
                         Lib.Vulkan.VertexBuffer
-    build-depends:      base >= 4.9 && < 5
+    build-depends:      async
+                      , base >= 4.9 && < 5
                       , concurrent-extra
                       , containers
                       , directory
                       , dimensions >=1.0.1 && < 2
+                      , dlist
                       , easytensor >=1.0.1 && < 2
                       , easytensor-vulkan >=1.0.1 && < 2
                       , filepath

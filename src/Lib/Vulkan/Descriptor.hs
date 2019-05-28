@@ -9,7 +9,6 @@ module Lib.Vulkan.Descriptor
   , createDescriptorSetLayout
   ) where
 
-import           Foreign.Marshal.Array          (withArray)
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create

@@ -1,5 +1,5 @@
-{-# LANGUAGE Strict              #-}
-{-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE Strict          #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Lib
   ( runVulkanProgram
   ) where
@@ -15,17 +15,21 @@ import           Numeric.DataFrame
 import           Numeric.Dimensions
 
 import           Lib.GLFW
+import           Lib.MetaResource
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Vulkan.Command
 import           Lib.Vulkan.Descriptor
 import           Lib.Vulkan.Device
 import           Lib.Vulkan.Drawing
+import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Image
 import           Lib.Vulkan.Pipeline
 import           Lib.Vulkan.Presentation
+import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Shader
 import           Lib.Vulkan.Shader.TH
+import           Lib.Vulkan.Sync
 import           Lib.Vulkan.TransformationObject
 import           Lib.Vulkan.Vertex
 import           Lib.Vulkan.VertexBuffer
@@ -90,6 +94,16 @@ runVulkanProgram = runProgram checkStatus $ do
 
     (dev, queues) <- createGraphicsDevice pdev vulkanSurface
     let gfxQ = graphicsQueue queues
+
+    msp <- auto $ metaMasterSemaphorePool dev
+    gq <- auto $ metaManagedQueue dev gfxQ msp
+    attachQueuePump gq 16666
+    cpp <- auto $ metaCommandPoolPool dev (graphicsFamIdx queues)
+
+    sp <- auto $ metaSemaphorePool msp
+    cmdCap <- auto $ metaCommandCapability cpp
+    let cap = EngineCapability pdev dev cmdCap gq sp
+
     logInfo $ "Createad device: " ++ show dev
     logInfo $ "Createad queues: " ++ show queues
 
@@ -108,13 +122,9 @@ runVulkanProgram = runProgram checkStatus $ do
 
     frameIndexRef <- liftIO $ newIORef 0
     renderFinishedSems <- createFrameSemaphores dev
-    imageAvailableSems <- createFrameSemaphores dev
-    inFlightFences <- createFrameFences dev
+    queueEvents <- sequence $ replicate maxFramesInFlight $ newSetQueueEvent >>= liftIO . newIORef
     frameFinishedEvent <- liftIO $ Event.new
     frameOnQueueVars <- liftIO $ sequence $ replicate maxFramesInFlight $ newEmptyMVar
-
-    cmdPool <- createCommandPool dev queues (ResetCmdBuf True)
-    logInfo $ "Createad command pool: " ++ show cmdPool
 
     -- we need this later, but don't want to realloc every swapchain recreation.
     imgIndexPtr <- mallocRes
@@ -124,19 +134,22 @@ runVulkanProgram = runProgram checkStatus $ do
         objects :: [(Word32, DataFrame Word32 '[XN 3])]
         objects = map (\ixs -> (fromIntegral $ dimSize1 ixs, ixs)) indicesObjs
 
-    vertexBuffer <-
-      createVertexBuffer pdev dev cmdPool gfxQ vertices
+    (vertexSem, vertexBuffer) <-
+      createVertexBuffer cap vertices
 
-    indexBuffers <- forM objects $ mapM $ \indices ->
-      createIndexBuffer pdev dev cmdPool gfxQ indices
+    -- (Word32, (Sem, Buffer))
+    indexBuffers' <- forM objects $ mapM $ \indices ->
+      createIndexBuffer cap indices
+
+    let (indexSems, indexBuffers) = unzip $ map (\(num, (sem, buf)) -> (sem, (num, buf))) indexBuffers'
 
     frameDSL <- createDescriptorSetLayout dev [uniformBinding 0]
     materialDSL <- createDescriptorSetLayout dev [samplerBinding 0]
     pipelineLayout <- createPipelineLayout dev [frameDSL, materialDSL]
 
     let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
-    descrTextureInfos <- mapM
-      (createTextureInfo pdev dev cmdPool gfxQ) texturePaths
+    (textureSems, descrTextureInfos) <- unzip <$> mapM
+      (createTextureInfo cap) texturePaths
 
     depthFormat <- findDepthFormat pdev
 
@@ -157,8 +170,6 @@ runVulkanProgram = runProgram checkStatus $ do
 
     transObjMemories <- newArrayRes $ transObjMems
 
-    dynCmdBuffers <- sequence $ replicate maxFramesInFlight $ allocateCommandBuffer dev cmdPool
-
     let beforeSwapchainCreation :: Program r ()
         beforeSwapchainCreation = do
           -- wait as long as window has width=0 and height=0
@@ -176,6 +187,13 @@ runVulkanProgram = runProgram checkStatus $ do
 
     swapchainSlot <- createSwapchainSlot dev
     swapInfoRef <- createSwapchain dev scsd queues vulkanSurface swapchainSlot Nothing >>= liftIO . newIORef
+
+    removeQueuePump gq
+
+    let loadSems = [(vertexSem, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT)] <>
+          map (\sem -> (sem, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT)) indexSems <>
+          map (\sem -> (sem, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)) textureSems
+    nextSems <- liftIO $ newMVar loadSems
 
     -- The code below re-runs when the swapchain was re-created
     asyncRedo $ \redoWithNewSwapchain -> do
@@ -195,28 +213,30 @@ runVulkanProgram = runProgram checkStatus $ do
 
       -- TODO pool fences
       -- TODO need mutex for cmdPool or a pool of command pools due to concurrent commandPool access by vkFreeCommandBuffers
-      colorAttImgView <- createColorAttImgView pdev dev cmdPool gfxQ
+      (colorAttSem, colorAttImgView) <- createColorAttImgView cap
                           (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
-      depthAttImgView <- createDepthAttImgView pdev dev cmdPool gfxQ
+      (depthAttSem, depthAttImgView) <- createDepthAttImgView cap
                           (swapExtent swapInfo) msaaSamples
+      sems <- liftIO $ takeMVar nextSems
+      liftIO $ putMVar nextSems ((colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+                                 : (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
+                                 : sems)
       framebuffers
         <- createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
 
       let rdata = RenderData
-            { dev
-            , swapInfo
+            { swapInfo
             , queues
             , imgIndexPtr
             , frameIndexRef
             , renderFinishedSems
-            , imageAvailableSems
-            , inFlightFences
+            , nextSems
             , frameFinishedEvent
+            , queueEvents
             , frameOnQueueVars
             , memories           = transObjMemories
             , memoryMutator      = updateTransObj dev (swapExtent swapInfo)
             -- , descrSetMutator    = updateDescrSet dev descrTextureInfos
-            , dynCmdBuffers
             , recCmdBuffer       = recordCommandBuffer graphicsPipeline
                                         renderPass pipelineLayout swapInfo
                                         vertexBuffer indexBuffers
@@ -237,7 +257,7 @@ runVulkanProgram = runProgram checkStatus $ do
       shouldExit <- glfwMainLoop window $ do
         return () -- do some app logic
 
-        needRecreation <- drawFrame rdata `catchError` ( \err@(VulkanException ecode _) ->
+        needRecreation <- drawFrame cap rdata `catchError` ( \err@(VulkanException ecode _) ->
           case ecode of
             Just VK_ERROR_OUT_OF_DATE_KHR -> do
               logInfo "Have got a VK_ERROR_OUT_OF_DATE_KHR error"
@@ -255,7 +275,7 @@ runVulkanProgram = runProgram checkStatus $ do
             writeIORef currentSec (floor seconds)
             writeIORef frameCount 0
           else do
-            modifyIORef frameCount $ \c -> c + 1
+            modifyIORef' frameCount $ \c -> c + 1
 
         sizeChanged <- liftIO $ readIORef windowSizeChanged
         when sizeChanged $ logInfo "Have got a windowSizeCallback from GLFW"
@@ -266,7 +286,7 @@ runVulkanProgram = runProgram checkStatus $ do
           newSwapInfo <- createSwapchain dev newScsd queues vulkanSurface swapchainSlot (Just oldSwapchainSlot)
           liftIO $ atomicWriteIORef swapInfoRef newSwapInfo
           redoWithNewSwapchain
-          return AbortLoop
+          return $ AbortLoop ()
         else return ContinueLoop
       -- after glfwMainLoop exits, we need to wait for the frame to finish before deallocating things
       if shouldExit
@@ -276,7 +296,7 @@ runVulkanProgram = runProgram checkStatus $ do
       -- logInfo "Finished waiting after main loop termination before deallocating."
   return ()
 
-
+{-
 -- TODO not needed right now
 updateDescrSet :: VkDevice
                -> [VkDescriptorImageInfo]
@@ -287,3 +307,4 @@ updateDescrSet dev texInfos descrSet = do
   -- let texIx = floor seconds `mod` 2
   -- updateDescriptorSet dev descrSet 1 [] [texInfos !! texIx]
   updateDescriptorSet dev descrSet 1 [] [texInfos !! 0]
+-}

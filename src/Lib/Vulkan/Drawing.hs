@@ -1,18 +1,17 @@
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE Strict              #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE Strict     #-}
 module Lib.Vulkan.Drawing
   ( RenderData (..)
   , createFramebuffers
   , recordCommandBuffer
   , createFrameSemaphores
-  , createFrameFences
   , drawFrame
   , maxFramesInFlight
   ) where
 
+import           Control.Concurrent
 import           Control.Concurrent.Event                 (Event)
 import qualified Control.Concurrent.Event                 as Event
-import           Control.Concurrent.MVar
 import           Control.Monad                            (forM_, when)
 import           Data.IORef
 import           Graphics.Vulkan
@@ -25,8 +24,11 @@ import           Numeric.DataFrame
 import           Lib.MetaResource
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Vulkan.Command
 import           Lib.Vulkan.Device
+import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Presentation
+import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Sync
 
 
@@ -77,14 +79,6 @@ recordCommandBuffer
     cmdBuffer framebuffer frameDescrSet materialDescrSets = do
   vertexBufArr <- newArrayRes [vertexBuffer]
   vertexOffArr <- newArrayRes [0]
-  -- begin commands
-  let cmdBufBeginInfo = createVk @VkCommandBufferBeginInfo
-        $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
-        &* set @"pNext" VK_NULL
-        &* set @"flags" VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-
-  withVkPtr cmdBufBeginInfo
-    $ runVk . vkBeginCommandBuffer cmdBuffer
 
   -- render pass
   let renderPassBeginInfo = createVk @VkRenderPassBeginInfo
@@ -130,104 +124,88 @@ recordCommandBuffer
 
   -- finishing up
   liftIO $ vkCmdEndRenderPass cmdBuffer
-  runVk $ vkEndCommandBuffer cmdBuffer
 
 
-createFrameSemaphores :: VkDevice -> Program r (Ptr VkSemaphore)
-createFrameSemaphores dev = newArrayRes =<< (sequence $ replicate maxFramesInFlight (auto $ metaSemaphore dev))
-
-
-createFrameFences :: VkDevice -> Program r (Ptr VkFence)
-createFrameFences dev = newArrayRes =<< (sequence $ replicate maxFramesInFlight (auto $ metaFence dev True))
+createFrameSemaphores :: VkDevice -> Program r [VkSemaphore]
+createFrameSemaphores dev = sequence $ replicate maxFramesInFlight (auto $ metaSemaphore dev)
 
 
 data RenderData
   = RenderData
-  { dev                :: VkDevice
-  , swapInfo           :: SwapchainInfo
-  , queues             :: DevQueues
-  , imgIndexPtr        :: Ptr Word32
-  , frameIndexRef      :: IORef Int
-  , renderFinishedSems :: Ptr VkSemaphore
-    -- ^ one per frame-in-flight
-  , imageAvailableSems :: Ptr VkSemaphore
-    -- ^ one per frame-in-flight
-  , inFlightFences     :: Ptr VkFence
-    -- ^ one per frame-in-flight
-  , frameFinishedEvent :: Event
+  { swapInfo                  :: SwapchainInfo
+  , queues                    :: DevQueues
+  , imgIndexPtr               :: Ptr Word32
+  , frameIndexRef             :: IORef Int
+  , renderFinishedSems        :: [VkSemaphore]
+  , nextSems                  :: MVar [(VkSemaphore, VkPipelineStageFlags)]
+  , frameFinishedEvent        :: Event
+  , queueEvents               :: [IORef QueueEvent]
     -- ^ signals completion of a frame to deallocators
-  , frameOnQueueVars   :: [MVar ()]
+  , frameOnQueueVars          :: [MVar ()]
     -- ^ one per frame-in-flight
-  , memories           :: Ptr VkDeviceMemory
+  , memories                  :: Ptr VkDeviceMemory
     -- ^ one per frame-in-flight
-  , memoryMutator      :: forall r. VkDeviceMemory -> Program r ()
+  , memoryMutator             :: forall r. VkDeviceMemory -> Program r ()
     -- ^ to execute on memories[*imgIndexPtr] before drawing
-  -- , descrSetMutator    :: forall r. VkDescriptorSet -> Program r ()
+  -- , descrSetMutator        :: forall r. VkDescriptorSet -> Program r ()
     -- ^ update per-frame uniforms
-  , dynCmdBuffers      :: [VkCommandBuffer]
-    -- ^ one per frame-in-flight. recorded every frame.
-  , recCmdBuffer       :: forall r. VkCommandBuffer -> VkFramebuffer -> VkDescriptorSet -> [VkDescriptorSet] -> Program r ()
-    -- ^ update dynCmdBuffer
-  , frameDescrSets     :: [VkDescriptorSet]
+  , recCmdBuffer              :: forall r. VkCommandBuffer -> VkFramebuffer -> VkDescriptorSet -> [VkDescriptorSet] -> Program r ()
+    -- ^ update cmdBuf
+  , frameDescrSets            :: [VkDescriptorSet]
     -- ^ one per frame-in-flight
   , materialDescrSetsPerFrame :: [[VkDescriptorSet]]
     -- ^ one list of material descriptor sets per frame-in-flight
-  , framebuffers       :: [VkFramebuffer]
+  , framebuffers              :: [VkFramebuffer]
     -- ^ one per swapchain image
   }
 
 
-drawFrame :: RenderData -> Program r Bool
-drawFrame RenderData {..} = do
+drawFrame :: EngineCapability -> RenderData -> Program r Bool
+drawFrame EngineCapability{..} RenderData{..} = do
     frameIndex <- liftIO $ readIORef frameIndexRef
-    let inFlightFencePtr = inFlightFences `ptrAtIndex` frameIndex
     isOnQueue <- liftIO $
       maybe False (const True) <$> tryTakeMVar (frameOnQueueVars !! frameIndex)
     -- could be not on queue because of retry due to VK_ERROR_OUT_OF_DATE_KHR below
+    oldEvent <- liftIO $ readIORef (queueEvents !! frameIndex)
     when isOnQueue $ do
-      runVk $ vkWaitForFences dev 1 inFlightFencePtr VK_TRUE (maxBound :: Word64)
-      -- could also take current time here to measure frametimes
+      waitForQueue oldEvent
       liftIO $ Event.signal frameFinishedEvent
+      -- could also take current time here to measure frametimes
 
     let SwapchainInfo {..} = swapInfo
         DevQueues {..} = queues
 
-    imageAvailable <- peek (imageAvailableSems `ptrAtIndex` frameIndex)
-    renderFinished <- peek (renderFinishedSems `ptrAtIndex` frameIndex)
-    inFlightFence <- peek inFlightFencePtr
+    imageAvailable <- head <$> acquireSemaphores semPool 1
+    let renderFinished = (renderFinishedSems !! frameIndex)
     -- Acquiring an image from the swapchain
     -- Can throw VK_ERROR_OUT_OF_DATE_KHR
-    runVk $ vkAcquireNextImageKHR
+    (runVk $ vkAcquireNextImageKHR
           dev swapchain maxBound
-          imageAvailable VK_NULL_HANDLE imgIndexPtr
+          imageAvailable VK_NULL_HANDLE imgIndexPtr) `catchError`
+      ( \err -> do
+          releaseSemaphores semPool [imageAvailable]
+          throwError err
+      )
+
     imgIndex <- fromIntegral <$> peek imgIndexPtr
     let memoryPtr = memories `ptrAtIndex` frameIndex
     mem <- peek memoryPtr
     memoryMutator mem
 
-    let dynCmdBuffer = dynCmdBuffers !! frameIndex
-        frameDescrSet = frameDescrSets !! frameIndex
-        materialDescrSets = materialDescrSetsPerFrame !! frameIndex
-        framebuffer = framebuffers !! imgIndex
-    -- descrSetMutator frameDescrSet
-    recCmdBuffer dynCmdBuffer framebuffer frameDescrSet materialDescrSets
-    dynCmdBufPtr <- newArrayRes [dynCmdBuffer]
+    nextS <- liftIO $ takeMVar nextSems
+    liftIO $ putMVar nextSems []
 
-    -- Submitting the command buffer
-    let submitInfo = createVk @VkSubmitInfo
-          $  set @"sType" VK_STRUCTURE_TYPE_SUBMIT_INFO
-          &* set @"pNext" VK_NULL
-          &* set @"waitSemaphoreCount" 1
-          &* setListRef @"pWaitSemaphores"   [imageAvailable]
-          &* setListRef @"pWaitDstStageMask" [VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT]
-          &* set @"commandBufferCount" 1
-          &* set @"pCommandBuffers" dynCmdBufPtr
-          &* set @"signalSemaphoreCount" 1
-          &* setListRef @"pSignalSemaphores" [renderFinished]
+    withCmdBuf cmdCap cmdQueue
+      ((imageAvailable, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextS)
+      [renderFinished] $ \cmdBuf -> do
+      let frameDescrSet = frameDescrSets !! frameIndex
+          materialDescrSets = materialDescrSetsPerFrame !! frameIndex
+          framebuffer = framebuffers !! imgIndex
+      -- descrSetMutator frameDescrSet
+      recCmdBuffer cmdBuf framebuffer frameDescrSet materialDescrSets
 
-    runVk $ vkResetFences dev 1 inFlightFencePtr
-    withVkPtr submitInfo $ \siPtr ->
-      runVk $ vkQueueSubmit graphicsQueue 1 siPtr inFlightFence
+    nextEvent <- submitNotify cmdQueue
+    liftIO $ writeIORef (queueEvents !! frameIndex) nextEvent
     liftIO $ putMVar (frameOnQueueVars !! frameIndex) ()
 
     -- Presentation

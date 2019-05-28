@@ -27,27 +27,24 @@ import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Vulkan.Buffer
 import           Lib.Vulkan.Command
+import           Lib.Vulkan.Engine
+import           Lib.Vulkan.Sync
 
 
-createTextureInfo :: VkPhysicalDevice
-                  -> VkDevice
-                  -> VkCommandPool
-                  -> VkQueue
+createTextureInfo :: EngineCapability
                   -> FilePath
-                  -> Program r VkDescriptorImageInfo
-createTextureInfo pdev dev cmdPool queue path = do
-    (textureView, mipLevels) <- createTextureImageView pdev dev cmdPool queue path
+                  -> Program r (VkSemaphore, VkDescriptorImageInfo)
+createTextureInfo cap@EngineCapability{..} path = do
+    (sem, textureView, mipLevels) <- createTextureImageView cap path
     textureSampler <- createTextureSampler dev mipLevels
-    textureImageInfo textureView textureSampler
+    info <- textureImageInfo textureView textureSampler
+    return (sem, info)
 
 
-createTextureImageView :: VkPhysicalDevice
-                       -> VkDevice
-                       -> VkCommandPool
-                       -> VkQueue
+createTextureImageView :: EngineCapability
                        -> FilePath
-                       -> Program r (VkImageView, Word32)
-createTextureImageView pdev dev cmdPool cmdQueue path = do
+                       -> Program r (VkSemaphore, VkImageView, Word32)
+createTextureImageView EngineCapability{..} path = do
   Image { imageWidth, imageHeight, imageData }
     <- (liftIO $ readImage path) >>= \case
       Left err -> throwVkMsg err
@@ -64,11 +61,13 @@ createTextureImageView pdev dev cmdPool cmdQueue path = do
     (VK_IMAGE_USAGE_TRANSFER_SRC_BIT .|. VK_IMAGE_USAGE_TRANSFER_DST_BIT .|. VK_IMAGE_USAGE_SAMPLED_BIT)
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
-  runCommandsOnce dev cmdPool cmdQueue $
+  sems <- acquireSemaphores semPool 3
+  let [sem0, sem1, sem2] = sems
+  withCmdBuf cmdCap cmdQueue [] [sem0] $
     transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM Undef_TransDst mipLevels
 
   -- Use "locally" to destroy temporary staging buffer after data copy is complete
-  locally $ do
+  withCmdBuf cmdCap cmdQueue [(sem0, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem1] $ \cmdBuf -> do
     (stagingMem, stagingBuf) <-
       createBuffer pdev dev bufSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
@@ -80,17 +79,17 @@ createTextureImageView pdev dev cmdPool cmdQueue path = do
       copyArray (castPtr stagingDataPtr) imageDataPtr imageDataLen
     liftIO $ vkUnmapMemory dev stagingMem
 
-    copyBufferToImage dev cmdPool cmdQueue stagingBuf image
+    copyBufferToImage cmdBuf stagingBuf image
       (fromIntegral imageWidth) (fromIntegral imageHeight)
 
-  runCommandsOnce dev cmdPool cmdQueue $
+  withCmdBuf cmdCap cmdQueue [(sem1, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem2] $
     -- generateMipmaps does this as a side effect:
     -- transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM TransDst_ShaderRO mipLevels
     generateMipmaps pdev image VK_FORMAT_R8G8B8A8_UNORM (fromIntegral imageWidth) (fromIntegral imageHeight) mipLevels
 
   imageView <- createImageView dev image VK_FORMAT_R8G8B8A8_UNORM VK_IMAGE_ASPECT_COLOR_BIT mipLevels
 
-  return (imageView, mipLevels)
+  return (sem2, imageView, mipLevels)
 
 
 generateMipmaps :: VkPhysicalDevice
@@ -442,39 +441,36 @@ createImage pdev dev width height mipLevels samples format tiling usage propFlag
   return (imageMemory, image)
 
 
-copyBufferToImage :: VkDevice
-                  -> VkCommandPool
-                  -> VkQueue
+copyBufferToImage :: VkCommandBuffer
                   -> VkBuffer
                   -> VkImage
                   -> Word32
                   -> Word32
                   -> Program r ()
-copyBufferToImage dev cmdPool cmdQueue buffer image width height =
-  runCommandsOnce dev cmdPool cmdQueue $ \cmdBuf -> do
-    let region = createVk @VkBufferImageCopy
-          $  set @"bufferOffset" 0
-          &* set @"bufferRowLength" 0
-          &* set @"bufferImageHeight" 0
-          &* setVk @"imageSubresource"
-              (  set @"aspectMask" VK_IMAGE_ASPECT_COLOR_BIT
-              &* set @"mipLevel" 0
-              &* set @"baseArrayLayer" 0
-              &* set @"layerCount" 1
-              )
-          &* setVk @"imageOffset"
-              (  set @"x" 0
-              &* set @"y" 0
-              &* set @"z" 0
-              )
-          &* setVk @"imageExtent"
-              (  set @"width" width
-              &* set @"height" height
-              &* set @"depth" 1
-              )
-    withVkPtr region $ \regPtr -> liftIO $
-      vkCmdCopyBufferToImage cmdBuf buffer image
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL 1 regPtr
+copyBufferToImage cmdBuf buffer image width height = do
+  let region = createVk @VkBufferImageCopy
+        $  set @"bufferOffset" 0
+        &* set @"bufferRowLength" 0
+        &* set @"bufferImageHeight" 0
+        &* setVk @"imageSubresource"
+            (  set @"aspectMask" VK_IMAGE_ASPECT_COLOR_BIT
+            &* set @"mipLevel" 0
+            &* set @"baseArrayLayer" 0
+            &* set @"layerCount" 1
+            )
+        &* setVk @"imageOffset"
+            (  set @"x" 0
+            &* set @"y" 0
+            &* set @"z" 0
+            )
+        &* setVk @"imageExtent"
+            (  set @"width" width
+            &* set @"height" height
+            &* set @"depth" 1
+            )
+  withVkPtr region $ \regPtr -> liftIO $
+    vkCmdCopyBufferToImage cmdBuf buffer image
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL 1 regPtr
 
 
 findSupportedFormat :: VkPhysicalDevice
@@ -512,14 +508,11 @@ hasStencilComponent format = format `elem`
   [VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT]
 
 
-createDepthAttImgView :: VkPhysicalDevice
-                      -> VkDevice
-                      -> VkCommandPool
-                      -> VkQueue
+createDepthAttImgView :: EngineCapability
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
-                      -> Program r VkImageView
-createDepthAttImgView pdev dev cmdPool queue extent samples = do
+                      -> Program r (VkSemaphore, VkImageView)
+createDepthAttImgView EngineCapability{..} extent samples = do
   depthFormat <- findDepthFormat pdev
 
   (_, depthImage) <- createImage pdev dev
@@ -527,20 +520,18 @@ createDepthAttImgView pdev dev cmdPool queue extent samples = do
     VK_IMAGE_TILING_OPTIMAL VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
   depthImageView <- createImageView dev depthImage depthFormat VK_IMAGE_ASPECT_DEPTH_BIT 1
-  runCommandsAsync dev cmdPool queue $
+  sem <- head <$> acquireSemaphores semPool 1
+  withCmdBuf cmdCap cmdQueue [] [sem] $
     transitionImageLayout depthImage depthFormat Undef_DepthStencilAtt 1
-  return depthImageView
+  return (sem, depthImageView)
 
 
-createColorAttImgView :: VkPhysicalDevice
-                      -> VkDevice
-                      -> VkCommandPool
-                      -> VkQueue
+createColorAttImgView :: EngineCapability
                       -> VkFormat
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
-                      -> Program r VkImageView
-createColorAttImgView pdev dev cmdPool queue format extent samples = do
+                      -> Program r (VkSemaphore, VkImageView)
+createColorAttImgView EngineCapability{..} format extent samples = do
   (_, colorImage) <- createImage pdev dev
     (getField @"width" extent) (getField @"height" extent) 1 samples format
     VK_IMAGE_TILING_OPTIMAL
@@ -548,6 +539,7 @@ createColorAttImgView pdev dev cmdPool queue format extent samples = do
     (VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT .|. VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
   colorImageView <- createImageView dev colorImage format VK_IMAGE_ASPECT_COLOR_BIT 1
-  runCommandsAsync dev cmdPool queue $
+  sem <- head <$> acquireSemaphores semPool 1
+  withCmdBuf cmdCap cmdQueue [] [sem] $
     transitionImageLayout colorImage format Undef_ColorAtt 1
-  return colorImageView
+  return (sem, colorImageView)

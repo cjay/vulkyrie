@@ -1,7 +1,7 @@
-{-# LANGUAGE KindSignatures      #-}
-{-# LANGUAGE Strict              #-}
-{-# LANGUAGE MagicHash           #-}
-{-# LANGUAGE UnboxedTuples       #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MagicHash      #-}
+{-# LANGUAGE Strict         #-}
+{-# LANGUAGE UnboxedTuples  #-}
 -- | Collection of functions adapted from @Foreign@ module hierarchy
 module Lib.Program.Foreign
     ( Ptr, plusPtr, Storable.sizeOf
@@ -14,12 +14,15 @@ module Lib.Program.Foreign
     , asListVk
     , allocaPeek, allocaPeekVk, allocaPeekDF
     , mallocRes, mallocArrayRes, newArrayRes
+
+    , listToDF
     ) where
 
 import qualified GHC.Base
 
 import           Control.Concurrent.MVar
 import           Control.Monad.IO.Class
+import           Data.Maybe
 import qualified Foreign.Marshal.Alloc   as Foreign
 import qualified Foreign.Marshal.Array   as Foreign
 import           Foreign.Ptr
@@ -163,3 +166,7 @@ mallocRes = Program $ \_ c -> Foreign.alloca (c . Right)
 newArrayRes :: Storable a => [a] -> Program r (Ptr a)
 newArrayRes xs = Program $ \_ c -> Foreign.withArray xs (c . Right)
 {-# INLINE newArrayRes #-}
+
+
+listToDF :: PrimBytes a => [a] -> DataFrame a '[XN 0]
+listToDF = fromJust . fromList (D @0) . map scalar
