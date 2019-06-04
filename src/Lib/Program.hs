@@ -412,6 +412,7 @@ asyncRedo prog = go where
 --
 --   Caveat: The separate thread is not a bound thread, in contrast to the main thread.
 --   Use `runInBoundThread` there if you need thread local state for C libs.
+-- TODO this doesn't terminate properly when ordinary exceptions happen
 occupyThreadAndFork :: Program' () -- ^ the program to run in the main thread
                     -> Program' () -- ^ the program to run in a separate thread
                     -> Program r ()
@@ -429,5 +430,6 @@ forkProg :: Program () () -> Program r ThreadId
 forkProg prog = liftIO $ forkIO $ runProgram checkStatus prog
 
 -- | to make sure IORef writes arrive in other threads
+-- TODO Investigate cache coherence + IORefs. I'm not 100% sure this does what I want.
 touchIORef :: IORef a -> Program r ()
 touchIORef ref = liftIO $ atomicModifyIORef' ref (\x -> (x, ()))

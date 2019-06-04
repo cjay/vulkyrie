@@ -43,7 +43,7 @@ uniformBinding bindId =
   createVk @VkDescriptorSetLayoutBinding
     $  set @"binding" bindId
     &* set @"descriptorType" VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-    &* set @"descriptorCount" 1
+    &* set @"descriptorCount" 1  -- array size in shader
     &* set @"stageFlags" VK_SHADER_STAGE_VERTEX_BIT
     &* set @"pImmutableSamplers" VK_NULL
 
@@ -53,7 +53,7 @@ samplerBinding bindId =
   createVk @VkDescriptorSetLayoutBinding
     $  set @"binding" bindId
     &* set @"descriptorType" VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-    &* set @"descriptorCount" 1
+    &* set @"descriptorCount" 1 -- array size in shader
     &* set @"stageFlags" VK_SHADER_STAGE_FRAGMENT_BIT
     &* set @"pImmutableSamplers" VK_NULL
 
@@ -101,11 +101,11 @@ allocateDescriptorSets dev descriptorPool n layouts = do
 
 
 updateDescriptorSet :: VkDevice
-                     -> VkDescriptorSet
-                     -> Word32
-                     -> [VkDescriptorBufferInfo]
-                     -> [VkDescriptorImageInfo]
-                     -> Program r ()
+                    -> VkDescriptorSet
+                    -> Word32
+                    -> [VkDescriptorBufferInfo]
+                    -> [VkDescriptorImageInfo]
+                    -> Program r ()
 updateDescriptorSet dev descriptorSet offset uniformBufferInfos imageInfos =
   let uniformWrite bufferInfo binding =
         createVk @VkWriteDescriptorSet

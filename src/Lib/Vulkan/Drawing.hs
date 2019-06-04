@@ -143,7 +143,7 @@ data RenderData
     -- ^ signals completion of a frame to deallocators
   , frameOnQueueVars          :: [MVar ()]
     -- ^ one per frame-in-flight
-  , memories                  :: Ptr VkDeviceMemory
+  , memories                  :: [VkDeviceMemory]
     -- ^ one per frame-in-flight
   , memoryMutator             :: forall r. VkDeviceMemory -> Program r ()
     -- ^ to execute on memories[*imgIndexPtr] before drawing
@@ -188,9 +188,8 @@ drawFrame EngineCapability{..} RenderData{..} = do
       )
 
     imgIndex <- fromIntegral <$> peek imgIndexPtr
-    let memoryPtr = memories `ptrAtIndex` frameIndex
-    mem <- peek memoryPtr
-    memoryMutator mem
+
+    memoryMutator (memories !! frameIndex)
 
     nextS <- liftIO $ takeMVar nextSems
     liftIO $ putMVar nextSems []

@@ -42,6 +42,7 @@ library
                         Lib.Vulkan.Shader.TH
                         Lib.Vulkan.Sync
                         Lib.Vulkan.TransformationObject
+                        Lib.Vulkan.UniformBufferObject
                         Lib.Vulkan.Vertex
                         Lib.Vulkan.VertexBuffer
     build-depends:      async

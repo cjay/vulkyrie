@@ -31,6 +31,7 @@ import           Lib.Vulkan.Shader
 import           Lib.Vulkan.Shader.TH
 import           Lib.Vulkan.Sync
 import           Lib.Vulkan.TransformationObject
+import           Lib.Vulkan.UniformBufferObject
 import           Lib.Vulkan.Vertex
 import           Lib.Vulkan.VertexBuffer
 
@@ -145,7 +146,8 @@ runVulkanProgram = runProgram checkStatus $ do
 
     frameDSL <- createDescriptorSetLayout dev [uniformBinding 0]
     materialDSL <- createDescriptorSetLayout dev [samplerBinding 0]
-    pipelineLayout <- createPipelineLayout dev [frameDSL, materialDSL]
+    pipelineLayout <- createPipelineLayout dev
+      [frameDSL, materialDSL] -- descriptor set bindings 0,1,..
 
     let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
     (textureSems, descrTextureInfos) <- unzip <$> mapM
@@ -153,8 +155,8 @@ runVulkanProgram = runProgram checkStatus $ do
 
     depthFormat <- findDepthFormat pdev
 
-    (transObjMems, transObjBufs) <- unzip <$> createTransObjBuffers pdev dev maxFramesInFlight
-    descriptorBufferInfos <- mapM transObjBufferInfo transObjBufs
+    (transObjMems, transObjBufs) <- unzip <$> uboCreateBuffers pdev dev transObjSize maxFramesInFlight
+    descriptorBufferInfos <- mapM (uboBufferInfo transObjSize) transObjBufs
 
     descriptorPool <- createDescriptorPool dev $ maxFramesInFlight * (1 + length descrTextureInfos)
     frameDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool maxFramesInFlight frameDSL
@@ -167,8 +169,6 @@ runVulkanProgram = runProgram checkStatus $ do
     forM_ materialDescrSetsPerFrame $ \materialDescrSets ->
       forM_ (zip descrTextureInfos materialDescrSets) $
         \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
-
-    transObjMemories <- newArrayRes $ transObjMems
 
     let beforeSwapchainCreation :: Program r ()
         beforeSwapchainCreation = do
@@ -211,8 +211,6 @@ runVulkanProgram = runProgram checkStatus $ do
                                   pipelineLayout
                                   msaaSamples
 
-      -- TODO pool fences
-      -- TODO need mutex for cmdPool or a pool of command pools due to concurrent commandPool access by vkFreeCommandBuffers
       (colorAttSem, colorAttImgView) <- createColorAttImgView cap
                           (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
       (depthAttSem, depthAttImgView) <- createDepthAttImgView cap
@@ -234,8 +232,10 @@ runVulkanProgram = runProgram checkStatus $ do
             , frameFinishedEvent
             , queueEvents
             , frameOnQueueVars
-            , memories           = transObjMemories
-            , memoryMutator      = updateTransObj dev (swapExtent swapInfo)
+            , memories           = transObjMems
+            , memoryMutator      = \mem -> do
+                t <- updateTransObj (swapExtent swapInfo)
+                uboUpdate dev transObjSize mem t
             -- , descrSetMutator    = updateDescrSet dev descrTextureInfos
             , recCmdBuffer       = recordCommandBuffer graphicsPipeline
                                         renderPass pipelineLayout swapInfo
