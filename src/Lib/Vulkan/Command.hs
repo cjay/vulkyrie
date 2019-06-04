@@ -37,10 +37,8 @@ module Lib.Vulkan.Command
   , mcpReleaseCommandBuffer
   ) where
 
-import           Control.Concurrent
 import           Control.Exception                        (throw)
 import           Control.Monad
-import           Data.IORef
 import           Data.Maybe
 import qualified Foreign.Marshal.Array                    as Foreign
 import           Graphics.Vulkan
@@ -50,6 +48,10 @@ import           Graphics.Vulkan.Marshal.Create.DataFrame
 import           Numeric.DataFrame
 
 import           Lib.MetaResource
+import           Lib.MonadIO.Chan
+import           Lib.MonadIO.IORef
+import           Lib.MonadIO.MVar
+import           Lib.MonadIO.Thread
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Vulkan.Queue
@@ -112,8 +114,8 @@ runCommandsAsync :: VkDevice
                  -> (VkCommandBuffer -> Program () a)
                  -> Program r a
 runCommandsAsync dev cmdPool cmdQueue action = do
-  fin <- liftIO newEmptyMVar
-  _ <- liftIO $ forkIO $ runProgram (\res -> tryPutMVar fin res >> return ()) $ do
+  fin <- newEmptyMVar
+  _ <- forkIO $ runProgram (\res -> tryPutMVar fin res >> return ()) $ do
     -- create command buffer
     let allocInfo = createVk @VkCommandBufferAllocateInfo
           $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
@@ -150,12 +152,12 @@ runCommandsAsync dev cmdPool cmdQueue action = do
     fence <- auto $ metaFence dev False
     withVkPtr submitInfo $ \siPtr ->
       runVk $ vkQueueSubmit cmdQueue 1 siPtr fence
-    _ <- liftIO $ tryPutMVar fin $ Right result
+    _ <- tryPutMVar fin $ Right result
     fencePtr <- newArrayRes [fence]
     runVk $ vkWaitForFences dev 1 fencePtr VK_TRUE (maxBound :: Word64)
     return result
 
-  result <- liftIO $ takeMVar fin
+  result <- takeMVar fin
   case result of
     Left except -> throw except
     Right x     -> return x
@@ -252,9 +254,9 @@ withCmdBuf :: CommandCapability
            -> (VkCommandBuffer -> Program () a)
            -> Program r a
 withCmdBuf cmdCap queue waitSemsWithStages signalSems action = do
-  retBox <- liftIO $ newEmptyMVar
+  retBox <- newEmptyMVar
   _ <- forkProg $ run retBox
-  liftIO $ takeMVar retBox
+  takeMVar retBox
 
   where
 
@@ -268,7 +270,7 @@ withCmdBuf cmdCap queue waitSemsWithStages signalSems action = do
 
     qdone <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
     -- async return because caller doesn't care about internal cleanup
-    liftIO $ putMVar retBox result
+    putMVar retBox result
     waitForQueue qdone
     releaseCommandBuffer managedCmdBuf
     -- continuation ends because of forkProg. Auto things from action get deallocated.
@@ -306,11 +308,11 @@ metaCommandCapability cpp =
   (\CommandCapability{..} -> do
       -- the touch here is only needed if destruction happens in another thread
       touchIORef currentPool
-      releaseCommandPool cpp =<< (liftIO $ readIORef currentPool)
+      releaseCommandPool cpp =<< readIORef currentPool
   )
   (do
       pool <- acquireCommandPool cpp
-      currentPool <- liftIO $ newIORef pool
+      currentPool <- newIORef pool
       return CommandCapability {cmdPoolPool=cpp, ..}
   )
 
@@ -319,22 +321,22 @@ metaCommandCapability cpp =
 poolSwapOpportunity :: CommandCapability -> Program r ()
 poolSwapOpportunity CommandCapability{..} = do
   -- TODO shouldn't swap if pool is mostly unused
-  pool <- liftIO $ readIORef currentPool
+  pool <- readIORef currentPool
   releaseCommandPool cmdPoolPool pool
   newPool <- acquireCommandPool cmdPoolPool
-  liftIO $ writeIORef currentPool newPool
+  writeIORef currentPool newPool
 
 
 -- | Acquire a command buffer from the pool, if available. Not thread-safe.
 acquireCommandBuffer :: CommandCapability -> Program r ManagedCommandBuffer
 acquireCommandBuffer CommandCapability{..} = do
-  pool <- liftIO $ readIORef currentPool
+  pool <- readIORef currentPool
   mcpAcquireCommandBuffer pool >>= \case
     Just buffer -> return $ ManagedCommandBuffer buffer pool
     Nothing -> do
       releaseCommandPool cmdPoolPool pool
       newPool <- acquireCommandPool cmdPoolPool
-      liftIO $ writeIORef currentPool newPool
+      writeIORef currentPool newPool
       buffer <- fromJust <$> mcpAcquireCommandBuffer newPool
       return $ ManagedCommandBuffer buffer newPool
 
@@ -360,23 +362,23 @@ metaCommandPoolPool device queueFamIdx =
   metaResource
   (\CommandPoolPool{..} -> do
       -- WARNING destruction doesn't take into account CommandPools that are acquired
-      mvar <- liftIO $ newEmptyMVar
-      liftIO $ writeChan usedPoolChan (Left mvar)
-      liftIO $ takeMVar mvar
+      mvar <- newEmptyMVar
+      writeChan usedPoolChan (Left mvar)
+      takeMVar mvar
 
-      fresh <- liftIO $ takeMVar freshPools
+      fresh <- takeMVar freshPools
       mapM_ (destroy mCommandPool) fresh
   )
   (do
       let mCommandPool = metaManagedCommandPool device queueFamIdx
       initialCmdPools <- sequence $ replicate initialCmdPoolNum (create mCommandPool)
-      usedPoolChan <- liftIO $ newChan
-      freshPools <- liftIO $ newMVar initialCmdPools
+      usedPoolChan <- newChan
+      freshPools <- newMVar initialCmdPools
 
       _ <- forkProg $ loop $ do
-        (liftIO $ readChan usedPoolChan) >>= \case
+        (readChan usedPoolChan) >>= \case
           Left mvar -> do
-            liftIO $ putMVar mvar ()
+            putMVar mvar ()
             return $ AbortLoop ()
           Right used -> do
             -- TODO check if used pool has enough free buffers to be reused without reset
@@ -387,8 +389,8 @@ metaCommandPoolPool device queueFamIdx =
             waitResetableCommandPool used
             resetCommandPool used
             touchCommandPool used -- make sure changes arrive in next thread that uses the pool
-            fresh <- liftIO $ takeMVar freshPools
-            liftIO $ putMVar freshPools (used:fresh)
+            fresh <- takeMVar freshPools
+            putMVar freshPools (used:fresh)
             return ContinueLoop
 
       return CommandPoolPool{..}
@@ -397,14 +399,14 @@ metaCommandPoolPool device queueFamIdx =
 
 acquireCommandPool :: CommandPoolPool -> Program r ManagedCommandPool
 acquireCommandPool CommandPoolPool{ mCommandPool, freshPools } = do
-  fresh <- liftIO $ takeMVar freshPools
-  case fresh of pool:rest -> (liftIO $ putMVar freshPools rest) >> return pool
-                [] -> (liftIO $ putMVar freshPools []) >> create mCommandPool
+  fresh <- takeMVar freshPools
+  case fresh of pool:rest -> putMVar freshPools rest >> return pool
+                [] -> putMVar freshPools [] >> create mCommandPool
 
 releaseCommandPool :: CommandPoolPool -> ManagedCommandPool -> Program r ()
 releaseCommandPool CommandPoolPool{ usedPoolChan } cmdPool = do
   touchCommandPool cmdPool -- make sure changes arrive in next thread that uses the pool
-  liftIO $ writeChan usedPoolChan (Right cmdPool)
+  writeChan usedPoolChan (Right cmdPool)
 
 
 -- arbitrary value
@@ -443,50 +445,50 @@ metaManagedCommandPool device queueFamIdx =
   )
   (do
       cmdPool <- create mCmdPool
-      acquiredCount <- liftIO $ newIORef 0
+      acquiredCount <- newIORef 0
       let mCmdBufs = metaCommandBuffers device cmdPool
-      usedCmdBufs <- liftIO $ newMVar (0, [])
-      enableNotify <- liftIO $ newIORef False
-      notifyResetable <- liftIO $ newEmptyMVar
+      usedCmdBufs <- newMVar (0, [])
+      enableNotify <- newIORef False
+      notifyResetable <- newEmptyMVar
       initialCmdBufs <- alloc (mCmdBufs initialCmdBufNum)
-      freshCmdBufs <- liftIO $ newIORef initialCmdBufs
+      freshCmdBufs <- newIORef initialCmdBufs
       return ManagedCommandPool{dev=device, ..}
   )
 
 waitResetableCommandPool :: ManagedCommandPool -> Program r ()
 waitResetableCommandPool ManagedCommandPool{..} = do
-  acquiredCnt <- liftIO $ readIORef acquiredCount
-  (usedCount, used) <- liftIO $ takeMVar usedCmdBufs
+  acquiredCnt <- readIORef acquiredCount
+  (usedCount, used) <- takeMVar usedCmdBufs
   if (acquiredCnt == usedCount)
     then do
-      liftIO $ putMVar usedCmdBufs (usedCount, used)
+      putMVar usedCmdBufs (usedCount, used)
     else do
-      liftIO $ tryTakeMVar notifyResetable >> return ()
-      liftIO $ atomicWriteIORef enableNotify True
-      liftIO $ putMVar usedCmdBufs (usedCount, used)
-      liftIO $ takeMVar notifyResetable
-      liftIO $ atomicWriteIORef enableNotify False
+      tryTakeMVar notifyResetable >> return ()
+      atomicWriteIORef enableNotify True
+      putMVar usedCmdBufs (usedCount, used)
+      takeMVar notifyResetable
+      atomicWriteIORef enableNotify False
 
 -- | Moves used command buffers to the fresh cmdBufs list. Not thread-safe.
 --
 --   Make sure that mcpAcquireCommandBuffer can't be called at the same time.
 resetCommandPool :: ManagedCommandPool -> Program r ()
 resetCommandPool ManagedCommandPool{..} = do
-  (_, cmdBufs) <- liftIO $ takeMVar usedCmdBufs
-  liftIO $ writeIORef acquiredCount 0
-  liftIO $ putMVar usedCmdBufs (0, [])
+  (_, cmdBufs) <- takeMVar usedCmdBufs
+  writeIORef acquiredCount 0
+  putMVar usedCmdBufs (0, [])
   runVk $ vkResetCommandPool dev cmdPool 0
   -- usually freshCmdBufs should be empty or mostly empty here
-  liftIO $ modifyIORef' freshCmdBufs (++ cmdBufs)
+  modifyIORef' freshCmdBufs (++ cmdBufs)
 
 -- | Acquire a command buffer from the pool, if available. Not thread-safe.
 mcpAcquireCommandBuffer :: ManagedCommandPool -> Program r (Maybe VkCommandBuffer)
 mcpAcquireCommandBuffer ManagedCommandPool{..} = do
   -- first try freshCmdBufs to avoid thread synchronization
-  (liftIO $ readIORef freshCmdBufs) >>= \case
+  readIORef freshCmdBufs >>= \case
     f:rest -> do
-      liftIO $ writeIORef freshCmdBufs rest
-      liftIO $ modifyIORef' acquiredCount (+1)
+      writeIORef freshCmdBufs rest
+      modifyIORef' acquiredCount (+1)
       return (Just f)
     [] -> return Nothing
 
@@ -494,24 +496,24 @@ mcpAcquireCommandBuffer ManagedCommandPool{..} = do
 mcpInsistAcquireCommandBuffer :: ManagedCommandPool -> Program r VkCommandBuffer
 mcpInsistAcquireCommandBuffer ManagedCommandPool{..} = do
   -- first try freshCmdBufs to avoid thread synchronization
-  cmdBuf <- (liftIO $ readIORef freshCmdBufs) >>= \case
-    f:rest -> liftIO $ writeIORef freshCmdBufs rest >> return f
+  cmdBuf <- readIORef freshCmdBufs >>= \case
+    f:rest -> writeIORef freshCmdBufs rest >> return f
     [] -> do
       new <- head <$> alloc (mCmdBufs 1)
       return new
-  liftIO $ modifyIORef' acquiredCount (+1)
+  modifyIORef' acquiredCount (+1)
   return cmdBuf
 
 -- | Give a command buffer back to the cmdBuf pool. Thread-safe.
 mcpReleaseCommandBuffer :: ManagedCommandPool -> VkCommandBuffer -> Program r ()
 mcpReleaseCommandBuffer ManagedCommandPool{..} cmdBuf = do
-  (usedCount, ucbs) <- liftIO $ takeMVar usedCmdBufs
+  (usedCount, ucbs) <- takeMVar usedCmdBufs
   let usedCount' = usedCount + 1
 
-  enable <- liftIO $ readIORef enableNotify
+  enable <- readIORef enableNotify
   when enable $ do
     -- enabled -> acquiredCount can't change
-    acquiredCnt <- liftIO $ readIORef acquiredCount
-    when (acquiredCnt == usedCount') $ liftIO $ tryPutMVar notifyResetable () >> return ()
+    acquiredCnt <- readIORef acquiredCount
+    when (acquiredCnt == usedCount') $ tryPutMVar notifyResetable () >> return ()
 
-  liftIO $ putMVar usedCmdBufs (usedCount', cmdBuf:ucbs)
+  putMVar usedCmdBufs (usedCount', cmdBuf:ucbs)

@@ -6,7 +6,6 @@ module Lib.Vulkan.Presentation
   , createSwapchainSlot
   ) where
 
-import           Control.Concurrent.MVar
 import           Data.Maybe                           (fromMaybe)
 import           Data.Semigroup
 import qualified Graphics.UI.GLFW                     as GLFW
@@ -16,6 +15,7 @@ import           Graphics.Vulkan.Ext.VK_KHR_surface
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
 
+import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Vulkan.Device
@@ -102,8 +102,8 @@ createSwapchain :: VkDevice
                 -> Maybe (MVar VkSwapchainKHR)
                 -> Program r SwapchainInfo
 createSwapchain dev scsd queues surf slot mayOldSlot = do
-  mayOldSwapchain <- liftIO $ tryTakeMVar slot
-  liftIO $ sequence_ $ putMVar <$> mayOldSlot <*> mayOldSwapchain
+  mayOldSwapchain <- tryTakeMVar slot
+  sequence_ $ putMVar <$> mayOldSlot <*> mayOldSwapchain
 
   -- TODO not necessary every time I think
   surfFmt <- chooseSwapSurfaceFormat scsd
@@ -147,7 +147,7 @@ createSwapchain dev scsd queues surf slot mayOldSlot = do
 
   swapchain <- withVkPtr swCreateInfo $ \swciPtr -> allocaPeek
     $ runVk . vkCreateSwapchainKHR dev swciPtr VK_NULL
-  liftIO $ putMVar slot swapchain
+  putMVar slot swapchain
 
   swapImgs <- asListVk
     $ \x -> runVk . vkGetSwapchainImagesKHR dev swapchain x
@@ -164,7 +164,7 @@ destroySwapchainIfNecessary :: VkDevice
                             -> MVar VkSwapchainKHR
                             -> Program r ()
 destroySwapchainIfNecessary dev slot = do
-  maySwapchain <- liftIO $ tryTakeMVar slot
+  maySwapchain <- tryTakeMVar slot
   liftIO $ sequence_ $ flip (vkDestroySwapchainKHR dev) VK_NULL <$> maySwapchain
 
 
@@ -172,4 +172,4 @@ createSwapchainSlot :: VkDevice -> Program r (MVar VkSwapchainKHR)
 createSwapchainSlot dev =
   allocResource
     (destroySwapchainIfNecessary dev)
-    (liftIO newEmptyMVar)
+    newEmptyMVar

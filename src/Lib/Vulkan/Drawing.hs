@@ -9,11 +9,9 @@ module Lib.Vulkan.Drawing
   , maxFramesInFlight
   ) where
 
-import           Control.Concurrent
 import           Control.Concurrent.Event                 (Event)
 import qualified Control.Concurrent.Event                 as Event
 import           Control.Monad                            (forM_, when)
-import           Data.IORef
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
@@ -22,6 +20,9 @@ import           Graphics.Vulkan.Marshal.Create.DataFrame
 import           Numeric.DataFrame
 
 import           Lib.MetaResource
+import           Lib.MonadIO.IORef
+import           Lib.MonadIO.MVar
+import           Lib.MonadIO.Thread
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Vulkan.Command
@@ -162,11 +163,11 @@ data RenderData
 
 drawFrame :: EngineCapability -> RenderData -> Program r Bool
 drawFrame EngineCapability{..} RenderData{..} = do
-    frameIndex <- liftIO $ readIORef frameIndexRef
-    isOnQueue <- liftIO $
+    frameIndex <- readIORef frameIndexRef
+    isOnQueue <- 
       maybe False (const True) <$> tryTakeMVar (frameOnQueueVars !! frameIndex)
     -- could be not on queue because of retry due to VK_ERROR_OUT_OF_DATE_KHR below
-    oldEvent <- liftIO $ readIORef (queueEvents !! frameIndex)
+    oldEvent <- readIORef (queueEvents !! frameIndex)
     when isOnQueue $ do
       waitForQueue oldEvent
       liftIO $ Event.signal frameFinishedEvent
@@ -191,8 +192,8 @@ drawFrame EngineCapability{..} RenderData{..} = do
 
     memoryMutator (memories !! frameIndex)
 
-    nextS <- liftIO $ takeMVar nextSems
-    liftIO $ putMVar nextSems []
+    nextS <- takeMVar nextSems
+    putMVar nextSems []
 
     withCmdBuf cmdCap cmdQueue
       ((imageAvailable, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextS)
@@ -204,8 +205,8 @@ drawFrame EngineCapability{..} RenderData{..} = do
       recCmdBuffer cmdBuf framebuffer frameDescrSet materialDescrSets
 
     nextEvent <- submitNotify cmdQueue
-    liftIO $ writeIORef (queueEvents !! frameIndex) nextEvent
-    liftIO $ putMVar (frameOnQueueVars !! frameIndex) ()
+    writeIORef (queueEvents !! frameIndex) nextEvent
+    putMVar (frameOnQueueVars !! frameIndex) ()
 
     -- Presentation
     let presentInfo = createVk @VkPresentInfoKHR
@@ -218,7 +219,7 @@ drawFrame EngineCapability{..} RenderData{..} = do
           &* setListRef @"pSwapchains"    [swapchain]
 
     -- doing this before vkQueuePresentKHR because that might throw VK_ERROR_OUT_OF_DATE_KHR
-    liftIO $ writeIORef frameIndexRef $ (frameIndex + 1) `mod` maxFramesInFlight
+    writeIORef frameIndexRef $ (frameIndex + 1) `mod` maxFramesInFlight
 
     withVkPtr presentInfo $
       -- Can throw VK_ERROR_OUT_OF_DATE_KHR

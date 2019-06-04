@@ -5,9 +5,7 @@ module Lib
   ) where
 
 import qualified Control.Concurrent.Event             as Event
-import           Control.Concurrent.MVar
 import           Control.Monad
-import           Data.IORef
 import           Data.Maybe                           (fromJust)
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
@@ -16,6 +14,8 @@ import           Numeric.Dimensions
 
 import           Lib.GLFW
 import           Lib.MetaResource
+import           Lib.MonadIO.IORef
+import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Vulkan.Command
@@ -79,7 +79,7 @@ rect2Indices = fromJust $ fromList (D @3)
 
 runVulkanProgram :: IO ()
 runVulkanProgram = runProgram checkStatus $ do
-  windowSizeChanged <- liftIO $ newIORef False
+  windowSizeChanged <- newIORef False
   window <- initGLFWWindow 800 600 "vulkan-experiment" windowSizeChanged
 
   vulkanInstance <- createGLFWVulkanInstance "vulkan-experiment-instance"
@@ -121,11 +121,11 @@ runVulkanProgram = runProgram checkStatus $ do
     logInfo $ "Createad vertex shader module: " ++ show shaderVert
     logInfo $ "Createad fragment shader module: " ++ show shaderFrag
 
-    frameIndexRef <- liftIO $ newIORef 0
+    frameIndexRef <- newIORef 0
     renderFinishedSems <- createFrameSemaphores dev
-    queueEvents <- sequence $ replicate maxFramesInFlight $ newSetQueueEvent >>= liftIO . newIORef
+    queueEvents <- sequence $ replicate maxFramesInFlight $ newSetQueueEvent >>= newIORef
     frameFinishedEvent <- liftIO $ Event.new
-    frameOnQueueVars <- liftIO $ sequence $ replicate maxFramesInFlight $ newEmptyMVar
+    frameOnQueueVars <- sequence $ replicate maxFramesInFlight $ newEmptyMVar
 
     -- we need this later, but don't want to realloc every swapchain recreation.
     imgIndexPtr <- mallocRes
@@ -179,28 +179,28 @@ runVulkanProgram = runProgram checkStatus $ do
           -- If a window size change did happen, it will be respected by (re-)creating
           -- the swapchain below, no matter if it was signalled via exception or
           -- the IORef, so reset the IORef now:
-          liftIO $ atomicWriteIORef windowSizeChanged False
+          atomicWriteIORef windowSizeChanged False
 
     -- creating first swapchain before loop
     beforeSwapchainCreation
     scsd <- querySwapchainSupport pdev vulkanSurface
 
     swapchainSlot <- createSwapchainSlot dev
-    swapInfoRef <- createSwapchain dev scsd queues vulkanSurface swapchainSlot Nothing >>= liftIO . newIORef
+    swapInfoRef <- createSwapchain dev scsd queues vulkanSurface swapchainSlot Nothing >>= newIORef
 
     removeQueuePump gq
 
     let loadSems = [(vertexSem, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT)] <>
           map (\sem -> (sem, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT)) indexSems <>
           map (\sem -> (sem, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)) textureSems
-    nextSems <- liftIO $ newMVar loadSems
+    nextSems <- newMVar loadSems
 
     -- The code below re-runs when the swapchain was re-created
     asyncRedo $ \redoWithNewSwapchain -> do
       logInfo "New thread: Creating things that depend on the swapchain.."
       -- need this for delayed destruction of the old swapchain if it gets replaced
       oldSwapchainSlot <- createSwapchainSlot dev
-      swapInfo <- liftIO $ readIORef swapInfoRef
+      swapInfo <- readIORef swapInfoRef
       swapImgViews <- mapM (\image -> createImageView dev image (swapImgFormat swapInfo) VK_IMAGE_ASPECT_COLOR_BIT 1) (swapImgs swapInfo)
       renderPass <- createRenderPass dev swapInfo depthFormat msaaSamples
       graphicsPipeline
@@ -215,8 +215,8 @@ runVulkanProgram = runProgram checkStatus $ do
                           (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
       (depthAttSem, depthAttImgView) <- createDepthAttImgView cap
                           (swapExtent swapInfo) msaaSamples
-      sems <- liftIO $ takeMVar nextSems
-      liftIO $ putMVar nextSems ((colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+      sems <- takeMVar nextSems
+      putMVar nextSems ((colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
                                  : (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
                                  : sems)
       framebuffers
@@ -251,8 +251,8 @@ runVulkanProgram = runProgram checkStatus $ do
       logInfo $ "Createad framebuffers: " ++ show framebuffers
 
       -- part of dumb fps counter
-      frameCount <- liftIO $ newIORef @Int 0
-      currentSec <- liftIO $ newIORef @Int 0
+      frameCount :: IORef Int <- newIORef 0
+      currentSec :: IORef Int <- newIORef 0
 
       shouldExit <- glfwMainLoop window $ do
         return () -- do some app logic
@@ -277,14 +277,14 @@ runVulkanProgram = runProgram checkStatus $ do
           else do
             modifyIORef' frameCount $ \c -> c + 1
 
-        sizeChanged <- liftIO $ readIORef windowSizeChanged
+        sizeChanged <- readIORef windowSizeChanged
         when sizeChanged $ logInfo "Have got a windowSizeCallback from GLFW"
         if needRecreation || sizeChanged then do
           beforeSwapchainCreation
           logInfo "Recreating swapchain.."
           newScsd <- querySwapchainSupport pdev vulkanSurface
           newSwapInfo <- createSwapchain dev newScsd queues vulkanSurface swapchainSlot (Just oldSwapchainSlot)
-          liftIO $ atomicWriteIORef swapInfoRef newSwapInfo
+          atomicWriteIORef swapInfoRef newSwapInfo
           redoWithNewSwapchain
           return $ AbortLoop ()
         else return ContinueLoop

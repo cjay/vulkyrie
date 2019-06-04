@@ -35,17 +35,15 @@ module Lib.Program
     ) where
 
 
-import           Control.Concurrent
+import qualified Control.Concurrent
 import           Control.Exception              (Exception, catch,
-                                                 displayException, throw,
-                                                 throwTo)
+                                                 displayException, throw)
 import           Control.Monad
 import           Control.Monad.Error.Class
 import           Control.Monad.IO.Class
 import qualified Control.Monad.Logger           as Logger
 import qualified Control.Monad.Logger.CallStack as LoggerCS
 import           Control.Monad.State.Class
-import           Data.IORef
 import           Data.String                    (fromString)
 import           Data.Time.Clock.System
 import           Data.Tuple                     (swap)
@@ -53,6 +51,10 @@ import           GHC.Stack
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           System.Exit
+
+import           Lib.MonadIO.IORef
+import           Lib.MonadIO.MVar
+import           Lib.MonadIO.Thread
 
 
 data ProgramState
@@ -97,6 +99,13 @@ type Program' a = Program (Either VulkanException a) a
 runProgram :: (Either VulkanException a -> IO r)
            -> Program r a -> IO r
 runProgram c p = iProgState >>= newIORef >>= flip (unProgram p) c
+
+
+checkStatus :: Either VulkanException r -> IO r
+checkStatus (Right res) = pure res
+checkStatus (Left err) = do
+  putStrLn $ displayException err
+  exitFailure
 
 
 -- | Run given prog after the continuation finishes. Intended for freeing resources.
@@ -176,6 +185,10 @@ instance Monad (Program r) where
 instance MonadIO (Program r) where
   liftIO m = Program $ const (Right <$> m >>=)
   {-# INLINE liftIO #-}
+
+forkProg :: Program () () -> Program r ThreadId
+forkProg prog = liftIO $ forkIO $ runProgram checkStatus prog
+
 
 instance MonadState ProgramState (Program r) where
   get = Program $ \ref -> (Right <$> readIORef ref >>=)
@@ -359,16 +372,9 @@ loop action = go
           AbortLoop a -> return a
 
 
-checkStatus :: Either VulkanException () -> IO ()
-checkStatus (Right ()) = pure ()
-checkStatus (Left err) = do
-  putStrLn $ displayException err
-  exitFailure
-
-
 -- | Like forkIO, but prints when the thread starts and ends, and tells if it ends with an exception
 debugForkIO :: IO () -> IO ThreadId
-debugForkIO action = forkFinally (announce >> action) finish where
+debugForkIO action = Control.Concurrent.forkFinally (announce >> action) finish where
   announce = do
     tid <- myThreadId
     putStrLn $ "New Thread (" ++ show tid ++ ")"
@@ -388,9 +394,9 @@ data RedoSignal = SigRedo | SigExit deriving Eq
 asyncRedo :: (Program s () -> Program' ()) -> Program r ()
 asyncRedo prog = go where
   go = do
-    control <- liftIO $ newEmptyMVar
+    control <- newEmptyMVar
     let trigger = do
-          success <- liftIO $ tryPutMVar control SigRedo
+          success <- tryPutMVar control SigRedo
           when (not success) $ throwVkMsg "asyncRedo action tried to signal more than once"
           liftIO yield
     -- this program launches the redo-thread and continues with result () immediately
@@ -404,7 +410,7 @@ asyncRedo prog = go where
         tryPutMVar control SigExit >> return ()
       -- can't have a real result after forking, but the continuation needs to be called
       c (Right ())
-    sig <- liftIO $ takeMVar control
+    sig <- takeMVar control
     when (sig == SigRedo) go
 
 
@@ -418,7 +424,7 @@ occupyThreadAndFork :: Program' () -- ^ the program to run in the main thread
                     -> Program r ()
 occupyThreadAndFork mainProg deputyProg = Program $ \ref c -> do
   mainThreadId <- myThreadId
-  _ <- forkFinally (unProgram deputyProg ref pure >>= checkStatus) $ \res ->
+  _ <- Control.Concurrent.forkFinally (unProgram deputyProg ref pure >>= checkStatus) $ \res ->
     case res of Left exception -> throw exception
                 Right _        -> throwTo mainThreadId ExitSuccess
   exitCode <- catch (unProgram mainProg ref pure >>= checkStatus >> return ExitSuccess) $
@@ -426,10 +432,7 @@ occupyThreadAndFork mainProg deputyProg = Program $ \ref c -> do
   c (Right ()) >> exitWith exitCode
 
 
-forkProg :: Program () () -> Program r ThreadId
-forkProg prog = liftIO $ forkIO $ runProgram checkStatus prog
-
 -- | to make sure IORef writes arrive in other threads
 -- TODO Investigate cache coherence + IORefs. I'm not 100% sure this does what I want.
 touchIORef :: IORef a -> Program r ()
-touchIORef ref = liftIO $ atomicModifyIORef' ref (\x -> (x, ()))
+touchIORef ref = atomicModifyIORef' ref (\x -> (x, ()))

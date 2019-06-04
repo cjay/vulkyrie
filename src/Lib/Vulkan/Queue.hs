@@ -27,18 +27,20 @@ module Lib.Vulkan.Queue
   -- , newCommandThread
   ) where
 
-import           Control.Concurrent
 import           Control.Concurrent.Async
 import           Control.Concurrent.Event       (Event)
 import qualified Control.Concurrent.Event       as Event
 import           Control.Monad
 import qualified Data.DList                     as DL
-import           Data.IORef
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
 
 import           Lib.MetaResource
+import           Lib.MonadIO.Chan
+import           Lib.MonadIO.IORef
+import           Lib.MonadIO.MVar
+import           Lib.MonadIO.Thread
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Vulkan.Sync
@@ -83,22 +85,22 @@ metaManagedQueue dev queue msp =
   (\ManagedQueue{..} -> do
       -- Shutdown is dangerous: Staged VkSubmitInfos won't get submitted, other
       -- threads might wait eternally for Events.
-      liftIO $ writeChan requestChan Shutdown
+      writeChan requestChan Shutdown
       destroy mFencePool fencePool
-      liftIO $ takeMVar pumpThread >>= mapM_ killThread
+      takeMVar pumpThread >>= mapM_ killThread
   )
   (do
-      requestChan <- liftIO newChan
-      submitInfos <- liftIO $ newIORef mempty
+      requestChan <- newChan
+      submitInfos <- newIORef mempty
       nextEvent <- liftIO $ Event.new >>= newIORef
       fencePool <- create mFencePool
-      pumpThread <- liftIO $ newMVar Nothing
+      pumpThread <- newMVar Nothing
 
       let mq = ManagedQueue { masterSemaphorePool=msp, .. }
           submit_ :: Program r ()
           submit_ = do
             -- prevent empty submission
-            sIs <- liftIO $ readIORef submitInfos
+            sIs <- readIORef submitInfos
             when (not $ null sIs) (submitNotify_ >> return ())
 
           submitNotify_ :: Program r Event
@@ -106,11 +108,11 @@ metaManagedQueue dev queue msp =
             fence <- acquireFence fencePool
             -- TODO proper async for progs
             fenceResetDone <- liftIO . async $ runProgram checkStatus $ resetFences fencePool
-            sIs <- DL.toList <$> (liftIO $ readIORef submitInfos)
+            sIs <- DL.toList <$> readIORef submitInfos
             runVk $ withArrayLen sIs $ \siLen siArr ->
               liftIO $ vkQueueSubmit queue siLen siArr fence
-            liftIO $ writeIORef submitInfos mempty
-            event <- liftIO $ readIORef nextEvent
+            writeIORef submitInfos mempty
+            event <- readIORef nextEvent
             _ <- forkProg $ do
               fencePtr <- newArrayRes [fence]
               runVk $ vkWaitForFences dev 1 fencePtr VK_TRUE (maxBound :: Word64)
@@ -118,27 +120,27 @@ metaManagedQueue dev queue msp =
               releaseFence fencePool fence
               sems <- concat <$> mapM submitInfoGetWaitSemaphores sIs
               mspReleaseSemaphores msp sems
-            liftIO $ writeIORef nextEvent =<< Event.new
+            writeIORef nextEvent =<< liftIO Event.new
             liftIO $ wait fenceResetDone
             return event
 
           post_ :: VkSubmitInfo -> Program r ()
           post_ submitInfo = do
-            sIs <- liftIO $ readIORef submitInfos
-            liftIO $ writeIORef submitInfos (sIs `DL.snoc` submitInfo)
+            sIs <- readIORef submitInfos
+            writeIORef submitInfos (sIs `DL.snoc` submitInfo)
 
           queueLoop = do
-            request <- liftIO $ readChan requestChan
+            request <- readChan requestChan
             case request of
               Submit -> submit_
               SubmitNotify eventBox -> do
                 event <- submitNotify_
-                liftIO $ putMVar eventBox $ QueueEvent event
+                putMVar eventBox $ QueueEvent event
               Post submitInfo -> post_ submitInfo
               PostNotify submitInfo eventBox -> do
                 post_ submitInfo
-                event <- liftIO $ readIORef nextEvent
-                liftIO $ putMVar eventBox $ QueueEvent event
+                event <- readIORef nextEvent
+                putMVar eventBox $ QueueEvent event
               Shutdown -> return ()
             when (request /= Shutdown) queueLoop
 
@@ -153,23 +155,23 @@ metaManagedQueue dev queue msp =
 -- | Stage VkSubmitInfo for submission.
 post :: ManagedQueue -> VkSubmitInfo -> Program r ()
 post ManagedQueue{ requestChan } submitInfo = do
-  liftIO $ writeChan requestChan $ Post submitInfo
+  writeChan requestChan $ Post submitInfo
 
 -- | Only submits something if there are any staged VkSubmitInfos.
 submit :: ManagedQueue -> Program r ()
 submit ManagedQueue{ requestChan } =
-  liftIO $ writeChan requestChan Submit
+  writeChan requestChan Submit
 
 -- | Stage VkSubmitInfo for submission and notify when it was done.
 postNotify :: ManagedQueue -> VkSubmitInfo -> Program r QueueEvent
-postNotify ManagedQueue{ requestChan } submitInfo = liftIO $ do
+postNotify ManagedQueue{ requestChan } submitInfo = do
   resultBox <- newEmptyMVar
   writeChan requestChan $ PostNotify submitInfo resultBox
   takeMVar resultBox
 
 -- | Submit with notification. Always submits, even with empty VkSubmitInfos.
 submitNotify :: ManagedQueue -> Program r QueueEvent
-submitNotify ManagedQueue{ requestChan } = liftIO $ do
+submitNotify ManagedQueue{ requestChan } = do
   resultBox <- newEmptyMVar
   writeChan requestChan $ SubmitNotify resultBox
   takeMVar resultBox
@@ -192,16 +194,16 @@ submitWait mq = do
 --   Kills previous pump thread if it exists.
 attachQueuePump :: ManagedQueue -> Int -> Program r ()
 attachQueuePump mq@ManagedQueue{ pumpThread } microSecs = do
-  liftIO $ takeMVar pumpThread >>= mapM_ killThread
+  takeMVar pumpThread >>= mapM_ killThread
   tId <- forkProg $ forever $ do
-    liftIO $ threadDelay microSecs
+    threadDelay microSecs
     submit mq
-  liftIO $ putMVar pumpThread (Just tId)
+  putMVar pumpThread (Just tId)
 
 -- | Kills queue pump thread if it exists.
 removeQueuePump :: ManagedQueue -> Program r ()
 removeQueuePump ManagedQueue{ pumpThread } =
-  liftIO $ do
+  do
     takeMVar pumpThread >>= mapM_ killThread
     putMVar pumpThread Nothing
 
@@ -239,13 +241,13 @@ data CommandThread = CommandThread
 joinCommandThreads :: [CommandThread] -> Program r CommandThread
 joinCommandThreads threads = do
   let refs = map waitSems threads
-  allSems <- concat <$> mapM (liftIO . readIORef) refs
-  forM_ refs $ \ref -> liftIO $ writeIORef ref (error "tried accessing invalidated CommandThread")
-  newRef <- liftIO $ newIORef allSems
+  allSems <- concat <$> mapM (readIORef) refs
+  forM_ refs $ \ref -> writeIORef ref (error "tried accessing invalidated CommandThread")
+  newRef <- newIORef allSems
   return $ CommandThread newRef
 
 newCommandThread :: Program r CommandThread
 newCommandThread = do
-  ref <- liftIO $ newIORef []
+  ref <- newIORef []
   return $ CommandThread ref
 -}

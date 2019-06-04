@@ -8,11 +8,11 @@ module Lib.GLFW
     ) where
 
 import           Control.Monad       (unless, when, forever)
-import           Data.IORef
 import           Graphics.UI.GLFW    (ClientAPI (..), WindowHint (..))
 import qualified Graphics.UI.GLFW    as GLFW
 import           Graphics.Vulkan
 
+import           Lib.MonadIO.IORef
 import           Lib.Program
 import           Lib.Vulkan.Instance
 

@@ -22,9 +22,7 @@ module Lib.Vulkan.Sync
   , semaphoreRestockOpportunity
   ) where
 
-import           Control.Concurrent
 import           Control.Monad
-import           Data.IORef
 import           Data.Sequence                  (Seq)
 import qualified Data.Sequence                  as Seq
 import           GHC.Exts                       (fromList, toList)
@@ -34,6 +32,9 @@ import           Graphics.Vulkan.Marshal.Create
 
 import qualified Foreign.Marshal.Array          as Foreign
 import           Lib.MetaResource
+import           Lib.MonadIO.IORef
+import           Lib.MonadIO.MVar
+import           Lib.MonadIO.Thread
 import           Lib.Program
 import           Lib.Program.Foreign
 
@@ -79,16 +80,16 @@ metaFencePool :: VkDevice -> MetaResource r FencePool
 metaFencePool device =
   metaResource
   (\FencePool{..} -> do
-      fs <- liftIO $ takeMVar usedFences
+      fs <- takeMVar usedFences
       touchIORef freshFences
-      fs' <- liftIO $ readIORef freshFences
+      fs' <- readIORef freshFences
       sequence_ $ destroy mFence <$> (fs ++ fs')
   )
   (do
       let mFence = metaFence device False
-      usedFences <- liftIO $ newMVar []
+      usedFences <- newMVar []
       initialFences <- sequence $ replicate initialFenceNum (create mFence)
-      freshFences <- liftIO $ newIORef initialFences
+      freshFences <- newIORef initialFences
       return FencePool{dev=device, ..}
   )
 
@@ -97,33 +98,33 @@ metaFencePool device =
 --   Make sure that acquireFence can't be called at the same time.
 resetFences :: FencePool -> Program r ()
 resetFences FencePool{..} = do
-  fences <- liftIO $ takeMVar usedFences
-  liftIO $ putMVar usedFences []
+  fences <- takeMVar usedFences
+  putMVar usedFences []
   when (not $ null fences) $ do
     runVk $ Foreign.withArrayLen fences $ \len ptr ->
       vkResetFences dev (fromIntegral len) ptr
-    liftIO $ modifyIORef' freshFences (++ fences)
+    modifyIORef' freshFences (++ fences)
 
 -- | Acquire a fence from the fence pool. Not thread-safe.
 acquireFence :: FencePool -> Program r VkFence
 acquireFence FencePool{..} = do
   -- first try freshFences to avoid thread synchronization
-  (liftIO $ readIORef freshFences) >>= \case
-    f:rest -> liftIO $ writeIORef freshFences rest >> return f
+  (readIORef freshFences) >>= \case
+    f:rest -> writeIORef freshFences rest >> return f
     [] -> do
-      reclaimed <- liftIO $ takeMVar usedFences
+      reclaimed <- takeMVar usedFences
       runVk $ Foreign.withArrayLen reclaimed $ \len ptr ->
         vkResetFences dev (fromIntegral len) ptr
-      liftIO $ putMVar usedFences []
+      putMVar usedFences []
       case reclaimed of
-        f:rest -> liftIO $ writeIORef freshFences rest >> return f
+        f:rest -> writeIORef freshFences rest >> return f
         []     -> create mFence
 
 -- | Release a fence back to the fence pool. Thread-safe.
 --
 --   It can only be acquired again after calling `resetFences`.
 releaseFence :: FencePool -> VkFence -> Program r ()
-releaseFence FencePool{..} fence = liftIO $ do
+releaseFence FencePool{..} fence = do
   ufs <- takeMVar usedFences
   putMVar usedFences (fence:ufs)
 
@@ -138,28 +139,28 @@ metaMasterSemaphorePool :: VkDevice -> MetaResource r MasterSemaphorePool
 metaMasterSemaphorePool device =
   metaResource
   (\MasterSemaphorePool{..} -> do
-      sems <- liftIO $ takeMVar mspSemaphores
+      sems <- takeMVar mspSemaphores
       sequence_ $ destroy mspMetaSemaphore <$> sems
   )
   (do
       let mspMetaSemaphore = metaSemaphore device
-      mspSemaphores <- liftIO $ newMVar mempty
+      mspSemaphores <- newMVar mempty
       return MasterSemaphorePool{..}
   )
 
 mspAcquireSemaphores :: MasterSemaphorePool -> Int -> Program r (Seq VkSemaphore)
 mspAcquireSemaphores MasterSemaphorePool{..} num = do
-  sems <- liftIO $ takeMVar mspSemaphores
+  sems <- takeMVar mspSemaphores
   let (taken, rest) = Seq.splitAt num sems
-  liftIO $ putMVar mspSemaphores rest
+  putMVar mspSemaphores rest
   let needed = num - length taken
   new <- Seq.replicateA needed (create mspMetaSemaphore)
   return $ taken <> new
 
 mspReleaseSemaphores :: MasterSemaphorePool -> [VkSemaphore] -> Program r ()
 mspReleaseSemaphores MasterSemaphorePool{..} sems = do
-  have <- liftIO $ takeMVar mspSemaphores
-  liftIO $ putMVar mspSemaphores $ have <> fromList sems
+  have <- takeMVar mspSemaphores
+  putMVar mspSemaphores $ have <> fromList sems
 
 
 
@@ -179,14 +180,14 @@ metaSemaphorePool :: MasterSemaphorePool -> MetaResource r SemaphorePool
 metaSemaphorePool msp =
   metaResource
   (\SemaphorePool{..} -> do
-      sems <- liftIO $ readIORef semaphores
+      sems <- readIORef semaphores
       mspReleaseSemaphores msp $ toList sems
   )
   (do
       initialSemaphores <- mspAcquireSemaphores msp initialSemaphoreNum
-      semaphores <- liftIO $ newIORef initialSemaphores
-      acquiredCount <- liftIO $ newIORef 0
-      maxAcquiredCount <- liftIO $ newIORef 0
+      semaphores <- newIORef initialSemaphores
+      acquiredCount <- newIORef 0
+      maxAcquiredCount <- newIORef 0
       return SemaphorePool{masterSemaphorePool=msp, ..}
   )
 
@@ -194,25 +195,25 @@ metaSemaphorePool msp =
 -- | Gives explicit opportunity to restock from the MasterSemaphorePool
 semaphoreRestockOpportunity :: SemaphorePool -> Program r ()
 semaphoreRestockOpportunity SemaphorePool{..} = do
-  count <- liftIO $ readIORef acquiredCount
-  maxCount <- liftIO $ readIORef maxAcquiredCount
+  count <- readIORef acquiredCount
+  maxCount <- readIORef maxAcquiredCount
   let maxCount' = max maxCount count
-  liftIO $ writeIORef maxAcquiredCount maxCount'
-  liftIO $ writeIORef acquiredCount 0
+  writeIORef maxAcquiredCount maxCount'
+  writeIORef acquiredCount 0
 
-  sems <- liftIO $ readIORef semaphores
+  sems <- readIORef semaphores
   let needed = maxCount' - length sems
   newSems <- mspAcquireSemaphores masterSemaphorePool needed
-  liftIO $ writeIORef semaphores $ sems <> newSems
+  writeIORef semaphores $ sems <> newSems
 
 
 -- | Semaphores are outomatically released to the MasterSemaphorePool by ManagedQueue
 acquireSemaphores :: SemaphorePool -> Int -> Program r [VkSemaphore]
 acquireSemaphores SemaphorePool{..} num = do
-  count <- liftIO $ readIORef acquiredCount
-  liftIO $ writeIORef acquiredCount (count + num)
+  count <- readIORef acquiredCount
+  writeIORef acquiredCount (count + num)
 
-  sems <- liftIO $ readIORef semaphores
+  sems <- readIORef semaphores
   let (taken, rest) = Seq.splitAt num sems
       needed = num - length taken
       wanted = if needed > 0 then needed + initialSemaphoreNum else 0
@@ -222,7 +223,7 @@ acquireSemaphores SemaphorePool{..} num = do
              else return mempty
   let (completion, rest') = Seq.splitAt needed newSems
 
-  liftIO $ writeIORef semaphores $ rest' <> rest
+  writeIORef semaphores $ rest' <> rest
   return $ toList $ taken <> completion
 
 releaseSemaphores :: SemaphorePool -> [VkSemaphore] -> Program r ()

@@ -20,7 +20,6 @@ module Lib.Program.Foreign
 
 import qualified GHC.Base
 
-import           Control.Concurrent.MVar
 import           Control.Monad.IO.Class
 import           Data.Maybe
 import qualified Foreign.Marshal.Alloc   as Foreign
@@ -34,6 +33,7 @@ import           Numeric.DataFrame.IO
 import           Numeric.Dimensions
 import           Numeric.PrimBytes
 
+import           Lib.MonadIO.MVar
 import           Lib.Program
 
 
@@ -62,7 +62,7 @@ allocaPeekVk :: VulkanMarshal a
              => (Ptr a -> Program () ())
              -> Program r a
 allocaPeekVk pf = Program $ \ref c -> do
-  locVar <- liftIO newEmptyMVar
+  locVar <- newEmptyMVar
   a <- newVkData (\ptr -> unProgram (pf ptr) ref (putMVar locVar))
   takeMVar locVar >>= c . (a <$)
 {-# INLINE allocaPeekVk #-}
@@ -90,7 +90,7 @@ allocaPeekDF pf
   , E <- inferPrim' @a @ns
   = Program $ \ref c -> do
     mdf <- newPinnedDataFrame
-    locVar <- liftIO newEmptyMVar
+    locVar <- newEmptyMVar
     withDataFramePtr mdf $ \ptr -> unProgram (pf ptr) ref (putMVar locVar)
     df <- unsafeFreezeDataFrame mdf
     takeMVar locVar >>= c . (df <$)
