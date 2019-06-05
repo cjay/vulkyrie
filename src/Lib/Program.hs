@@ -10,6 +10,13 @@
 module Lib.Program
     ( Program (..), Program', runProgram
     , MonadIO (..)
+    , checkStatus
+      -- * Threading
+    , ProgEnd
+    , AsyncProg
+    , forkProg
+    , asyncProg
+    , waitProg
       -- * Resource management
     , later, allocResource, allocResource', locally
       -- * State manipulation
@@ -27,17 +34,15 @@ module Lib.Program
     , getTime
     , LoopControl (..)
     , loop
-    , checkStatus
     , asyncRedo
     , occupyThreadAndFork
-    , forkProg
     , touchIORef
     ) where
 
 
+import           Control.Concurrent.Async
 import qualified Control.Concurrent
 import           Control.Exception              (Exception, AsyncException (ThreadKilled),
-                                                 SomeException(..),
                                                  fromException,
                                                  displayException)
 import           Control.Monad
@@ -84,6 +89,10 @@ iProgState = do
     , startTime     = time
     }
 
+-- | For joining program states of different threads or work units
+joinProgState :: ProgramState -> ProgramState -> ProgramState
+joinProgState parent child = parent{ currentStatus = currentStatus child }
+
 -- | Program is modelled as a combination of several transformers:
 --
 --   * ReaderT + IORef to model state
@@ -108,6 +117,38 @@ checkStatus (Right res) = pure res
 checkStatus (Left err) = do
   putStrLn $ displayException err
   exitFailure
+
+
+forkProg :: Program' () -> Program r ThreadId
+forkProg prog = Program $ \ref c -> do
+  parentThreadId <- myThreadId
+  threadRef <- newIORef =<< readIORef ref
+  threadId <- Control.Concurrent.forkFinally (unProgram prog threadRef pure >>= checkStatus) $ \case
+    Left exception -> do
+      let mae :: Maybe AsyncException = fromException exception
+      case mae of
+        Just ThreadKilled -> return ()
+        _ -> throwTo parentThreadId exception
+    Right ()       -> return ()
+  c (Right threadId)
+
+
+type ProgEnd a = (ProgramState, Either VulkanException a)
+type AsyncProg a = Async (ProgEnd a)
+
+asyncProg :: Program (ProgEnd a) a -> Program r (AsyncProg a)
+asyncProg prog = Program $ \ref c -> do
+  threadRef <- newIORef =<< readIORef ref
+  apr <- async $ unProgram prog threadRef $ \eitherRet -> do
+    childState <- readIORef threadRef
+    return (childState, eitherRet)
+  c (Right apr)
+
+waitProg :: AsyncProg a -> Program r a
+waitProg apr = Program $ \ref c -> wait apr >>= \(childState, eitherRet) -> do
+  parentState <- readIORef ref
+  writeIORef ref $ joinProgState parentState childState
+  c eitherRet
 
 
 -- | Run given prog after the continuation finishes. Intended for freeing resources.
@@ -187,19 +228,6 @@ instance Monad (Program r) where
 instance MonadIO (Program r) where
   liftIO m = Program $ const (Right <$> m >>=)
   {-# INLINE liftIO #-}
-
-forkProg :: Program' () -> Program r ThreadId
-forkProg prog = Program $ \ref c -> do
-  parentThreadId <- myThreadId
-  threadRef <- newIORef =<< readIORef ref
-  threadId <- Control.Concurrent.forkFinally (unProgram prog threadRef pure >>= checkStatus) $ \case
-    Left exception -> do
-      let mae :: Maybe AsyncException = fromException exception
-      case mae of
-        Just ThreadKilled -> return ()
-        _ -> throwTo parentThreadId exception
-    Right ()       -> return ()
-  c (Right threadId)
 
 instance MonadState ProgramState (Program r) where
   get = Program $ \ref -> (Right <$> readIORef ref >>=)

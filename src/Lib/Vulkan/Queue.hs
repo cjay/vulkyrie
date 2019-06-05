@@ -27,7 +27,6 @@ module Lib.Vulkan.Queue
   -- , newCommandThread
   ) where
 
-import           Control.Concurrent.Async
 import           Control.Concurrent.Event       (Event)
 import qualified Control.Concurrent.Event       as Event
 import           Control.Monad
@@ -106,8 +105,7 @@ metaManagedQueue dev queue msp =
           submitNotify_ :: Program r Event
           submitNotify_ = do
             fence <- acquireFence fencePool
-            -- TODO proper async for progs
-            fenceResetDone <- liftIO . async $ runProgram checkStatus $ resetFences fencePool
+            fenceResetDone <- asyncProg $ resetFences fencePool
             sIs <- DL.toList <$> readIORef submitInfos
             runVk $ withArrayLen sIs $ \siLen siArr ->
               liftIO $ vkQueueSubmit queue siLen siArr fence
@@ -121,7 +119,7 @@ metaManagedQueue dev queue msp =
               sems <- concat <$> mapM submitInfoGetWaitSemaphores sIs
               mspReleaseSemaphores msp sems
             writeIORef nextEvent =<< liftIO Event.new
-            liftIO $ wait fenceResetDone
+            waitProg fenceResetDone
             return event
 
           post_ :: VkSubmitInfo -> Program r ()
