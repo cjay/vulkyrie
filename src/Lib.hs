@@ -87,7 +87,6 @@ runVulkanProgram = runProgram checkStatus $ do
   vulkanSurface <- createSurface vulkanInstance window
   logInfo $ "Createad surface: " ++ show vulkanSurface
 
-  -- TODO terminate when normal exception happens?
   glfwWaitEventsMeanwhile $ do
     (_, pdev) <- pickPhysicalDevice vulkanInstance (Just vulkanSurface)
     logInfo $ "Selected physical device: " ++ show pdev

@@ -418,18 +418,15 @@ asyncRedo prog = go where
 --
 --   Caveat: The separate thread is not a bound thread, in contrast to the main thread.
 --   Use `runInBoundThread` there if you need thread local state for C libs.
--- TODO this doesn't terminate properly when ordinary exceptions happen
-occupyThreadAndFork :: Program' () -- ^ the program to run in the main thread
+occupyThreadAndFork :: Program r () -- ^ the program to run in the main thread
                     -> Program' () -- ^ the program to run in a separate thread
                     -> Program r ()
 occupyThreadAndFork mainProg deputyProg = Program $ \ref c -> do
   mainThreadId <- myThreadId
   _ <- Control.Concurrent.forkFinally (unProgram deputyProg ref pure >>= checkStatus) $ \res ->
-    case res of Left exception -> throw exception
-                Right _        -> throwTo mainThreadId ExitSuccess
-  exitCode <- catch (unProgram mainProg ref pure >>= checkStatus >> return ExitSuccess) $
-                    \(exitCode :: ExitCode) -> return exitCode
-  c (Right ()) >> exitWith exitCode
+    case res of Left exception -> throwTo mainThreadId exception
+                Right ()       -> throwTo mainThreadId ExitSuccess
+  unProgram mainProg ref c
 
 
 -- | to make sure IORef writes arrive in other threads
