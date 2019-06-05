@@ -36,8 +36,10 @@ module Lib.Program
 
 
 import qualified Control.Concurrent
-import           Control.Exception              (Exception, catch,
-                                                 displayException, throw)
+import           Control.Exception              (Exception, AsyncException (ThreadKilled),
+                                                 SomeException(..),
+                                                 fromException,
+                                                 displayException)
 import           Control.Monad
 import           Control.Monad.Error.Class
 import           Control.Monad.IO.Class
@@ -186,9 +188,18 @@ instance MonadIO (Program r) where
   liftIO m = Program $ const (Right <$> m >>=)
   {-# INLINE liftIO #-}
 
-forkProg :: Program () () -> Program r ThreadId
-forkProg prog = liftIO $ forkIO $ runProgram checkStatus prog
-
+forkProg :: Program' () -> Program r ThreadId
+forkProg prog = Program $ \ref c -> do
+  parentThreadId <- myThreadId
+  threadRef <- newIORef =<< readIORef ref
+  threadId <- Control.Concurrent.forkFinally (unProgram prog threadRef pure >>= checkStatus) $ \case
+    Left exception -> do
+      let mae :: Maybe AsyncException = fromException exception
+      case mae of
+        Just ThreadKilled -> return ()
+        _ -> throwTo parentThreadId exception
+    Right ()       -> return ()
+  c (Right threadId)
 
 instance MonadState ProgramState (Program r) where
   get = Program $ \ref -> (Right <$> readIORef ref >>=)
@@ -392,8 +403,8 @@ data RedoSignal = SigRedo | SigExit deriving Eq
 --
 --   Enables deferred deallocation.
 asyncRedo :: (Program s () -> Program' ()) -> Program r ()
-asyncRedo prog = go where
-  go = do
+asyncRedo prog = myThreadId >>= go where
+  go parentThreadId = do
     control <- newEmptyMVar
     let trigger = do
           success <- tryPutMVar control SigRedo
@@ -401,17 +412,24 @@ asyncRedo prog = go where
           liftIO yield
     -- this program launches the redo-thread and continues with result () immediately
     Program $ \ref c -> do
+      threadRef <- newIORef =<< readIORef ref
       -- TODO use forkOS when using unsafe ffi calls?
       -- don't need the threadId
-      _ <- forkIO $ do
-        unProgram (prog trigger) ref pure >>= checkStatus
-        -- When the redo-thread exits, we only need to signal exit to the parent
-        -- if nothing else has been signalled yet.
-        tryPutMVar control SigExit >> return ()
+      _ <- Control.Concurrent.forkFinally
+        (do
+          unProgram (prog trigger) threadRef pure >>= checkStatus
+          -- When the redo-thread exits, we only need to signal exit to the parent
+          -- if nothing else has been signalled yet.
+          tryPutMVar control SigExit >> return ()
+        )
+        (\case
+          Left exception -> throwTo parentThreadId exception
+          Right ()       -> return ()
+        )
       -- can't have a real result after forking, but the continuation needs to be called
       c (Right ())
     sig <- takeMVar control
-    when (sig == SigRedo) go
+    when (sig == SigRedo) (go parentThreadId)
 
 
 -- | For C functions that have to run in the main thread as long as the program runs.
@@ -423,9 +441,10 @@ occupyThreadAndFork :: Program r () -- ^ the program to run in the main thread
                     -> Program r ()
 occupyThreadAndFork mainProg deputyProg = Program $ \ref c -> do
   mainThreadId <- myThreadId
-  _ <- Control.Concurrent.forkFinally (unProgram deputyProg ref pure >>= checkStatus) $ \res ->
-    case res of Left exception -> throwTo mainThreadId exception
-                Right ()       -> throwTo mainThreadId ExitSuccess
+  threadRef <- newIORef =<< readIORef ref
+  _ <- Control.Concurrent.forkFinally (unProgram deputyProg threadRef pure >>= checkStatus) $ \case
+    Left exception -> throwTo mainThreadId exception
+    Right ()       -> throwTo mainThreadId ExitSuccess
   unProgram mainProg ref c
 
 

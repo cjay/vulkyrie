@@ -251,7 +251,7 @@ withCmdBuf :: CommandCapability
            -> ManagedQueue
            -> [(VkSemaphore, VkPipelineStageFlags)]
            -> [VkSemaphore]
-           -> (VkCommandBuffer -> Program () a)
+           -> (VkCommandBuffer -> Program (Either VulkanException ()) a)
            -> Program r a
 withCmdBuf cmdCap queue waitSemsWithStages signalSems action = do
   retBox <- newEmptyMVar
@@ -259,7 +259,6 @@ withCmdBuf cmdCap queue waitSemsWithStages signalSems action = do
   takeMVar retBox
 
   where
-
   run retBox = do
     managedCmdBuf <- acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
@@ -277,7 +276,7 @@ withCmdBuf cmdCap queue waitSemsWithStages signalSems action = do
 
 
 forkWithCmdCap :: CommandPoolPool
-               -> (CommandCapability -> Program () ())
+               -> (CommandCapability -> Program' ())
                -> Program r ThreadId
 forkWithCmdCap cmdPoolPool action =
   forkProg $ do
@@ -376,7 +375,7 @@ metaCommandPoolPool device queueFamIdx =
       freshPools <- newMVar initialCmdPools
 
       _ <- forkProg $ loop $ do
-        (readChan usedPoolChan) >>= \case
+        readChan usedPoolChan >>= \case
           Left mvar -> do
             putMVar mvar ()
             return $ AbortLoop ()
@@ -385,7 +384,6 @@ metaCommandPoolPool device queueFamIdx =
             -- TODO pools that have outstanding buffers can not reset but can potentially still acquire buffers
 
             -- TODO not in separate thread for now because we would need to keep track of threads for clean shutdown
-            -- forkProg $ do
             waitResetableCommandPool used
             resetCommandPool used
             touchCommandPool used -- make sure changes arrive in next thread that uses the pool
