@@ -27,7 +27,6 @@ import           Lib.Program.Foreign
 -- | Preparing Vertex data to make an interleaved array.
 data Vertex = Vertex
   { pos      :: Vec3f
-  , color    :: Vec3f
   , texCoord :: Vec2f
   } deriving (Eq, Ord, Show, Generic)
 
@@ -47,7 +46,8 @@ vertIBD = createVk
 -- a vulkan function with no copy.
 --
 -- However, we must make sure the created DataFrame is pinned!
-vertIADs :: Vector VkVertexInputAttributeDescription 3
+-- TODO WARNING: manual length in type needs to match contents
+vertIADs :: Vector VkVertexInputAttributeDescription 2
 vertIADs = ST.runST $ do
     mv <- ST.newPinnedDataFrame
     ST.writeDataFrame mv 1 . scalar $ createVk
@@ -58,15 +58,8 @@ vertIADs = ST.runST $ do
     ST.writeDataFrame mv 2 . scalar $ createVk
         $  set @"location" 1
         &* set @"binding" 0
-        &* set @"format" VK_FORMAT_R32G32B32_SFLOAT
-        &* set @"offset" 12 -- Sadly, no macro here to auto-compute this.
-                            -- Perhaps, we could try to add such functionality
-                            -- to (G)PrimBytes class?..
-    ST.writeDataFrame mv 3 . scalar $ createVk
-        $  set @"location" 2
-        &* set @"binding" 0
         &* set @"format" VK_FORMAT_R32G32_SFLOAT
-        &* set @"offset" 24
+        &* set @"offset" 12
     ST.unsafeFreezeDataFrame mv
 
 data Tri = Tri {-# UNPACK #-}!FaceIndex
@@ -94,7 +87,7 @@ loadModel file = do
         -- No idea why indices are off by one. Could be a bug in the wavefront library.
         let Location x y z _ = objLocations obj Vec.! (faceLocIndex fi - 1)
             TexCoord r s _ = objTexCoords obj Vec.! (fromJust (faceTexCoordIndex fi) - 1)
-        in scalar $ Vertex (vec3 x (-y) z) (vec3 1 1 1) (vec2 r (1 - s))
+        in scalar $ Vertex (vec3 x (-y) z) (vec2 r (1 - s))
   let vertSet = Set.fromList allVertices
   let vertices = fromJust $ fromList (D @3) $ Set.toList vertSet
   let indices = fromJust $ fromList (D @3) $ map (fromIntegral . flip Set.findIndex vertSet) allVertices

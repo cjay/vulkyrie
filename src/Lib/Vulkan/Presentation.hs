@@ -57,6 +57,8 @@ chooseSwapPresentMode SwapchainSupportDetails {..}
     $ foldMap (Option . Just . pmCost) presentModes
   where
     argVal (Arg _ b) = b
+    -- For VSYNC make sure that FIFO has less cost than IMMEDIATE.
+    -- Sadly MAILBOX is not available with MoltenVK
     pmCost :: VkPresentModeKHR -> ArgMin Int VkPresentModeKHR
     pmCost VK_PRESENT_MODE_MAILBOX_KHR = Min $ Arg 0 VK_PRESENT_MODE_MAILBOX_KHR
     pmCost VK_PRESENT_MODE_IMMEDIATE_KHR = Min $ Arg 1 VK_PRESENT_MODE_IMMEDIATE_KHR

@@ -31,7 +31,7 @@ import           Lib.Vulkan.Shader
 import           Lib.Vulkan.Shader.TH
 import           Lib.Vulkan.Sync
 import           Lib.Vulkan.TransformationObject
-import           Lib.Vulkan.UniformBufferObject
+-- import           Lib.Vulkan.UniformBufferObject
 import           Lib.Vulkan.Vertex
 import           Lib.Vulkan.VertexBuffer
 
@@ -51,30 +51,17 @@ import           Lib.Vulkan.VertexBuffer
 rectVertices :: DataFrame Vertex '[XN 3]
 rectVertices = fromJust $ fromList (D @3)
   [ -- rectangle
-    --              coordinate                  color        texture coordinate
-    scalar $ Vertex (vec3 (-0.5) (-0.5)   0.0 ) (vec3 1 0 0) (vec2 0 0)
-  , scalar $ Vertex (vec3   0.4  (-0.5)   0.0 ) (vec3 0 1 0) (vec2 1 0)
-  , scalar $ Vertex (vec3   0.4    0.4    0.0 ) (vec3 0 0 1) (vec2 1 1)
-  , scalar $ Vertex (vec3 (-0.5)   0.4    0.0 ) (vec3 1 1 1) (vec2 0 1)
-
-    -- rectangle
-    --              coordinate                  color        texture coordinate
-  , scalar $ Vertex (vec3 (-0.5) (-0.5) (-0.5)) (vec3 1 0 0) (vec2 0 0)
-  , scalar $ Vertex (vec3   0.4  (-0.5) (-0.5)) (vec3 0 1 0) (vec2 1 0)
-  , scalar $ Vertex (vec3   0.4    0.4  (-0.5)) (vec3 0 0 1) (vec2 1 1)
-  , scalar $ Vertex (vec3 (-0.5)   0.4  (-0.5)) (vec3 1 1 1) (vec2 0 1)
+    --              coordinate                  texture coordinate
+    scalar $ Vertex (vec3 (-0.5) (-0.5)   0.0 ) (vec2 0 0)
+  , scalar $ Vertex (vec3   0.5  (-0.5)   0.0 ) (vec2 1 0)
+  , scalar $ Vertex (vec3   0.5    0.5    0.0 ) (vec2 1 1)
+  , scalar $ Vertex (vec3 (-0.5)   0.5    0.0 ) (vec2 0 1)
   ]
 
 rectIndices :: DataFrame Word32 '[XN 3]
 rectIndices = fromJust $ fromList (D @3)
   [ -- rectangle
     0, 1, 2, 2, 3, 0
-  ]
-
-rect2Indices :: DataFrame Word32 '[XN 3]
-rect2Indices = fromJust $ fromList (D @3)
-  [ -- rectangle
-    4, 5, 6, 6, 7, 4
   ]
 
 runVulkanProgram :: IO ()
@@ -130,7 +117,7 @@ runVulkanProgram = runProgram checkStatus $ do
     imgIndexPtr <- mallocRes
 
     let vertices = rectVertices
-        indicesObjs = [rectIndices, rect2Indices]
+        indicesObjs = [rectIndices, rectIndices]
         objects :: [(Word32, DataFrame Word32 '[XN 3])]
         objects = map (\ixs -> (fromIntegral $ dimSize1 ixs, ixs)) indicesObjs
 
@@ -143,10 +130,11 @@ runVulkanProgram = runProgram checkStatus $ do
 
     let (indexSems, indexBuffers) = unzip $ map (\(num, (sem, buf)) -> (sem, (num, buf))) indexBuffers'
 
-    frameDSL <- createDescriptorSetLayout dev [uniformBinding 0]
+    frameDSL <- createDescriptorSetLayout dev [] --[uniformBinding 0]
     materialDSL <- createDescriptorSetLayout dev [samplerBinding 0]
     pipelineLayout <- createPipelineLayout dev
       [frameDSL, materialDSL] -- descriptor set bindings 0,1,..
+      [pushConstantRange VK_SHADER_STAGE_VERTEX_BIT 0 64] -- push constant ranges
 
     let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
     (textureSems, descrTextureInfos) <- unzip <$> mapM
@@ -154,16 +142,16 @@ runVulkanProgram = runProgram checkStatus $ do
 
     depthFormat <- findDepthFormat pdev
 
-    (transObjMems, transObjBufs) <- unzip <$> uboCreateBuffers pdev dev transObjSize maxFramesInFlight
-    descriptorBufferInfos <- mapM (uboBufferInfo transObjSize) transObjBufs
+    -- (transObjMems, transObjBufs) <- unzip <$> uboCreateBuffers pdev dev transObjSize maxFramesInFlight
+    -- descriptorBufferInfos <- mapM (uboBufferInfo transObjSize) transObjBufs
 
     descriptorPool <- createDescriptorPool dev $ maxFramesInFlight * (1 + length descrTextureInfos)
-    frameDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool maxFramesInFlight frameDSL
+    -- frameDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool maxFramesInFlight frameDSL
     materialDescrSetsPerFrame <- sequence $ replicate maxFramesInFlight $
       allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
 
-    forM_ (zip descriptorBufferInfos frameDescrSets) $
-      \(bufInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [bufInfo] []
+    -- forM_ (zip descriptorBufferInfos frameDescrSets) $
+      -- \(bufInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [bufInfo] []
 
     forM_ materialDescrSetsPerFrame $ \materialDescrSets ->
       forM_ (zip descrTextureInfos materialDescrSets) $
@@ -231,15 +219,16 @@ runVulkanProgram = runProgram checkStatus $ do
             , frameFinishedEvent
             , queueEvents
             , frameOnQueueVars
-            , memories           = transObjMems
-            , memoryMutator      = \mem -> do
-                t <- updateTransObj (swapExtent swapInfo)
-                uboUpdate dev transObjSize mem t
+            -- , memories           = transObjMems
+            -- , memoryMutator      = \mem -> do
+            --     t <- updateTransObj (swapExtent swapInfo)
+            --     uboUpdate dev transObjSize mem t
             -- , descrSetMutator    = updateDescrSet dev descrTextureInfos
             , recCmdBuffer       = recordCommandBuffer graphicsPipeline
                                         renderPass pipelineLayout swapInfo
                                         vertexBuffer indexBuffers
-            , frameDescrSets
+            , getMvpMatrix = transObjToMat <$> updateTransObj (swapExtent swapInfo)
+            -- , frameDescrSets
             , materialDescrSetsPerFrame
             , framebuffers
             }

@@ -3,6 +3,7 @@
 module Lib.Vulkan.TransformationObject
   ( updateTransObj
   , transObjSize
+  , transObjToMat
   ) where
 
 import           GHC.Generics                   (Generic)
@@ -44,3 +45,5 @@ updateTransObj extent = do
 transObjSize :: VkDeviceSize
 transObjSize = fromIntegral $ sizeOf @(Scalar TransformationObject) undefined
 
+transObjToMat :: TransformationObject -> Mat44f
+transObjToMat TransformationObject{..} = proj %* view %* model

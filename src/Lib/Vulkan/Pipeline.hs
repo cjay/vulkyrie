@@ -4,6 +4,7 @@
 module Lib.Vulkan.Pipeline
   ( createGraphicsPipeline
   , createRenderPass
+  , pushConstantRange
   , createPipelineLayout
   ) where
 
@@ -193,15 +194,27 @@ createGraphicsPipeline
         runVk . vkCreateGraphicsPipelines dev VK_NULL 1 gpciPtr VK_NULL
 
 
-createPipelineLayout :: VkDevice -> [VkDescriptorSetLayout] -> Program r VkPipelineLayout
-createPipelineLayout dev descrSetLayouts = do
+pushConstantRange :: VkShaderStageFlags
+                  -> Word32
+                  -> Word32
+                  -> VkPushConstantRange
+pushConstantRange stageFlags offset size = createVk
+  $  set @"stageFlags" stageFlags
+  &* set @"offset" offset
+  &* set @"size" size
+
+
+createPipelineLayout :: VkDevice
+                     -> [VkDescriptorSetLayout]
+                     -> [VkPushConstantRange]
+                     -> Program r VkPipelineLayout
+createPipelineLayout dev descrSetLayouts pushConstRanges = do
   let plCreateInfo = createVk @VkPipelineLayoutCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
         &* set @"pNext" VK_NULL
         &* set @"flags" 0
         &* setListCountAndRef @"setLayoutCount" @"pSetLayouts" descrSetLayouts   -- Optional
-        &* set @"pushConstantRangeCount" 0       -- Optional
-        &* set @"pPushConstantRanges"    VK_NULL -- Optional
+        &* setListCountAndRef @"pushConstantRangeCount" @"pPushConstantRanges" pushConstRanges -- Optional
   allocResource
     (\pl -> liftIO $ vkDestroyPipelineLayout dev pl VK_NULL) $
     withVkPtr plCreateInfo $ \plciPtr -> allocaPeek $
