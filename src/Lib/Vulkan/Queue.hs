@@ -102,6 +102,7 @@ metaManagedQueue dev queue msp =
             sIs <- readIORef submitInfos
             when (not $ null sIs) (submitNotify_ >> return ())
 
+          -- TODO submitNotify blocks too much, compared to postNotify+submit
           submitNotify_ :: Program r Event
           submitNotify_ = do
             fence <- acquireFence fencePool

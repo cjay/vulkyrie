@@ -35,7 +35,7 @@ createVertexBuffer EngineCapability{..} (XFrame vertices) = do
 
     sem <- head <$> acquireSemaphores semPool 1
     -- Use "locally" to destroy temporary staging buffer after data copy is complete
-    withCmdBuf cmdCap cmdQueue [] [sem] $ \cmdBuf -> do
+    postWith_ cmdCap cmdQueue [] [sem] $ \cmdBuf -> do
       (stagingMem, stagingBuf) <-
         createBuffer pdev dev bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
           ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
@@ -65,7 +65,7 @@ createIndexBuffer EngineCapability{..} (XFrame indices) = do
 
     sem <- head <$> acquireSemaphores semPool 1
     -- Use "locally" to destroy temporary staging buffer after data copy is complete
-    withCmdBuf cmdCap cmdQueue [] [sem] $ \cmdBuf -> do
+    postWith_ cmdCap cmdQueue [] [sem] $ \cmdBuf -> do
       (stagingMem, stagingBuf) <-
         createBuffer pdev dev bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
           ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )

@@ -63,11 +63,11 @@ createTextureImageView EngineCapability{..} path = do
 
   sems <- acquireSemaphores semPool 3
   let [sem0, sem1, sem2] = sems
-  withCmdBuf cmdCap cmdQueue [] [sem0] $
+  postWith_ cmdCap cmdQueue [] [sem0] $
     transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM Undef_TransDst mipLevels
 
   -- Use "locally" to destroy temporary staging buffer after data copy is complete
-  withCmdBuf cmdCap cmdQueue [(sem0, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem1] $ \cmdBuf -> do
+  postWith_ cmdCap cmdQueue [(sem0, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem1] $ \cmdBuf -> do
     (stagingMem, stagingBuf) <-
       createBuffer pdev dev bufSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
@@ -82,7 +82,7 @@ createTextureImageView EngineCapability{..} path = do
     copyBufferToImage cmdBuf stagingBuf image
       (fromIntegral imageWidth) (fromIntegral imageHeight)
 
-  withCmdBuf cmdCap cmdQueue [(sem1, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem2] $
+  postWith_ cmdCap cmdQueue [(sem1, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem2] $
     -- generateMipmaps does this as a side effect:
     -- transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM TransDst_ShaderRO mipLevels
     generateMipmaps pdev image VK_FORMAT_R8G8B8A8_UNORM (fromIntegral imageWidth) (fromIntegral imageHeight) mipLevels
@@ -521,7 +521,7 @@ createDepthAttImgView EngineCapability{..} extent samples = do
 
   depthImageView <- createImageView dev depthImage depthFormat VK_IMAGE_ASPECT_DEPTH_BIT 1
   sem <- head <$> acquireSemaphores semPool 1
-  withCmdBuf cmdCap cmdQueue [] [sem] $
+  postWith_ cmdCap cmdQueue [] [sem] $
     transitionImageLayout depthImage depthFormat Undef_DepthStencilAtt 1
   return (sem, depthImageView)
 
@@ -540,6 +540,6 @@ createColorAttImgView EngineCapability{..} format extent samples = do
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
   colorImageView <- createImageView dev colorImage format VK_IMAGE_ASPECT_COLOR_BIT 1
   sem <- head <$> acquireSemaphores semPool 1
-  withCmdBuf cmdCap cmdQueue [] [sem] $
+  postWith_ cmdCap cmdQueue [] [sem] $
     transitionImageLayout colorImage format Undef_ColorAtt 1
   return (sem, colorImageView)

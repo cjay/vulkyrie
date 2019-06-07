@@ -77,9 +77,7 @@ recordCommandBuffer :: VkPipeline
 recordCommandBuffer
     pipeline rpass pipelineLayout SwapchainInfo{ swapExtent }
     vertexBuffer indexBuffers
-    cmdBuffer framebuffer frameDescrSet materialDescrSets = do
-  vertexBufArr <- newArrayRes [vertexBuffer]
-  vertexOffArr <- newArrayRes [0]
+    cmdBuf framebuffer frameDescrSet materialDescrSets = do
 
   -- render pass
   let renderPassBeginInfo = createVk @VkRenderPassBeginInfo
@@ -106,25 +104,35 @@ recordCommandBuffer
             ]
 
   withVkPtr renderPassBeginInfo $ \rpbiPtr ->
-    liftIO $ vkCmdBeginRenderPass cmdBuffer rpbiPtr VK_SUBPASS_CONTENTS_INLINE
+    liftIO $ vkCmdBeginRenderPass cmdBuf rpbiPtr VK_SUBPASS_CONTENTS_INLINE
 
   -- basic drawing commands
-  liftIO $ vkCmdBindPipeline cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
-  liftIO $ vkCmdBindVertexBuffers cmdBuffer 0 1 vertexBufArr vertexOffArr
+  liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
+  locally $ do
+    vertexBufArr <- newArrayRes [vertexBuffer]
+    vertexOffArr <- newArrayRes [0]
+    liftIO $ vkCmdBindVertexBuffers cmdBuf
+      0 1 -- first binding, binding count
+      vertexBufArr vertexOffArr
 
-  -- TODO memleak?
-  frameDsPtr <- newArrayRes [frameDescrSet]
-  liftIO $ vkCmdBindDescriptorSets cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 0 1 frameDsPtr 0 VK_NULL
+  locally $ do
+    frameDsPtr <- newArrayRes [frameDescrSet]
+    liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
+      -- first set, set count, sets, dyn offset count, dyn offsets
+      0 1 frameDsPtr 0 VK_NULL
 
   forM_ (zip materialDescrSets indexBuffers) $ \(descrSet, (nIndices, indexBuffer)) -> do
-    liftIO $ vkCmdBindIndexBuffer cmdBuffer indexBuffer 0 VK_INDEX_TYPE_UINT32
-    -- TODO memleak?
-    dsPtr <- newArrayRes [descrSet]
-    liftIO $ vkCmdBindDescriptorSets cmdBuffer VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout 1 1 dsPtr 0 VK_NULL
-    liftIO $ vkCmdDrawIndexed cmdBuffer nIndices 1 0 0 0
+    liftIO $ vkCmdBindIndexBuffer cmdBuf indexBuffer 0 VK_INDEX_TYPE_UINT32 -- offset 0 bytes
+    locally $ do
+      dsPtr <- newArrayRes [descrSet]
+      liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
+        -- first set, set count, sets, dyn offset count, dyn offsets
+        1 1 dsPtr 0 VK_NULL
+    liftIO $ vkCmdDrawIndexed cmdBuf
+      nIndices 1 0 0 0 -- index count, instance count, first index, vertex offset, first instance
 
   -- finishing up
-  liftIO $ vkCmdEndRenderPass cmdBuffer
+  liftIO $ vkCmdEndRenderPass cmdBuf
 
 
 createFrameSemaphores :: VkDevice -> Program r [VkSemaphore]
@@ -164,7 +172,7 @@ data RenderData
 drawFrame :: EngineCapability -> RenderData -> Program r Bool
 drawFrame EngineCapability{..} RenderData{..} = do
     frameIndex <- readIORef frameIndexRef
-    isOnQueue <- 
+    isOnQueue <-
       maybe False (const True) <$> tryTakeMVar (frameOnQueueVars !! frameIndex)
     -- could be not on queue because of retry due to VK_ERROR_OUT_OF_DATE_KHR below
     oldEvent <- readIORef (queueEvents !! frameIndex)
@@ -195,7 +203,7 @@ drawFrame EngineCapability{..} RenderData{..} = do
     nextS <- takeMVar nextSems
     putMVar nextSems []
 
-    withCmdBuf cmdCap cmdQueue
+    nextEvent <- postWith cmdCap cmdQueue
       ((imageAvailable, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextS)
       [renderFinished] $ \cmdBuf -> do
       let frameDescrSet = frameDescrSets !! frameIndex
@@ -204,7 +212,13 @@ drawFrame EngineCapability{..} RenderData{..} = do
       -- descrSetMutator frameDescrSet
       recCmdBuffer cmdBuf framebuffer frameDescrSet materialDescrSets
 
-    nextEvent <- submitNotify cmdQueue
+    -- Complication because multiple queues are used:
+    -- Using submitNotify instead of submit to block until vkQueueSubmit is
+    -- done, because the renderFinished semaphore needs to be signaled, or have
+    -- an associated semaphore signal operation previously submitted for
+    -- execution, before it is waited on via vkQueuePresentKHR below.
+    -- TODO maybe manage both queues together to avoid blocking here
+    _ <- submitNotify cmdQueue
     writeIORef (queueEvents !! frameIndex) nextEvent
     putMVar (frameOnQueueVars !! frameIndex) ()
 

@@ -6,8 +6,10 @@ module Lib.Vulkan.Command
   , metaCommandBuffers
 
   , forkWithCmdCap
-  , withCmdBufWait
-  , withCmdBuf
+  , postWithAndRetWait
+  , postWith
+  , postWith_
+  , postWithAndRet
 
   , ManagedCommandBuffer(..)
   , releaseCommandBuffer
@@ -34,7 +36,7 @@ module Lib.Vulkan.Command
 
 import           Control.Monad
 import           Data.Maybe
-import qualified Foreign.Marshal.Array                    as Foreign
+import qualified Foreign.Marshal.Array          as Foreign
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
@@ -99,13 +101,13 @@ makeCommandBufferBeginInfo (OneTimeSubmit oneTimeFlag) =
             &* set @"pNext" VK_NULL
 
 
-withCmdBufWait :: CommandCapability
-               -> ManagedQueue
-               -> [(VkSemaphore, VkPipelineStageFlags)]
-               -> [VkSemaphore]
-               -> (VkCommandBuffer -> Program' a)
-               -> Program r a
-withCmdBufWait cmdCap queue waitSemsWithStages signalSems action = do
+postWithAndRetWait :: CommandCapability
+                   -> ManagedQueue
+                   -> [(VkSemaphore, VkPipelineStageFlags)]
+                   -> [VkSemaphore]
+                   -> (VkCommandBuffer -> Program' a)
+                   -> Program r a
+postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action = do
   locally $ do
     managedCmdBuf <- acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
@@ -122,13 +124,17 @@ withCmdBufWait cmdCap queue waitSemsWithStages signalSems action = do
     -- continuation ends because of locally. Auto things from action get deallocated.
 
 
-withCmdBuf :: CommandCapability
-           -> ManagedQueue
-           -> [(VkSemaphore, VkPipelineStageFlags)]
-           -> [VkSemaphore]
-           -> (VkCommandBuffer -> Program (Either VulkanException ()) a)
-           -> Program r a
-withCmdBuf cmdCap queue waitSemsWithStages signalSems action = do
+-- | Posts to ManagedQueue with new command buffer. Local continuation context.
+--
+--   Asynchronously cleans up allocations from action after the command buffer
+--   has been executed.
+postWithAndRet :: CommandCapability
+               -> ManagedQueue
+               -> [(VkSemaphore, VkPipelineStageFlags)]
+               -> [VkSemaphore]
+               -> (VkCommandBuffer -> Program (Either VulkanException ()) a)
+               -> Program r (a, QueueEvent)
+postWithAndRet cmdCap queue waitSemsWithStages signalSems action = do
   retBox <- newEmptyMVar
   _ <- forkProg $ run retBox
   takeMVar retBox
@@ -144,10 +150,39 @@ withCmdBuf cmdCap queue waitSemsWithStages signalSems action = do
 
     qdone <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
     -- async return because caller doesn't care about internal cleanup
-    putMVar retBox result
+    putMVar retBox (result, qdone)
     waitForQueue qdone
     releaseCommandBuffer managedCmdBuf
     -- continuation ends because of forkProg. Auto things from action get deallocated.
+
+
+-- | Posts to ManagedQueue with new command buffer. Local continuation context.
+--
+--   Asynchronously cleans up allocations from action after the command buffer
+--   has been executed.
+postWith :: CommandCapability
+         -> ManagedQueue
+         -> [(VkSemaphore, VkPipelineStageFlags)]
+         -> [VkSemaphore]
+         -> (VkCommandBuffer -> Program (Either VulkanException ()) ())
+         -> Program r QueueEvent
+postWith cmdCap queue waitSemsWithStages signalSems action = do
+  ((), qdone) <- postWithAndRet cmdCap queue waitSemsWithStages signalSems action
+  return qdone
+
+
+-- | Posts to ManagedQueue with new command buffer. Local continuation context.
+--
+--   Asynchronously cleans up allocations from action after the command buffer
+--   has been executed.
+postWith_ :: CommandCapability
+          -> ManagedQueue
+          -> [(VkSemaphore, VkPipelineStageFlags)]
+          -> [VkSemaphore]
+          -> (VkCommandBuffer -> Program (Either VulkanException ()) ())
+          -> Program r ()
+postWith_ cmdCap queue waitSemsWithStages signalSems action =
+  postWithAndRet cmdCap queue waitSemsWithStages signalSems action >> return ()
 
 
 forkWithCmdCap :: CommandPoolPool
@@ -274,7 +309,7 @@ acquireCommandPool :: CommandPoolPool -> Program r ManagedCommandPool
 acquireCommandPool CommandPoolPool{ mCommandPool, freshPools } = do
   fresh <- takeMVar freshPools
   case fresh of pool:rest -> putMVar freshPools rest >> return pool
-                [] -> putMVar freshPools [] >> create mCommandPool
+                []        -> putMVar freshPools [] >> create mCommandPool
 
 releaseCommandPool :: CommandPoolPool -> ManagedCommandPool -> Program r ()
 releaseCommandPool CommandPoolPool{ usedPoolChan } cmdPool = do

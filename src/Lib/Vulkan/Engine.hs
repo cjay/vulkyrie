@@ -1,3 +1,4 @@
+{-# LANGUAGE Strict #-}
 module Lib.Vulkan.Engine
   ( EngineCapability(..)
   ) where
