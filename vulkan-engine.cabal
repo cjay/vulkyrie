@@ -37,6 +37,7 @@ library
                         Lib.Vulkan.Device
                         Lib.Vulkan.Drawing
                         Lib.Vulkan.Engine
+                        Lib.Vulkan.Engine.Simple3D
                         Lib.Vulkan.Image
                         Lib.Vulkan.Instance
                         Lib.Vulkan.Queue

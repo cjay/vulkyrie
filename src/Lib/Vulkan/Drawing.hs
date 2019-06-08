@@ -1,9 +1,8 @@
-{-# LANGUAGE RankNTypes       #-}
-{-# LANGUAGE Strict           #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE Strict     #-}
 module Lib.Vulkan.Drawing
   ( RenderData (..)
   , createFramebuffers
-  , recordCommandBuffer
   , createFrameSemaphores
   , drawFrame
   , maxFramesInFlight
@@ -11,15 +10,12 @@ module Lib.Vulkan.Drawing
 
 import           Control.Concurrent.Event                 (Event)
 import qualified Control.Concurrent.Event                 as Event
-import           Control.Monad                            (forM_, when)
-import           Foreign.Ptr                              (castPtr)
+import           Control.Monad
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
-import           Graphics.Vulkan.Marshal.Create.DataFrame
 import           Numeric.DataFrame
-import           Numeric.DataFrame.IO
 
 import           Lib.MetaResource
 import           Lib.MonadIO.IORef
@@ -65,86 +61,6 @@ createFramebuffers dev renderPass SwapchainInfo{ swapExtent } swapImgViews depth
           runVk $ vkCreateFramebuffer dev fbciPtr VK_NULL fbPtr
 
 
-recordCommandBuffer :: VkPipeline
-                    -> VkRenderPass
-                    -> VkPipelineLayout
-                    -> SwapchainInfo
-                    -> VkBuffer -- vertex data
-                    -> [(Word32, VkBuffer)] -- nr of indices and index data
-                    -> VkCommandBuffer
-                    -> VkFramebuffer
-                    -> [VkDescriptorSet]
-                    -> Mat44f
-                    -> Program r ()
-recordCommandBuffer
-    pipeline rpass pipelineLayout SwapchainInfo{ swapExtent }
-    vertexBuffer indexBuffers
-    cmdBuf framebuffer materialDescrSets trans = do
-
-  -- render pass
-  let renderPassBeginInfo = createVk @VkRenderPassBeginInfo
-        $  set @"sType" VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
-        &* set @"pNext" VK_NULL
-        &* set @"renderPass" rpass
-        &* set @"framebuffer" framebuffer
-        &* setVk @"renderArea"
-            (  setVk @"offset"
-                ( set @"x" 0 &* set @"y" 0 )
-            &* set @"extent" swapExtent
-            )
-        -- TODO only the first command buffer should clear
-        &* setListCountAndRef @"clearValueCount" @"pClearValues"
-            [ ( createVk @VkClearValue
-                $ setVk @"color"
-                  $ setVec @"float32" (vec4 0 0 0.2 1)
-              )
-            , ( createVk @VkClearValue
-                $ setVk @"depthStencil"
-                  $  set @"depth" 1.0
-                  &* set @"stencil" 0
-              )
-            ]
-
-  withVkPtr renderPassBeginInfo $ \rpbiPtr ->
-    liftIO $ vkCmdBeginRenderPass cmdBuf rpbiPtr VK_SUBPASS_CONTENTS_INLINE
-
-  -- basic drawing commands
-  liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
-  locally $ do
-    vertexBufArr <- newArrayRes [vertexBuffer]
-    vertexOffArr <- newArrayRes [0]
-    liftIO $ vkCmdBindVertexBuffers cmdBuf
-      0 1 -- first binding, binding count
-      vertexBufArr vertexOffArr
-
-  -- locally $ do
-  --   frameDsPtr <- newArrayRes [frameDescrSet]
-  --   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
-  --     -- first set, set count, sets, dyn offset count, dyn offsets
-  --     0 1 frameDsPtr 0 VK_NULL
-
-  let transList = [trans, trans %* (translate3 $ vec3 1 1 1)]
-  forM_ (zip3 materialDescrSets indexBuffers transList) $ \(descrSet, (nIndices, indexBuffer), mat) -> do
-    pushMatrix cmdBuf pipelineLayout mat
-    liftIO $ vkCmdBindIndexBuffer cmdBuf indexBuffer 0 VK_INDEX_TYPE_UINT32 -- offset 0 bytes
-    locally $ do
-      dsPtr <- newArrayRes [descrSet]
-      liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
-        -- first set, set count, sets, dyn offset count, dyn offsets
-        1 1 dsPtr 0 VK_NULL
-    liftIO $ vkCmdDrawIndexed cmdBuf
-      nIndices 1 0 0 0 -- index count, instance count, first index, vertex offset, first instance
-
-  -- finishing up
-  liftIO $ vkCmdEndRenderPass cmdBuf
-
-
-pushMatrix :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Program r ()
-pushMatrix cmdBuf pipelineLayout df = do
-  liftIO $ thawPinDataFrame df >>= (flip withDataFramePtr $ \ptr ->
-    vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_VERTEX_BIT 0 64 (castPtr ptr))
-
-
 createFrameSemaphores :: VkDevice -> Program r [VkSemaphore]
 createFrameSemaphores dev = sequence $ replicate maxFramesInFlight (auto $ metaSemaphore dev)
 
@@ -168,13 +84,11 @@ data RenderData
     -- ^ to execute on memories[*imgIndexPtr] before drawing
   -- , descrSetMutator        :: forall r. VkDescriptorSet -> Program r ()
     -- ^ update per-frame uniforms
-  , recCmdBuffer              :: forall r. VkCommandBuffer -> VkFramebuffer -> [VkDescriptorSet] -> Mat44f -> Program r ()
+  , recCmdBuffer              :: forall r. VkCommandBuffer -> VkFramebuffer -> Mat44f -> Program r ()
     -- ^ update cmdBuf
-  , getMvpMatrix              :: forall r. Program r Mat44f
+  , getViewProjMatrix              :: forall r. Program r Mat44f
   -- , frameDescrSets            :: [VkDescriptorSet]
     -- ^ one per frame-in-flight
-  , materialDescrSetsPerFrame :: [[VkDescriptorSet]]
-    -- ^ one list of material descriptor sets per frame-in-flight
   , framebuffers              :: [VkFramebuffer]
     -- ^ one per swapchain image
   }
@@ -214,15 +128,14 @@ drawFrame EngineCapability{..} RenderData{..} = do
     nextS <- takeMVar nextSems
     putMVar nextSems []
 
-    trans <- getMvpMatrix
+    viewProjMatrix <- getViewProjMatrix
     nextEvent <- postWith cmdCap cmdQueue
       ((imageAvailable, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextS)
       [renderFinished] $ \cmdBuf -> do
       -- let frameDescrSet = frameDescrSets !! frameIndex
-      let materialDescrSets = materialDescrSetsPerFrame !! frameIndex
-          framebuffer = framebuffers !! imgIndex
+      let framebuffer = framebuffers !! imgIndex
       -- descrSetMutator frameDescrSet
-      recCmdBuffer cmdBuf framebuffer materialDescrSets trans
+      recCmdBuffer cmdBuf framebuffer viewProjMatrix
 
     -- Complication because multiple queues are used:
     -- Using submitNotify instead of submit to block until vkQueueSubmit is

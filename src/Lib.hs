@@ -23,6 +23,7 @@ import           Lib.Vulkan.Descriptor
 import           Lib.Vulkan.Device
 import           Lib.Vulkan.Drawing
 import           Lib.Vulkan.Engine
+import           Lib.Vulkan.Engine.Simple3D
 import           Lib.Vulkan.Image
 import           Lib.Vulkan.Pipeline
 import           Lib.Vulkan.Presentation
@@ -30,24 +31,11 @@ import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Shader
 import           Lib.Vulkan.Shader.TH
 import           Lib.Vulkan.Sync
-import           Lib.Vulkan.TransformationObject
 -- import           Lib.Vulkan.UniformBufferObject
 import           Lib.Vulkan.Vertex
 import           Lib.Vulkan.VertexBuffer
 
 
--- | Interleaved array of vertices containing at least 3 entries.
---
---   Obviously, in real world vertices come from a separate file and not known at compile time.
---   The shader pipeline requires at least 3 unique vertices (for a triangle)
---   to render something on a screen. Setting `XN 3` here is just a handy way
---   to statically ensure the program satisfies this requirement.
---   This way, not-enough-vertices error occures at the moment of DataFrame initialization
---   instead of silently failing to render something onto a screen.
---
---   Note: in this program, `n >= 3` requirement is also forced in `Lib/Vulkan/VertexBuffer.hs`,
---         where it is not strictly necessary but allows to avoid specifying DataFrame constraints
---         in function signatures (such as, e.g. `KnownDim n`).
 rectVertices :: DataFrame Vertex '[XN 3]
 rectVertices = fromJust $ fromList (D @3)
   [ -- rectangle
@@ -63,6 +51,30 @@ rectIndices = fromJust $ fromList (D @3)
   [ -- rectangle
     0, 1, 2, 2, 3, 0
   ]
+
+
+rotation :: Double -> Mat44f
+rotation seconds =
+  let rate = 1/16 -- rotations per second
+      (_::Int, phaseTau) = properFraction $ seconds * rate
+  in rotate (vec3 0 0 1) (realToFrac phaseTau * 2 * pi)
+
+
+objMatrixOverTime :: Program r Mat44f
+objMatrixOverTime = do
+  seconds <- getTime
+  return $ rotation seconds
+
+
+viewProjMatrix :: VkExtent2D -> Program r Mat44f
+viewProjMatrix extent = do
+  let width = getField @"width" extent
+  let height = getField @"height" extent
+  let aspectRatio = fromIntegral width / fromIntegral height
+  let view = lookAt (vec3 0 0 (-1)) (vec3 2 2 2) (vec3 0 0 0)
+  let proj = perspective 0.1 20 (45/360*2*pi) aspectRatio
+  return $ proj %* view
+
 
 runVulkanProgram :: IO ()
 runVulkanProgram = runProgram checkStatus $ do
@@ -117,18 +129,12 @@ runVulkanProgram = runProgram checkStatus $ do
     imgIndexPtr <- mallocRes
 
     let vertices = rectVertices
-        indicesObjs = [rectIndices, rectIndices]
-        objects :: [(Word32, DataFrame Word32 '[XN 3])]
-        objects = map (\ixs -> (fromIntegral $ dimSize1 ixs, ixs)) indicesObjs
+        indices = rectIndices
 
     (vertexSem, vertexBuffer) <-
       createVertexBuffer cap vertices
 
-    -- (Word32, (Sem, Buffer))
-    indexBuffers' <- forM objects $ mapM $ \indices ->
-      createIndexBuffer cap indices
-
-    let (indexSems, indexBuffers) = unzip $ map (\(num, (sem, buf)) -> (sem, (num, buf))) indexBuffers'
+    (indexSem, indexBuffer) <- createIndexBuffer cap indices
 
     frameDSL <- createDescriptorSetLayout dev [] --[uniformBinding 0]
     materialDSL <- createDescriptorSetLayout dev [samplerBinding 0]
@@ -147,15 +153,30 @@ runVulkanProgram = runProgram checkStatus $ do
 
     descriptorPool <- createDescriptorPool dev $ maxFramesInFlight * (1 + length descrTextureInfos)
     -- frameDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool maxFramesInFlight frameDSL
-    materialDescrSetsPerFrame <- sequence $ replicate maxFramesInFlight $
-      allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
+    materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
 
     -- forM_ (zip descriptorBufferInfos frameDescrSets) $
       -- \(bufInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [bufInfo] []
 
-    forM_ materialDescrSetsPerFrame $ \materialDescrSets ->
-      forM_ (zip descrTextureInfos materialDescrSets) $
-        \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
+    forM_ (zip descrTextureInfos materialDescrSets) $
+      \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
+
+    let objs =
+          [ Object
+            { materialBindInfo = DescrBindInfo (materialDescrSets !! 0) Nothing
+            , vertexBufferLoc = BufferLoc vertexBuffer 0
+            , indexBufferLoc = BufferLoc indexBuffer 0
+            , firstIndex = 0
+            , indexCount = fromIntegral $ dimSize1 indices
+            }
+          , Object
+            { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) Nothing
+            , vertexBufferLoc = BufferLoc vertexBuffer 0
+            , indexBufferLoc = BufferLoc indexBuffer 0
+            , firstIndex = 0
+            , indexCount = fromIntegral $ dimSize1 indices
+            }
+          ]
 
     let beforeSwapchainCreation :: Program r ()
         beforeSwapchainCreation = do
@@ -177,6 +198,7 @@ runVulkanProgram = runProgram checkStatus $ do
 
     removeQueuePump gq
 
+    let indexSems = [indexSem]
     let loadSems = [(vertexSem, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT)] <>
           map (\sem -> (sem, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT)) indexSems <>
           map (\sem -> (sem, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)) textureSems
@@ -209,6 +231,8 @@ runVulkanProgram = runProgram checkStatus $ do
       framebuffers
         <- createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
 
+      objTransformsRef <- newIORef [translate3 $ vec3 0 1 1, translate3 $ vec3 0 0 0]
+
       let rdata = RenderData
             { swapInfo
             , queues
@@ -224,12 +248,11 @@ runVulkanProgram = runProgram checkStatus $ do
             --     t <- updateTransObj (swapExtent swapInfo)
             --     uboUpdate dev transObjSize mem t
             -- , descrSetMutator    = updateDescrSet dev descrTextureInfos
-            , recCmdBuffer       = recordCommandBuffer graphicsPipeline
-                                        renderPass pipelineLayout swapInfo
-                                        vertexBuffer indexBuffers
-            , getMvpMatrix = transObjToMat <$> updateTransObj (swapExtent swapInfo)
+            , recCmdBuffer       = recordAll graphicsPipeline
+                                        renderPass pipelineLayout (swapExtent swapInfo)
+                                        objs objTransformsRef
+            , getViewProjMatrix = viewProjMatrix (swapExtent swapInfo)
             -- , frameDescrSets
-            , materialDescrSetsPerFrame
             , framebuffers
             }
 
@@ -243,7 +266,8 @@ runVulkanProgram = runProgram checkStatus $ do
       currentSec :: IORef Int <- newIORef 0
 
       shouldExit <- glfwMainLoop window $ do
-        return () -- do some app logic
+        objMatrix <- objMatrixOverTime
+        writeIORef objTransformsRef [(translate3 $ vec3 0 1 1) %* objMatrix, objMatrix]
 
         needRecreation <- drawFrame cap rdata `catchError` ( \err@(VulkanException ecode _) ->
           case ecode of
