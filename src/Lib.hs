@@ -25,6 +25,7 @@ import           Lib.Vulkan.Drawing
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Engine.Simple3D
 import           Lib.Vulkan.Image
+import           Lib.Vulkan.Memory
 import           Lib.Vulkan.Pipeline
 import           Lib.Vulkan.Presentation
 import           Lib.Vulkan.Queue
@@ -101,7 +102,9 @@ runVulkanProgram = runProgram checkStatus $ do
 
     sp <- auto $ metaSemaphorePool msp
     cmdCap <- auto $ metaCommandCapability cpp
-    let cap = EngineCapability pdev dev cmdCap gq sp
+    memPool <- auto $ metaMemoryPool pdev dev
+    -- TODO create permanently mapped reusable staging buffer
+    let cap = EngineCapability pdev dev cmdCap gq sp memPool
 
     logInfo $ "Createad device: " ++ show dev
     logInfo $ "Createad queues: " ++ show queues

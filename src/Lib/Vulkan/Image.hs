@@ -28,6 +28,7 @@ import           Lib.Program.Foreign
 import           Lib.Vulkan.Buffer
 import           Lib.Vulkan.Command
 import           Lib.Vulkan.Engine
+import           Lib.Vulkan.Memory
 import           Lib.Vulkan.Sync
 
 
@@ -44,7 +45,7 @@ createTextureInfo cap@EngineCapability{..} path = do
 createTextureImageView :: EngineCapability
                        -> FilePath
                        -> Program r (VkSemaphore, VkImageView, Word32)
-createTextureImageView EngineCapability{..} path = do
+createTextureImageView ecap@EngineCapability{..} path = do
   Image { imageWidth, imageHeight, imageData }
     <- (liftIO $ readImage path) >>= \case
       Left err -> throwVkMsg err
@@ -55,7 +56,7 @@ createTextureImageView EngineCapability{..} path = do
       mipLevels = (floor . log2 . fromIntegral $ max imageWidth imageHeight) + 1
 
   -- we don't need to access the VkDeviceMemory of the image, copyBufferToImage works with the VkImage
-  (_, image) <- createImage pdev dev
+  (_, image) <- createImage ecap
     (fromIntegral imageWidth) (fromIntegral imageHeight) mipLevels VK_SAMPLE_COUNT_1_BIT
     VK_FORMAT_R8G8B8A8_UNORM VK_IMAGE_TILING_OPTIMAL
     (VK_IMAGE_USAGE_TRANSFER_SRC_BIT .|. VK_IMAGE_USAGE_TRANSFER_DST_BIT .|. VK_IMAGE_USAGE_SAMPLED_BIT)
@@ -69,15 +70,15 @@ createTextureImageView EngineCapability{..} path = do
   -- Use "locally" to destroy temporary staging buffer after data copy is complete
   postWith_ cmdCap cmdQueue [(sem0, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem1] $ \cmdBuf -> do
     (stagingMem, stagingBuf) <-
-      createBuffer pdev dev bufSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+      createBuffer ecap bufSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
     -- copy data
     stagingDataPtr <- allocaPeek $
-      runVk . vkMapMemory dev stagingMem 0 bufSize 0
+      runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bufSize 0
     liftIO $ withForeignPtr imageDataForeignPtr $ \imageDataPtr ->
       copyArray (castPtr stagingDataPtr) imageDataPtr imageDataLen
-    liftIO $ vkUnmapMemory dev stagingMem
+    liftIO $ vkUnmapMemory dev (memory stagingMem)
 
     copyBufferToImage cmdBuf stagingBuf image
       (fromIntegral imageWidth) (fromIntegral imageHeight)
@@ -378,8 +379,7 @@ transitionImageLayout image format transition mipLevels cmdBuf =
       1 barrPtr
 
 
-createImage :: VkPhysicalDevice
-            -> VkDevice
+createImage :: EngineCapability
             -> Word32
             -> Word32
             -> Word32
@@ -388,8 +388,8 @@ createImage :: VkPhysicalDevice
             -> VkImageTiling
             -> VkImageUsageFlags
             -> VkMemoryPropertyFlags
-            -> Program r (VkDeviceMemory, VkImage)
-createImage pdev dev width height mipLevels samples format tiling usage propFlags = do
+            -> Program r (MemoryLoc, VkImage)
+createImage EngineCapability{..} width height mipLevels samples format tiling usage propFlags = do
   let ici = createVk @VkImageCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO
         &* set @"pNext" VK_NULL
@@ -415,30 +415,11 @@ createImage pdev dev width height mipLevels samples format tiling usage propFlag
       withVkPtr ici $ \iciPtr -> allocaPeek $ \imgPtr ->
         runVk $ vkCreateImage dev iciPtr VK_NULL imgPtr
 
-  memRequirements <- allocaPeek $ \reqsPtr ->
-    liftIO $ vkGetImageMemoryRequirements dev image reqsPtr
-
-  memType <- findMemoryType pdev
-    (getField @"memoryTypeBits" memRequirements) propFlags
-
-  -- allocate memory
-  let allocInfo = createVk @VkMemoryAllocateInfo
-        $  set @"sType" VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO
-        &* set @"pNext" VK_NULL
-        &* set @"allocationSize" (getField @"size" memRequirements)
-        &* set @"memoryTypeIndex" memType
-
-  imageMemory <- allocResource
-    (\iMem -> liftIO $ vkFreeMemory dev iMem VK_NULL) $
-    withVkPtr allocInfo $ \aiPtr -> allocaPeek $
-      runVk . vkAllocateMemory dev aiPtr VK_NULL
-
+  memLoc <- allocBindImageMem memPool propFlags image
   -- release the image before releasing the memory that is bound to it
   freeImageLater
 
-  runVk $ vkBindImageMemory dev image imageMemory 0
-
-  return (imageMemory, image)
+  return (memLoc, image)
 
 
 copyBufferToImage :: VkCommandBuffer
@@ -512,10 +493,10 @@ createDepthAttImgView :: EngineCapability
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
                       -> Program r (VkSemaphore, VkImageView)
-createDepthAttImgView EngineCapability{..} extent samples = do
+createDepthAttImgView ecap@EngineCapability{..} extent samples = do
   depthFormat <- findDepthFormat pdev
 
-  (_, depthImage) <- createImage pdev dev
+  (_, depthImage) <- createImage ecap
     (getField @"width" extent) (getField @"height" extent) 1 samples depthFormat
     VK_IMAGE_TILING_OPTIMAL VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
@@ -531,8 +512,8 @@ createColorAttImgView :: EngineCapability
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
                       -> Program r (VkSemaphore, VkImageView)
-createColorAttImgView EngineCapability{..} format extent samples = do
-  (_, colorImage) <- createImage pdev dev
+createColorAttImgView ecap@EngineCapability{..} format extent samples = do
+  (_, colorImage) <- createImage ecap
     (getField @"width" extent) (getField @"height" extent) 1 samples format
     VK_IMAGE_TILING_OPTIMAL
     -- not sure why tutorial uses VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT

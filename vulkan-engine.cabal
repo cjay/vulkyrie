@@ -40,6 +40,7 @@ library
                         Lib.Vulkan.Engine.Simple3D
                         Lib.Vulkan.Image
                         Lib.Vulkan.Instance
+                        Lib.Vulkan.Memory
                         Lib.Vulkan.Queue
                         Lib.Vulkan.Pipeline
                         Lib.Vulkan.Presentation
@@ -57,6 +58,7 @@ library
                       , directory
                       , dimensions >=1.0.1 && < 2
                       , dlist
+                      , dynamic-mvector
                       , easytensor >=1.0.1 && < 2
                       , easytensor-vulkan >=1.0.1 && < 2
                       , filepath
@@ -64,6 +66,7 @@ library
                       , JuicyPixels
                       , monad-logger
                       , mtl
+                      , primitive
                       , process
                       , template-haskell
                       , time

@@ -5,6 +5,7 @@ module Lib.Vulkan.Engine
 
 import           Graphics.Vulkan
 import           Lib.Vulkan.Command
+import           Lib.Vulkan.Memory
 import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Sync
 
@@ -14,5 +15,6 @@ data EngineCapability = EngineCapability
   , cmdCap   :: CommandCapability
   , cmdQueue :: ManagedQueue
   , semPool  :: SemaphorePool
+  , memPool  :: MemoryPool
   }
 
