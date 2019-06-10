@@ -9,7 +9,6 @@ import           GHC.Generics                   (Generic)
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Numeric.DataFrame
-import           Numeric.PrimBytes
 
 import           Lib.Program
 import           Lib.Program.Foreign

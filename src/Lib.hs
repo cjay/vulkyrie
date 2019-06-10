@@ -6,11 +6,9 @@ module Lib
 
 import qualified Control.Concurrent.Event             as Event
 import           Control.Monad
-import           Data.Maybe                           (fromJust)
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Numeric.DataFrame
-import           Numeric.Dimensions
 
 import           Lib.GLFW
 import           Lib.MetaResource
@@ -38,7 +36,7 @@ import           Lib.Vulkan.VertexBuffer
 
 
 rectVertices :: DataFrame Vertex '[XN 3]
-rectVertices = fromJust $ fromList (D @3)
+rectVertices = atLeastThree $ fromList
   [ -- rectangle
     --              coordinate                  texture coordinate
     scalar $ Vertex (vec3 (-0.5) (-0.5)   0.0 ) (vec2 0 0)
@@ -48,7 +46,7 @@ rectVertices = fromJust $ fromList (D @3)
   ]
 
 rectIndices :: DataFrame Word32 '[XN 3]
-rectIndices = fromJust $ fromList (D @3)
+rectIndices = atLeastThree $ fromList
   [ -- rectangle
     0, 1, 2, 2, 3, 0
   ]
@@ -170,14 +168,14 @@ runVulkanProgram = runProgram checkStatus $ do
             , vertexBufferLoc = BufferLoc vertexBuffer 0
             , indexBufferLoc = BufferLoc indexBuffer 0
             , firstIndex = 0
-            , indexCount = fromIntegral $ dimSize1 indices
+            , indexCount = dfLen indices
             }
           , Object
             { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) Nothing
             , vertexBufferLoc = BufferLoc vertexBuffer 0
             , indexBufferLoc = BufferLoc indexBuffer 0
             , firstIndex = 0
-            , indexCount = fromIntegral $ dimSize1 indices
+            , indexCount = dfLen indices
             }
           ]
 

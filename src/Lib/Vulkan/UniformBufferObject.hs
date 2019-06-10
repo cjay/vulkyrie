@@ -12,7 +12,6 @@ import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
 import           Numeric.DataFrame
-import           Numeric.PrimBytes
 
 import           Lib.Program
 import           Lib.Program.Foreign

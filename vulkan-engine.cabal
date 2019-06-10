@@ -56,11 +56,11 @@ library
                       , concurrent-extra
                       , containers
                       , directory
-                      , dimensions >=1.0.1 && < 2
+                      , dimensions
                       , dlist
                       , dynamic-mvector
-                      , easytensor >=1.0.1 && < 2
-                      , easytensor-vulkan >=1.0.1 && < 2
+                      , easytensor
+                      , easytensor-vulkan
                       , filepath
                       , GLFW-b >= 3.2.1
                       , JuicyPixels

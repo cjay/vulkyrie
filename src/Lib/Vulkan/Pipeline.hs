@@ -15,19 +15,16 @@ import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
 import           Graphics.Vulkan.Marshal.Create.DataFrame
 import           Numeric.DataFrame
-import           Numeric.Dimensions
 
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Vulkan.Presentation
 
 
-createGraphicsPipeline :: ( KnownDim (n :: k)
-                          , VulkanDataFrame VkVertexInputAttributeDescription '[n])
-                       => VkDevice
+createGraphicsPipeline :: VkDevice
                        -> SwapchainInfo
                        -> VkVertexInputBindingDescription
-                       -> Vector VkVertexInputAttributeDescription n
+                       -> [VkVertexInputAttributeDescription]
                        -> [VkPipelineShaderStageCreateInfo]
                        -> VkRenderPass
                        -> VkPipelineLayout
@@ -41,11 +38,8 @@ createGraphicsPipeline
         &* set @"pNext" VK_NULL
         &* set @"flags" 0
         &* set @"vertexBindingDescriptionCount" 1
-        &* setDFRef @"pVertexBindingDescriptions"
-          (scalar bindDesc)
-        &* set @"vertexAttributeDescriptionCount"
-          (fromIntegral . totalDim $ dims `inSpaceOf` attrDescs)
-        &* setDFRef @"pVertexAttributeDescriptions" attrDescs
+        &* setDFRef @"pVertexBindingDescriptions" (scalar bindDesc)
+        &* setListCountAndRef @"vertexAttributeDescriptionCount" @"pVertexAttributeDescriptions" attrDescs
 
       -- input assembly
       inputAssembly = createVk @VkPipelineInputAssemblyStateCreateInfo

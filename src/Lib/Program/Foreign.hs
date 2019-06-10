@@ -14,14 +14,11 @@ module Lib.Program.Foreign
     , asListVk
     , allocaPeek, allocaPeekVk, allocaPeekDF
     , mallocRes, mallocArrayRes, newArrayRes
-
-    , listToDF
     ) where
 
 import qualified GHC.Base
 
 import           Control.Monad.IO.Class
-import           Data.Maybe
 import qualified Foreign.Marshal.Alloc   as Foreign
 import qualified Foreign.Marshal.Array   as Foreign
 import           Foreign.Ptr
@@ -31,7 +28,6 @@ import           Graphics.Vulkan.Marshal
 import           Numeric.DataFrame
 import           Numeric.DataFrame.IO
 import           Numeric.Dimensions
-import           Numeric.PrimBytes
 
 import           Lib.MonadIO.MVar
 import           Lib.Program
@@ -86,8 +82,7 @@ allocaPeekDF :: forall a (ns :: [Nat]) r
              => (Ptr a -> Program () ())
              -> Program r (DataFrame a ns)
 allocaPeekDF pf
-  | E <- inferASing' @a @ns
-  , E <- inferPrim' @a @ns
+  | Dict <- inferKnownBackend @a @ns
   = Program $ \ref c -> do
     mdf <- newPinnedDataFrame
     locVar <- newEmptyMVar
@@ -166,7 +161,3 @@ mallocRes = Program $ \_ c -> Foreign.alloca (c . Right)
 newArrayRes :: Storable a => [a] -> Program r (Ptr a)
 newArrayRes xs = Program $ \_ c -> Foreign.withArray xs (c . Right)
 {-# INLINE newArrayRes #-}
-
-
-listToDF :: PrimBytes a => [a] -> DataFrame a '[XN 0]
-listToDF = fromJust . fromList (D @0) . map scalar

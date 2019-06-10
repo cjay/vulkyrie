@@ -9,7 +9,6 @@ import           Foreign.Ptr              (castPtr)
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Numeric.DataFrame
-import           Numeric.Dimensions
 
 import           Lib.Program
 import           Lib.Program.Foreign
@@ -27,7 +26,7 @@ createVertexBuffer :: EngineCapability
                    -> Program r (VkSemaphore, VkBuffer)
 createVertexBuffer ecap@EngineCapability{..} (XFrame vertices) = do
 
-    let bSize = fromIntegral $ bSizeOf vertices
+    let bSize = bSizeOf vertices
 
     (_, vertexBuf) <-
       createBuffer ecap bSize
@@ -56,7 +55,7 @@ createIndexBuffer :: EngineCapability
                   -> Program r (VkSemaphore, VkBuffer)
 createIndexBuffer ecap@EngineCapability{..} (XFrame indices) = do
 
-    let bSize = fromIntegral $ bSizeOf indices
+    let bSize = bSizeOf indices
 
     (_, vertexBuf) <-
       createBuffer ecap bSize
