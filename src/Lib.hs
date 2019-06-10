@@ -72,7 +72,7 @@ viewProjMatrix extent = do
   let aspectRatio = fromIntegral width / fromIntegral height
   let view = lookAt (vec3 0 0 (-1)) (vec3 2 2 2) (vec3 0 0 0)
   let proj = perspective 0.1 20 (45/360*2*pi) aspectRatio
-  return $ proj %* view
+  return $ view %* proj
 
 
 runVulkanProgram :: IO ()
@@ -268,7 +268,7 @@ runVulkanProgram = runProgram checkStatus $ do
 
       shouldExit <- glfwMainLoop window $ do
         objMatrix <- objMatrixOverTime
-        writeIORef objTransformsRef [(translate3 $ vec3 0 1 1) %* objMatrix, objMatrix]
+        writeIORef objTransformsRef [objMatrix %* (translate3 $ vec3 0 1 1) , objMatrix]
 
         needRecreation <- drawFrame cap rdata `catchError` ( \err@(VulkanException ecode _) ->
           case ecode of

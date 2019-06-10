@@ -162,7 +162,7 @@ recordAll
   objTransforms <- readIORef objTransformsRef
 
   forM_ (zip objTransforms objects) $ \(objTransform, object) -> do
-    recordObject pipelineLayout cmdBuf (viewProjTransform %* objTransform) object
+    recordObject pipelineLayout cmdBuf (objTransform %* viewProjTransform) object
 
   -- finishing up
   liftIO $ vkCmdEndRenderPass cmdBuf
