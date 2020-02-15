@@ -25,7 +25,7 @@ createDescriptorPool dev n =
       ( createVk
         $  set @"sType" VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
         &* set @"pNext" VK_NULL
-        &* set @"flags" 0
+        &* set @"flags" VK_ZERO_FLAGS
         &* setListCountAndRef @"poolSizeCount" @"pPoolSizes"
           [ createVk @VkDescriptorPoolSize
             $  set @"type" VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
@@ -65,7 +65,7 @@ createDescriptorSetLayout dev bindings =
   let dslCreateInfo = createVk @VkDescriptorSetLayoutCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
         &* set @"pNext" VK_NULL
-        &* set @"flags" 0
+        &* set @"flags" VK_ZERO_FLAGS
         &* setListCountAndRef @"bindingCount" @"pBindings" bindings
   in allocResource
      (\dsl -> liftIO $ vkDestroyDescriptorSetLayout dev dsl VK_NULL) $
@@ -136,4 +136,3 @@ updateDescriptorSet dev descriptorSet offset uniformBufferInfos imageInfos =
         [offset..]
   in withVkArrayLen descriptorWrites $ \dwLen dwPtr ->
       liftIO $ vkUpdateDescriptorSets dev dwLen dwPtr 0 VK_NULL
-

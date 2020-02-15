@@ -75,7 +75,7 @@ createTextureImageView ecap@EngineCapability{..} path = do
 
     -- copy data
     stagingDataPtr <- allocaPeek $
-      runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bufSize 0
+      runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bufSize VK_ZERO_FLAGS
     liftIO $ withForeignPtr imageDataForeignPtr $ \imageDataPtr ->
       copyArray (castPtr stagingDataPtr) imageDataPtr imageDataLen
     liftIO $ vkUnmapMemory dev (memory stagingMem)
@@ -106,7 +106,7 @@ generateMipmaps pdev image format width height mipLevels cmdBuf = do
     liftIO $ vkGetPhysicalDeviceFormatProperties pdev format propsPtr
   let supported = getField @"optimalTilingFeatures" formatProps
                   .&. VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT
-   in when (supported == 0) $
+   in when (supported == VK_ZERO_FLAGS) $
       throwVkMsg "texture image format does not support linear blitting!"
   mapM_ createLvl
     (zip3
@@ -120,7 +120,7 @@ generateMipmaps pdev image format width height mipLevels cmdBuf = do
    in withVkPtr barrier $ \barrPtr -> liftIO $
       vkCmdPipelineBarrier cmdBuf
         VK_PIPELINE_STAGE_TRANSFER_BIT VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-        0
+        VK_ZERO_FLAGS
         0 VK_NULL
         0 VK_NULL
         1 barrPtr
@@ -194,7 +194,7 @@ generateMipmaps pdev image format width height mipLevels cmdBuf = do
      in withVkPtr barrier $ \barrPtr -> liftIO $
         vkCmdPipelineBarrier cmdBuf
           VK_PIPELINE_STAGE_TRANSFER_BIT VK_PIPELINE_STAGE_TRANSFER_BIT
-          0
+          VK_ZERO_FLAGS
           0 VK_NULL
           0 VK_NULL
           1 barrPtr
@@ -212,7 +212,7 @@ generateMipmaps pdev image format width height mipLevels cmdBuf = do
      in withVkPtr barrier $ \barrPtr -> liftIO $
         vkCmdPipelineBarrier cmdBuf
           VK_PIPELINE_STAGE_TRANSFER_BIT VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-          0
+          VK_ZERO_FLAGS
           0 VK_NULL
           0 VK_NULL
           1 barrPtr
@@ -274,7 +274,7 @@ createImageView dev image format aspectFlags mipLevels = do
         imgvCreateInfo = createVk @VkImageViewCreateInfo
           $  set @"sType" VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO
           &* set @"pNext" VK_NULL_HANDLE
-          &* set @"flags" 0
+          &* set @"flags" VK_ZERO_FLAGS
           &* set @"image" image
           &* set @"viewType" VK_IMAGE_VIEW_TYPE_2D
           &* set @"format" format
@@ -303,7 +303,7 @@ dependents Undef_TransDst =
   TransitionDependent
   { oldLayout       = VK_IMAGE_LAYOUT_UNDEFINED
   , newLayout       = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-  , srcAccessMask   = 0
+  , srcAccessMask   = VK_ZERO_FLAGS
   , dstAccessMask   = VK_ACCESS_TRANSFER_WRITE_BIT
   , srcStageMask    = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
   , dstStageMask    = VK_PIPELINE_STAGE_TRANSFER_BIT
@@ -321,7 +321,7 @@ dependents Undef_DepthStencilAtt =
   TransitionDependent
   { oldLayout       = VK_IMAGE_LAYOUT_UNDEFINED
   , newLayout       = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-  , srcAccessMask   = 0
+  , srcAccessMask   = VK_ZERO_FLAGS
   , dstAccessMask   = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT .|. VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
   , srcStageMask    = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
   , dstStageMask    = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
@@ -330,7 +330,7 @@ dependents Undef_ColorAtt =
   TransitionDependent
   { oldLayout       = VK_IMAGE_LAYOUT_UNDEFINED
   , newLayout       = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-  , srcAccessMask   = 0
+  , srcAccessMask   = VK_ZERO_FLAGS
   , dstAccessMask   = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT .|. VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
   , srcStageMask    = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
   , dstStageMask    = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
@@ -373,7 +373,7 @@ transitionImageLayout image format transition mipLevels cmdBuf =
     withVkPtr barrier $ \barrPtr -> liftIO $
       vkCmdPipelineBarrier cmdBuf
       srcStageMask dstStageMask
-      0
+      VK_ZERO_FLAGS
       0 VK_NULL
       0 VK_NULL
       1 barrPtr
@@ -393,7 +393,7 @@ createImage EngineCapability{..} width height mipLevels samples format tiling us
   let ici = createVk @VkImageCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO
         &* set @"pNext" VK_NULL
-        &* set @"flags" 0
+        &* set @"flags" VK_ZERO_FLAGS
         &* set @"imageType" VK_IMAGE_TYPE_2D
         &* setVk @"extent"
             (  set @"width" width

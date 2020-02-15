@@ -46,7 +46,7 @@ also you can do things with pointers:
 instance PrimBytes Vertex
 
 -- | Check if the frame has enough elements.
-atLeastThree :: (All KnownXNatType ns, BoundedDims ns)
+atLeastThree :: (All KnownDimType ns, BoundedDims ns)
              => DataFrame t (n ': ns) -> DataFrame t (XN 3 ': ns)
 atLeastThree = fromMaybe (error "Lib.Vulkan.Vertex.atLeastThree: not enough points")
              . constrainDF

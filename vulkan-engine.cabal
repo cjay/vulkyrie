@@ -52,7 +52,7 @@ library
                         Lib.Vulkan.Vertex
                         Lib.Vulkan.VertexBuffer
     build-depends:      async
-                      , base >= 4.9 && < 5
+                      , base >= 4.9
                       , concurrent-extra
                       , containers
                       , directory
@@ -62,7 +62,7 @@ library
                       , easytensor
                       , easytensor-vulkan
                       , filepath
-                      , GLFW-b >= 3.2.1
+                      , GLFW-b >= 3.3.0.0
                       , JuicyPixels
                       , monad-logger
                       , mtl

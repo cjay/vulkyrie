@@ -61,7 +61,7 @@ metaCommandPool dev queueFamIdx (ResetCmdBuf resetFlag) =
       ( createVk
         $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO
         &* set @"pNext" VK_NULL
-        &* set @"flags" (if resetFlag then VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT else 0)
+        &* set @"flags" (if resetFlag then VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT else VK_ZERO_FLAGS)
         &* set @"queueFamilyIndex" queueFamIdx
       ) $ \ciPtr -> runVk $ vkCreateCommandPool dev ciPtr VK_NULL pPtr
 
@@ -97,7 +97,7 @@ makeCommandBufferBeginInfo :: OneTimeSubmitFlag -> VkCommandBufferBeginInfo
 makeCommandBufferBeginInfo (OneTimeSubmit oneTimeFlag) =
   createVk @VkCommandBufferBeginInfo
             $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
-            &* set @"flags" (if oneTimeFlag then VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT else 0)
+            &* set @"flags" (if oneTimeFlag then VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT else VK_ZERO_FLAGS)
             &* set @"pNext" VK_NULL
 
 
@@ -385,7 +385,7 @@ resetCommandPool ManagedCommandPool{..} = do
   (_, cmdBufs) <- takeMVar usedCmdBufs
   writeIORef acquiredCount 0
   putMVar usedCmdBufs (0, [])
-  runVk $ vkResetCommandPool dev cmdPool 0
+  runVk $ vkResetCommandPool dev cmdPool VK_ZERO_FLAGS
   -- usually freshCmdBufs should be empty or mostly empty here
   modifyIORef' freshCmdBufs (++ cmdBufs)
 

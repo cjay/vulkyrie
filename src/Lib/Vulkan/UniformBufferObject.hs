@@ -42,6 +42,6 @@ uboBufferInfo size uniformBuffer = return $ createVk @VkDescriptorBufferInfo
 uboUpdate :: PrimBytes o => VkDevice -> VkDeviceSize -> VkDeviceMemory -> o -> Program r ()
 uboUpdate device size mem ubo = do
       uboPtr <- allocaPeek $
-        runVk . vkMapMemory device mem 0 size 0
+        runVk . vkMapMemory device mem 0 size VK_ZERO_FLAGS
       poke (castPtr uboPtr) (scalar ubo)
       liftIO $ vkUnmapMemory device mem

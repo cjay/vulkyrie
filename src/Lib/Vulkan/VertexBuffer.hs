@@ -41,7 +41,7 @@ createVertexBuffer ecap@EngineCapability{..} (XFrame vertices) = do
 
       -- copy data
       stagingDataPtr <- allocaPeek $
-        runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bSize 0
+        runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bSize VK_ZERO_FLAGS
       poke (castPtr stagingDataPtr) vertices
       liftIO $ vkUnmapMemory dev (memory stagingMem)
       copyBuffer cmdBuf stagingBuf vertexBuf bSize
@@ -70,7 +70,7 @@ createIndexBuffer ecap@EngineCapability{..} (XFrame indices) = do
 
       -- copy data
       stagingDataPtr <- allocaPeek $
-        runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bSize 0
+        runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bSize VK_ZERO_FLAGS
       poke (castPtr stagingDataPtr) indices
       liftIO $ vkUnmapMemory dev (memory stagingMem)
       copyBuffer cmdBuf stagingBuf vertexBuf bSize
