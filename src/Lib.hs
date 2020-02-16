@@ -91,18 +91,17 @@ runVulkanProgram = runProgram checkStatus $ do
     msaaSamples <- getMaxUsableSampleCount pdev
 
     (dev, queues) <- createGraphicsDevice pdev vulkanSurface
-    let gfxQ = graphicsQueue queues
 
     msp <- auto $ metaMasterSemaphorePool dev
-    gq <- auto $ metaManagedQueue dev gfxQ msp
-    attachQueuePump gq 16666
+    gfxQueue <- auto $ metaManagedQueue dev (graphicsQueue queues) msp
+    attachQueuePump gfxQueue 16666
     cpp <- auto $ metaCommandPoolPool dev (graphicsFamIdx queues)
 
-    sp <- auto $ metaSemaphorePool msp
+    semPool <- auto $ metaSemaphorePool msp
     cmdCap <- auto $ metaCommandCapability cpp
     memPool <- auto $ metaMemoryPool pdev dev
     -- TODO create permanently mapped reusable staging buffer
-    let cap = EngineCapability pdev dev cmdCap gq sp memPool
+    let cap = EngineCapability{ pdev, dev, cmdCap, cmdQueue=gfxQueue, semPool, memPool }
 
     logInfo $ "Createad device: " ++ show dev
     logInfo $ "Createad queues: " ++ show queues
@@ -111,11 +110,13 @@ runVulkanProgram = runProgram checkStatus $ do
       <- createVkShaderStageCI dev
             $(compileGLSL "shaders/triangle.vert")
             VK_SHADER_STAGE_VERTEX_BIT
+            Nothing
 
     shaderFrag
       <- createVkShaderStageCI dev
             $(compileGLSL "shaders/triangle.frag")
             VK_SHADER_STAGE_FRAGMENT_BIT
+            Nothing
 
     logInfo $ "Createad vertex shader module: " ++ show shaderVert
     logInfo $ "Createad fragment shader module: " ++ show shaderFrag
@@ -138,10 +139,14 @@ runVulkanProgram = runProgram checkStatus $ do
     (indexSem, indexBuffer) <- createIndexBuffer cap indices
 
     frameDSL <- createDescriptorSetLayout dev [] --[uniformBinding 0]
+    -- TODO automate bind ids
     materialDSL <- createDescriptorSetLayout dev [samplerBinding 0]
     pipelineLayout <- createPipelineLayout dev
-      [frameDSL, materialDSL] -- descriptor set bindings 0,1,..
-      [pushConstantRange VK_SHADER_STAGE_VERTEX_BIT 0 64] -- push constant ranges
+      -- descriptor set numbers 0,1,..
+      [frameDSL, materialDSL]
+      -- push constant ranges
+      [ pushConstantRange VK_SHADER_STAGE_VERTEX_BIT 0 64
+      ]
 
     let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
     (textureSems, descrTextureInfos) <- unzip <$> mapM
@@ -164,14 +169,14 @@ runVulkanProgram = runProgram checkStatus $ do
 
     let objs =
           [ Object
-            { materialBindInfo = DescrBindInfo (materialDescrSets !! 0) Nothing
+            { materialBindInfo = DescrBindInfo (materialDescrSets !! 0) []
             , vertexBufferLoc = BufferLoc vertexBuffer 0
             , indexBufferLoc = BufferLoc indexBuffer 0
             , firstIndex = 0
             , indexCount = dfLen indices
             }
           , Object
-            { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) Nothing
+            { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) []
             , vertexBufferLoc = BufferLoc vertexBuffer 0
             , indexBufferLoc = BufferLoc indexBuffer 0
             , firstIndex = 0
@@ -197,7 +202,7 @@ runVulkanProgram = runProgram checkStatus $ do
     swapchainSlot <- createSwapchainSlot dev
     swapInfoRef <- createSwapchain dev scsd queues vulkanSurface swapchainSlot Nothing >>= newIORef
 
-    removeQueuePump gq
+    removeQueuePump gfxQueue
 
     let indexSems = [indexSem]
     let loadSems = [(vertexSem, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT)] <>
@@ -287,6 +292,7 @@ runVulkanProgram = runProgram checkStatus $ do
             when (cur /= 0) $ print count
             writeIORef currentSec (floor seconds)
             writeIORef frameCount 0
+            -- exitFailure
           else do
             modifyIORef' frameCount $ \c -> c + 1
 

@@ -34,8 +34,8 @@ data BufferLoc = BufferLoc
 
 
 data DescrBindInfo = DescrBindInfo
-  { descrSet      :: VkDescriptorSet
-  , dynamicOffset :: Maybe Word32
+  { descrSet       :: VkDescriptorSet
+  , dynamicOffsets :: [Word32]
   }
 
 
@@ -54,6 +54,7 @@ data Object = Object
     -- modelMatrix      :: Mat44f
     -- objectBindInfo   :: [DescrBindInfo] -- one per frame in flight
     materialBindInfo :: DescrBindInfo
+    -- textureIndex     :: Word32
   , vertexBufferLoc  :: BufferLoc
   , indexBufferLoc   :: BufferLoc
   , firstIndex       :: Word32
@@ -69,11 +70,8 @@ bindDescrSet :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> DescrBindInfo -
 bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = locally $ do
   descrSetPtr <- newArrayRes [descrSet]
   let descrSetCnt = 1
-  (dynOffCnt, dynOffPtr) <- case dynamicOffset of
-    Just offset -> do
-      offsetPtr <- newArrayRes [offset]
-      return (1, offsetPtr)
-    Nothing -> return (0, VK_NULL)
+  let dynOffCnt = fromIntegral $ length dynamicOffsets
+  dynOffPtr <- newArrayRes dynamicOffsets
   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
     descrSetId descrSetCnt descrSetPtr dynOffCnt dynOffPtr
 
@@ -84,6 +82,13 @@ pushTransform cmdBuf pipelineLayout df = do
   liftIO $ thawPinDataFrame df >>= (flip withDataFramePtr $ \ptr ->
     vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_VERTEX_BIT 0 64 (castPtr ptr))
 
+{-      not in use
+-- | Update push constants: texture index
+pushTexIndex :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> Program r ()
+pushTexIndex cmdBuf pipelineLayout texIndex = alloca $ \ptr -> do
+    poke ptr texIndex
+    liftIO $ vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_FRAGMENT_BIT 64 4 (castPtr ptr)
+-}
 
 recordObject :: VkPipelineLayout -> VkCommandBuffer -> Mat44f -> Object -> Program r ()
 recordObject pipelineLayout cmdBuf transform Object{..} = do
@@ -101,7 +106,7 @@ recordObject pipelineLayout cmdBuf transform Object{..} = do
     let BufferLoc{..} = indexBufferLoc
     liftIO $ vkCmdBindIndexBuffer cmdBuf buffer bufferOffset VK_INDEX_TYPE_UINT32
 
-  pushTransform cmdBuf pipelineLayout $ transform
+  pushTransform cmdBuf pipelineLayout transform
 
   bindDescrSet cmdBuf pipelineLayout materialSetId materialBindInfo
 

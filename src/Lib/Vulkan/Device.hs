@@ -79,6 +79,7 @@ checkDeviceExtensionSupport pdev extensions = do
   availExts <- forM availExtsC . flip withVkPtr $
     liftIO . peekCString
            . ( `plusPtr` fieldOffset @"extensionName" @VkExtensionProperties)
+  logInfo $ "available extensions: " ++ unlines availExts
   return . null $ reqExts \\ availExts
 
 
@@ -105,7 +106,10 @@ isDeviceSuitable mVkSurf pdev = do
     liftIO . vkGetPhysicalDeviceFeatures pdev
 
   let supportsAnisotropy = getField @"samplerAnisotropy" supportedFeatures == VK_TRUE
+  -- let supportsImgArray = getField @"shaderSampledImageArrayDynamicIndexing" supportedFeatures == VK_TRUE
+  -- logInfo $ "device support for img array: " ++ show supportsImgArray
 
+  -- pure (mscsd, extsGood && surfGood && supportsAnisotropy && supportsImgArray)
   pure (mscsd, extsGood && surfGood && supportsAnisotropy)
 
 
@@ -132,6 +136,7 @@ getMaxUsableSampleCount pdev = do
       -- need to convert from "VkSampleCountBitmask FlagMask" to "VkSampleCountBitmask FlagBit"
       VkSampleCountBitmask rawFlags = highestCount
       result = VkSampleCountBitmask rawFlags
+  logInfo $ show limits
   return result
 
 
@@ -209,6 +214,7 @@ createGraphicsDevice pdev surf
 
       pdevFeatures = createVk @VkPhysicalDeviceFeatures
         $  set @"samplerAnisotropy" VK_TRUE
+        -- &* set @"shaderSampledImageArrayDynamicIndexing" VK_TRUE
 
       devCreateInfo = createVk @VkDeviceCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO

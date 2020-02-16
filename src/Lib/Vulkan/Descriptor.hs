@@ -1,6 +1,7 @@
-{-# LANGUAGE Strict              #-}
+{-# LANGUAGE Strict #-}
 module Lib.Vulkan.Descriptor
   ( createDescriptorPool
+  , allocateDescriptorSet
   , allocateDescriptorSets
   , allocateDescriptorSetsForLayout
   , updateDescriptorSet
@@ -73,31 +74,38 @@ createDescriptorSetLayout dev bindings =
        runVk . vkCreateDescriptorSetLayout dev dslciPtr VK_NULL
 
 
+allocateDescriptorSet :: VkDevice
+                      -> VkDescriptorPool
+                      -> VkDescriptorSetLayout
+                      -> Program r VkDescriptorSet
+allocateDescriptorSet dev descriptorPool layout =
+  head <$> allocateDescriptorSets dev descriptorPool [layout]
+
+
 allocateDescriptorSetsForLayout :: VkDevice
                                 -> VkDescriptorPool
                                 -> Int
                                 -> VkDescriptorSetLayout
                                 -> Program r [VkDescriptorSet]
 allocateDescriptorSetsForLayout dev descriptorPool n layout =
-  allocateDescriptorSets dev descriptorPool n (replicate n layout)
+  allocateDescriptorSets dev descriptorPool (replicate n layout)
 
 
+-- TODO should get dataframe instead of list
 allocateDescriptorSets :: VkDevice
                        -> VkDescriptorPool
-                       -> Int
                        -> [VkDescriptorSetLayout]
                        -> Program r [VkDescriptorSet]
-allocateDescriptorSets dev descriptorPool n layouts = do
-  layoutsPtr <- newArrayRes layouts
+allocateDescriptorSets dev descriptorPool layouts = do
+  let len = length layouts
   let dsai = createVk @VkDescriptorSetAllocateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
         &* set @"pNext" VK_NULL
         &* set @"descriptorPool" descriptorPool
-        &* set @"descriptorSetCount" (fromIntegral n)
-        &* set @"pSetLayouts" layoutsPtr
-  allocaArray n $ \dsPtr -> withVkPtr dsai $ \dsaiPtr -> do
+        &* setListCountAndRef @"descriptorSetCount" @"pSetLayouts" layouts
+  allocaArray len $ \dsPtr -> withVkPtr dsai $ \dsaiPtr -> do
     runVk $ vkAllocateDescriptorSets dev dsaiPtr dsPtr
-    peekArray n dsPtr
+    peekArray len dsPtr
 
 
 updateDescriptorSet :: VkDevice
@@ -106,7 +114,7 @@ updateDescriptorSet :: VkDevice
                     -> [VkDescriptorBufferInfo]
                     -> [VkDescriptorImageInfo]
                     -> Program r ()
-updateDescriptorSet dev descriptorSet offset uniformBufferInfos imageInfos =
+updateDescriptorSet dev descriptorSet firstBinding uniformBufferInfos imageInfos =
   let uniformWrite bufferInfo binding =
         createVk @VkWriteDescriptorSet
           $  set @"sType" VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET
@@ -133,6 +141,6 @@ updateDescriptorSet dev descriptorSet offset uniformBufferInfos imageInfos =
           &* set @"pTexelBufferView" VK_NULL
       descriptorWrites = zipWith ($)
         (map uniformWrite uniformBufferInfos ++ map imageWrite imageInfos)
-        [offset..]
+        [firstBinding..]
   in withVkArrayLen descriptorWrites $ \dwLen dwPtr ->
       liftIO $ vkUpdateDescriptorSets dev dwLen dwPtr 0 VK_NULL
