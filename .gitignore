@@ -14,3 +14,5 @@ dist-*/
 *.prof
 *.aux
 .dir-locals.el
+.DS_Store
+*.spv

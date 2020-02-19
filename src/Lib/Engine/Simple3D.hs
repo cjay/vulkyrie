@@ -1,5 +1,5 @@
 {-# LANGUAGE Strict #-}
-module Lib.Vulkan.Engine.Simple3D
+module Lib.Engine.Simple3D
   ( BufferLoc(..)
   , DescrBindInfo(..)
   , frameSetId

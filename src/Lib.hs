@@ -10,6 +10,7 @@ import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Numeric.DataFrame
 
+import           Lib.Engine.Simple3D
 import           Lib.GLFW
 import           Lib.MetaResource
 import           Lib.MonadIO.IORef
@@ -21,7 +22,6 @@ import           Lib.Vulkan.Descriptor
 import           Lib.Vulkan.Device
 import           Lib.Vulkan.Drawing
 import           Lib.Vulkan.Engine
-import           Lib.Vulkan.Engine.Simple3D
 import           Lib.Vulkan.Image
 import           Lib.Vulkan.Memory
 import           Lib.Vulkan.Pipeline
