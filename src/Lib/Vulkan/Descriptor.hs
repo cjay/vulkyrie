@@ -18,6 +18,44 @@ import           Lib.Program
 import           Lib.Program.Foreign
 
 
+{- some old brainstorming, probably too over-engineered for now:
+
+
+import           Data.Map.Strict                (Map)
+import qualified Data.Map.Strict                as Map
+
+import           Lib.MonadIO.IORef
+
+-- inspect layouts, estimated count per layout -> num of descr types
+-- stats: actual allocated counts per layout, used for next pool
+
+data Profile = Profile
+  { typeFreqs          :: [(VkDescriptorType, Word32)]
+  , setCountMultiplier :: Word32
+  , nextSize           :: IORef Word32
+  , currentPool        :: IORef VkDescriptorPool
+  , allPools           :: IORef [VkDescriptorPool]
+  }
+
+data DynamicDescriptorPool = DynamicDescriptorPool
+  { -- DescriptorSetLayout -> profile: [layouts], n*type requested, n*type counted, current pool, occupied pools. growth rate 2*n+1
+    -- if asked for, have one profile for a linear combination of layouts.
+
+    -- request pooling: [(each:Int, Layout)], multiplier:Int, growth/shrink rule or curve, maybe next size hint.
+    -- allocate: unseen layout -> single profile, exp growth.
+
+    -- kill layouts, reset layouts
+
+    -- request layout id: lookup in Map, make Map entry if needed. id comes from counter
+    -- id is array index into profiles
+    profiles :: IORef (Map VkDescriptorSet Profile)
+  }
+-}
+
+
+
+
+
 -- TODO make pool size dynamic
 createDescriptorPool :: VkDevice -> Int -> Program r VkDescriptorPool
 createDescriptorPool dev n =

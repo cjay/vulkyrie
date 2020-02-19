@@ -6,9 +6,9 @@ module Lib.Vulkan.Shader
   , specializationInfo
   ) where
 
+import           Foreign.Marshal.Alloc
+import           Foreign.Marshal.Array
 import           Foreign.Storable               (pokeElemOff)
-import Foreign.Marshal.Array
-import Foreign.Marshal.Alloc
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create

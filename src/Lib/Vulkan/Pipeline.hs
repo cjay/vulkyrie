@@ -165,8 +165,7 @@ createGraphicsPipeline
           $  set @"sType" VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO
           &* set @"pNext" VK_NULL
           &* set @"flags" VK_ZERO_FLAGS
-          &* set @"stageCount" (fromIntegral $ length shaderDescs)
-          &* setListRef @"pStages" shaderDescs
+          &* setListCountAndRef @"stageCount" @"pStages" shaderDescs
           &* setVkRef @"pVertexInputState" vertexInputInfo
           &* setVkRef @"pInputAssemblyState" inputAssembly
           &* set @"pTessellationState" VK_NULL

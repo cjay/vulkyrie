@@ -106,11 +106,6 @@ runVulkanProgram = runProgram checkStatus $ do
     logInfo $ "Createad device: " ++ show dev
     logInfo $ "Createad queues: " ++ show queues
 
-    {-  not using TH because of recompiles, couldn't get addDependentFile to work
-    vertSM <- auto $ metaShaderModule dev $(compileGLSL "shaders/triangle.vert")
-    fragSM <- auto $ metaShaderModule dev $(compileGLSL "shaders/triangle.frag")
-    -}
-
     vertShaderContent <- auto $ metaFileContent "shaders/triangle.vert.spv"
     vertSM <- auto $ metaShaderModule dev vertShaderContent
     fragShaderContent <- auto $ metaFileContent "shaders/triangle.frag.spv"
@@ -165,7 +160,7 @@ runVulkanProgram = runProgram checkStatus $ do
     -- (transObjMems, transObjBufs) <- unzip <$> uboCreateBuffers pdev dev transObjSize maxFramesInFlight
     -- descriptorBufferInfos <- mapM (uboBufferInfo transObjSize) transObjBufs
 
-    descriptorPool <- createDescriptorPool dev $ maxFramesInFlight * (1 + length descrTextureInfos)
+    descriptorPool <- createDescriptorPool dev 100 -- TODO make dynamic
     -- frameDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool maxFramesInFlight frameDSL
     materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
 
