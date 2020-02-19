@@ -28,7 +28,7 @@ import           Lib.Vulkan.Pipeline
 import           Lib.Vulkan.Presentation
 import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Shader
-import           Lib.Vulkan.Shader.TH
+-- import           Lib.Vulkan.Shader.TH
 import           Lib.Vulkan.Sync
 -- import           Lib.Vulkan.UniformBufferObject
 import           Lib.Vulkan.Vertex
@@ -106,15 +106,23 @@ runVulkanProgram = runProgram checkStatus $ do
     logInfo $ "Createad device: " ++ show dev
     logInfo $ "Createad queues: " ++ show queues
 
+    {-  not using TH because of recompiles, couldn't get addDependentFile to work
+    vertSM <- auto $ metaShaderModule dev $(compileGLSL "shaders/triangle.vert")
+    fragSM <- auto $ metaShaderModule dev $(compileGLSL "shaders/triangle.frag")
+    -}
+
+    vertShaderContent <- auto $ metaFileContent "shaders/triangle.vert.spv"
+    vertSM <- auto $ metaShaderModule dev vertShaderContent
+    fragShaderContent <- auto $ metaFileContent "shaders/triangle.frag.spv"
+    fragSM <- auto $ metaShaderModule dev fragShaderContent
+
     shaderVert
-      <- createVkShaderStageCI dev
-            $(compileGLSL "shaders/triangle.vert")
+      <- createShaderStage vertSM
             VK_SHADER_STAGE_VERTEX_BIT
             Nothing
 
     shaderFrag
-      <- createVkShaderStageCI dev
-            $(compileGLSL "shaders/triangle.frag")
+      <- createShaderStage fragSM
             VK_SHADER_STAGE_FRAGMENT_BIT
             Nothing
 

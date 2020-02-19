@@ -1,28 +1,49 @@
 {-# LANGUAGE Strict #-}
 module Lib.Vulkan.Shader
-  ( createVkShaderStageCI
-  , createVulkanShaderModule
+  ( metaFileContent
+  , createShaderStage
+  , metaShaderModule
   , specializationInfo
   ) where
 
-import           Foreign.Ptr                    (castPtr)
+import           Foreign.Storable               (pokeElemOff)
+import Foreign.Marshal.Array
+import Foreign.Marshal.Alloc
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
+import           System.IO
 
+import           Lib.MetaResource
 import           Lib.Program
 import           Lib.Program.Foreign
 
 
+-- | Copies file to new Word32 buffer with padding zeroes if necessary.
+--   Size is in bytes.
+metaFileContent :: FilePath -> MetaResource r (CSize, Ptr Word32)
+metaFileContent fpath = metaResource
+  (\(_, ptr) -> do
+      liftIO $ Foreign.Marshal.Alloc.free ptr
+  )
+  (do
+      fsize <- liftIO $ withBinaryFile fpath ReadMode hFileSize
+      let wordCount =
+            let (count, remBytes) = fsize `divMod` 4
+            in fromIntegral $ if remBytes == 0 then count else count + 1
+      ptr :: Ptr Word32 <- liftIO $ mallocArray wordCount
+      -- write zero to the last Word32 to make sure the padding bytes are zero
+      liftIO $ pokeElemOff ptr (wordCount-1) 0
+      _ <- liftIO $ withBinaryFile fpath ReadMode $ \h -> hGetBuf h ptr $ fromIntegral fsize
+      return (fromIntegral wordCount * 4, ptr)
+  )
 
-createVkShaderStageCI :: VkDevice
-                      -> (CSize, Ptr Word32)
-                      -> VkShaderStageFlagBits
-                      -> Maybe VkSpecializationInfo
-                      -> Program r VkPipelineShaderStageCreateInfo
-createVkShaderStageCI dev shaderCode stageBit maySpecInfo = do
+createShaderStage :: VkShaderModule
+                  -> VkShaderStageFlagBits
+                  -> Maybe VkSpecializationInfo
+                  -> Program r VkPipelineShaderStageCreateInfo
+createShaderStage shaderModule stageBit maySpecInfo = do
     let specInfo = maybe (specializationInfo [] 0 VK_NULL) id maySpecInfo
-    shaderModule <- createVulkanShaderModule dev shaderCode
     return $ createVk @VkPipelineShaderStageCreateInfo
           $  set @"sType"  VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO
           &* set @"pNext"  VK_NULL
@@ -32,11 +53,11 @@ createVkShaderStageCI dev shaderCode stageBit maySpecInfo = do
           &* setVkRef @"pSpecializationInfo" specInfo
 
 
-createVulkanShaderModule :: VkDevice
-                         -> (CSize, Ptr Word32)
-                         -> Program r VkShaderModule
-createVulkanShaderModule dev (codeSize, codePtr) =
-    allocResource
+metaShaderModule :: VkDevice
+                 -> (CSize, Ptr Word32)
+                 -> MetaResource r VkShaderModule
+metaShaderModule dev (codeSize, codePtr) =
+    metaResource
       (\sm -> liftIO $ vkDestroyShaderModule dev sm VK_NULL) $
       withVkPtr smCreateInfo $ \smciPtr -> allocaPeek $
         runVk . vkCreateShaderModule dev smciPtr VK_NULL
