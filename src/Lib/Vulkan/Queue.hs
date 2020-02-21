@@ -35,13 +35,13 @@ import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
 
-import           Lib.MetaResource
 import           Lib.MonadIO.Chan
 import           Lib.MonadIO.IORef
 import           Lib.MonadIO.MVar
 import           Lib.MonadIO.Thread
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 import           Lib.Vulkan.Sync
 
 

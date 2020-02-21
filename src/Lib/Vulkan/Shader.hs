@@ -15,9 +15,9 @@ import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
 import           System.IO
 
-import           Lib.MetaResource
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 
 
 -- | Copies file to new Word32 buffer with padding zeroes if necessary.

@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-module Lib.MetaResource
+module Lib.Resource
   ( GenericResource
   , auto
   , manual

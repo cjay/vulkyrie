@@ -25,18 +25,18 @@ module Lib.Vulkan.Sync
 import           Control.Monad
 import           Data.Sequence                  (Seq)
 import qualified Data.Sequence                  as Seq
+import qualified Foreign.Marshal.Array          as Foreign
 import           GHC.Exts                       (fromList, toList)
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
 
-import qualified Foreign.Marshal.Array          as Foreign
-import           Lib.MetaResource
 import           Lib.MonadIO.IORef
 import           Lib.MonadIO.MVar
 import           Lib.MonadIO.Thread
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 
 
 metaSemaphore :: VkDevice -> MetaResource r VkSemaphore

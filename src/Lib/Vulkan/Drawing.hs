@@ -8,8 +8,8 @@ module Lib.Vulkan.Drawing
   , maxFramesInFlight
   ) where
 
-import           Control.Concurrent.Event                 (Event)
-import qualified Control.Concurrent.Event                 as Event
+import           Control.Concurrent.Event             (Event)
+import qualified Control.Concurrent.Event             as Event
 import           Control.Monad
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
@@ -17,12 +17,12 @@ import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
 import           Numeric.DataFrame
 
-import           Lib.MetaResource
 import           Lib.MonadIO.IORef
 import           Lib.MonadIO.MVar
 import           Lib.MonadIO.Thread
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 import           Lib.Vulkan.Command
 import           Lib.Vulkan.Device
 import           Lib.Vulkan.Engine

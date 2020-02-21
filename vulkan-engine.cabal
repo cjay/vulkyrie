@@ -25,13 +25,13 @@ library
     exposed-modules:    Lib
                         Lib.Engine.Simple3D
                         Lib.GLFW
-                        Lib.MetaResource
                         Lib.MonadIO.Chan
                         Lib.MonadIO.IORef
                         Lib.MonadIO.MVar
                         Lib.MonadIO.Thread
                         Lib.Program
                         Lib.Program.Foreign
+                        Lib.Resource
                         Lib.Vulkan.Buffer
                         Lib.Vulkan.Command
                         Lib.Vulkan.Descriptor

@@ -12,11 +12,11 @@ import           Numeric.DataFrame
 
 import           Lib.Engine.Simple3D
 import           Lib.GLFW
-import           Lib.MetaResource
 import           Lib.MonadIO.IORef
 import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 import           Lib.Vulkan.Command
 import           Lib.Vulkan.Descriptor
 import           Lib.Vulkan.Device

@@ -23,9 +23,9 @@ import           Graphics.Vulkan.Marshal.Create
 import           Graphics.Vulkan.Marshal.Create.DataFrame
 import           Numeric.DataFrame
 
-import           Lib.MetaResource
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 
 
 newtype MemTypeIndex = MemTypeIndex Word32
@@ -182,4 +182,3 @@ allocMem MemoryPool{..} (MemTypeIndex memTypeIndex) requestSize alignment = do
       else do
         liftIO $ VMD.pushBack occupied $ coerce newChunk
       return $ MemoryLoc newChunk 0
-
