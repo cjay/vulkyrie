@@ -3,6 +3,7 @@ module Lib.Vulkan.Shader
   ( metaFileContent
   , createShaderStage
   , metaShaderModule
+  , shaderModuleFile
   , specializationInfo
   ) where
 
@@ -68,6 +69,12 @@ metaShaderModule dev (codeSize, codePtr) =
       &* set @"codeSize" codeSize
       &* set @"pCode"    codePtr
       &* set @"flags"    VK_ZERO_FLAGS
+
+
+shaderModuleFile :: VkDevice -> FilePath -> Resource r VkShaderModule
+shaderModuleFile dev fpath = do
+  content <- resource $ metaFileContent fpath
+  resource $ metaShaderModule dev content
 
 
 specializationInfo :: [VkSpecializationMapEntry] -> CSize -> Ptr Void -> VkSpecializationInfo

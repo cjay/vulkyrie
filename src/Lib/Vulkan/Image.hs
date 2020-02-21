@@ -67,7 +67,8 @@ createTextureImageView ecap@EngineCapability{..} path = do
   postWith_ cmdCap cmdQueue [] [sem0] $
     transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM Undef_TransDst mipLevels
 
-  -- Use "locally" to destroy temporary staging buffer after data copy is complete
+  -- the local continuation context of postWith_ destroys the temporary staging
+  -- buffer after data copy is complete
   postWith_ cmdCap cmdQueue [(sem0, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem1] $ \cmdBuf -> do
     (stagingMem, stagingBuf) <-
       createBuffer ecap bufSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT

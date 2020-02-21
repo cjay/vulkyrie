@@ -28,7 +28,6 @@ import           Lib.Vulkan.Pipeline
 import           Lib.Vulkan.Presentation
 import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Shader
--- import           Lib.Vulkan.Shader.TH
 import           Lib.Vulkan.Sync
 -- import           Lib.Vulkan.UniformBufferObject
 import           Lib.Vulkan.Vertex
@@ -106,10 +105,8 @@ runVulkanProgram = runProgram checkStatus $ do
     logInfo $ "Createad device: " ++ show dev
     logInfo $ "Createad queues: " ++ show queues
 
-    vertShaderContent <- auto $ metaFileContent "shaders/triangle.vert.spv"
-    vertSM <- auto $ metaShaderModule dev vertShaderContent
-    fragShaderContent <- auto $ metaFileContent "shaders/triangle.frag.spv"
-    fragSM <- auto $ metaShaderModule dev fragShaderContent
+    vertSM <- auto $ shaderModuleFile dev "shaders/triangle.vert.spv"
+    fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
 
     shaderVert
       <- createShaderStage vertSM
