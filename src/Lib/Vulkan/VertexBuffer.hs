@@ -17,14 +17,14 @@ import           Lib.Vulkan.Buffer
 import           Lib.Vulkan.Command
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Memory
-import           Lib.Vulkan.Sync
+import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Vertex
 
 
 createVertexBuffer :: EngineCapability
                    -> DataFrame Vertex '[XN 3]
                       -- ^ A collection of at least three vertices
-                   -> Resource r (VkSemaphore, VkBuffer)
+                   -> Resource r (QueueEvent, VkBuffer)
 createVertexBuffer ecap@EngineCapability{..} (XFrame vertices) = do
 
     let bSize = bSizeOf vertices
@@ -35,8 +35,7 @@ createVertexBuffer ecap@EngineCapability{..} (XFrame vertices) = do
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
     onCreate $ do
-      sem <- head <$> acquireSemaphores semPool 1
-      postWith_ cmdCap cmdQueue [] [sem] $ \cmdBuf -> do
+      finishedEvent <- postWith cmdCap cmdQueue [] [] $ \cmdBuf -> do
         (stagingMem, stagingBuf) <-
           auto $ createBuffer ecap bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
             ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
@@ -48,13 +47,13 @@ createVertexBuffer ecap@EngineCapability{..} (XFrame vertices) = do
         liftIO $ vkUnmapMemory dev (memory stagingMem)
         copyBuffer cmdBuf stagingBuf vertexBuf bSize
 
-      return (sem, vertexBuf)
+      return (finishedEvent, vertexBuf)
 
 
 createIndexBuffer :: EngineCapability
                   -> DataFrame Word32 '[XN 3]
                      -- ^ A collection of at least three indices
-                  -> Resource r (VkSemaphore, VkBuffer)
+                  -> Resource r (QueueEvent, VkBuffer)
 createIndexBuffer ecap@EngineCapability{..} (XFrame indices) = do
 
     let bSize = bSizeOf indices
@@ -65,8 +64,7 @@ createIndexBuffer ecap@EngineCapability{..} (XFrame indices) = do
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
     onCreate $ do
-      sem <- head <$> acquireSemaphores semPool 1
-      postWith_ cmdCap cmdQueue [] [sem] $ \cmdBuf -> do
+      finishedEvent <- postWith cmdCap cmdQueue [] [] $ \cmdBuf -> do
         (stagingMem, stagingBuf) <-
           auto $ createBuffer ecap bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
             ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
@@ -78,4 +76,4 @@ createIndexBuffer ecap@EngineCapability{..} (XFrame indices) = do
         liftIO $ vkUnmapMemory dev (memory stagingMem)
         copyBuffer cmdBuf stagingBuf vertexBuf bSize
 
-      return (sem, vertexBuf)
+      return (finishedEvent, vertexBuf)

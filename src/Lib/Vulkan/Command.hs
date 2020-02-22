@@ -118,7 +118,7 @@ postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action = do
 
     qdone <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
     -- async return because caller doesn't care about internal cleanup
-    waitForQueue qdone
+    wait qdone
     releaseCommandBuffer managedCmdBuf
     return result
     -- continuation ends because of locally. Auto things from action get deallocated.
@@ -151,7 +151,7 @@ postWithAndRet cmdCap queue waitSemsWithStages signalSems action = do
     qdone <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
     -- async return because caller doesn't care about internal cleanup
     putMVar retBox (result, qdone)
-    waitForQueue qdone
+    wait qdone
     releaseCommandBuffer managedCmdBuf
     -- continuation ends because of forkProg. Auto things from action get deallocated.
 

@@ -102,7 +102,7 @@ drawFrame EngineCapability{..} RenderData{..} = do
     -- could be not on queue because of retry due to VK_ERROR_OUT_OF_DATE_KHR below
     oldEvent <- readIORef (queueEvents !! frameIndex)
     when isOnQueue $ do
-      waitForQueue oldEvent
+      wait oldEvent
       liftIO $ Event.signal frameFinishedEvent
       -- could also take current time here to measure frametimes
 

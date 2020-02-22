@@ -123,7 +123,7 @@ runVulkanProgram = runProgram checkStatus $ do
 
     frameIndexRef <- newIORef 0
     renderFinishedSems <- createFrameSemaphores dev
-    queueEvents <- sequence $ replicate maxFramesInFlight $ newSetQueueEvent >>= newIORef
+    queueEvents <- sequence $ replicate maxFramesInFlight $ newDoneQueueEvent >>= newIORef
     frameFinishedEvent <- liftIO $ Event.new
     frameOnQueueVars <- sequence $ replicate maxFramesInFlight $ newEmptyMVar
 
@@ -133,10 +133,10 @@ runVulkanProgram = runProgram checkStatus $ do
     let vertices = rectVertices
         indices = rectIndices
 
-    (vertexSem, vertexBuffer) <-
+    (vertexBufReady, vertexBuffer) <-
       auto $ createVertexBuffer cap vertices
 
-    (indexSem, indexBuffer) <- auto $ createIndexBuffer cap indices
+    (indexBufReady, indexBuffer) <- auto $ createIndexBuffer cap indices
 
     frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
     -- TODO automate bind ids
@@ -149,8 +149,10 @@ runVulkanProgram = runProgram checkStatus $ do
       ]
 
     let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
-    (textureSems, descrTextureInfos) <- auto $ unzip <$> mapM
+    (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
       (createTextureInfo cap) texturePaths
+
+    let loadEvents = textureReadyEvents <> [vertexBufReady, indexBufReady]
 
     depthFormat <- findDepthFormat pdev
 
@@ -204,11 +206,7 @@ runVulkanProgram = runProgram checkStatus $ do
 
     removeQueuePump gfxQueue
 
-    let indexSems = [indexSem]
-    let loadSems = [(vertexSem, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT)] <>
-          map (\sem -> (sem, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT)) indexSems <>
-          map (\sem -> (sem, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)) textureSems
-    nextSems <- newMVar loadSems
+    nextSems <- newMVar []
 
     -- The code below re-runs when the swapchain was re-created
     asyncRedo $ \redoWithNewSwapchain -> do
@@ -256,7 +254,7 @@ runVulkanProgram = runProgram checkStatus $ do
             -- , descrSetMutator    = updateDescrSet dev descrTextureInfos
             , recCmdBuffer       = recordAll graphicsPipeline
                                         renderPass pipelineLayout (swapExtent swapInfo)
-                                        objs objTransformsRef
+                                        loadEvents objs objTransformsRef
             , getViewProjMatrix = viewProjMatrix (swapExtent swapInfo)
             -- , frameDescrSets
             , framebuffers

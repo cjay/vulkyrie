@@ -2,8 +2,10 @@
 {-# LANGUAGE Strict     #-}
 module Lib.Vulkan.Queue
   ( QueueEvent
-  , newSetQueueEvent
-  , waitForQueue
+  , newDoneQueueEvent
+  , wait
+  , waitTimeout
+  , isDone
 
   -- , WorkUnit(..)
 
@@ -45,13 +47,35 @@ import           Lib.Resource
 import           Lib.Vulkan.Sync
 
 
+-- | Offers a way to get notified on any thread when the queue submission has
+--   been executed.
+--
+--   QueueEvents can be in the done or not-yet state. Once set to done, they
+--   can't be reset. Only ManagedQueue internals can set an event, though you
+--   can produce an event that has already been set to done. QueueEvents don't
+--   get reused by ManagedQueue.
+--
+--   Uses Control.Concurrent.Event from concurrent-extra internally.
 newtype QueueEvent = QueueEvent Event
 
-newSetQueueEvent :: Program r QueueEvent
-newSetQueueEvent = QueueEvent <$> liftIO Event.newSet
+-- | Produces a QueueEvent that has already been set to the done state.
+newDoneQueueEvent :: Program r QueueEvent
+newDoneQueueEvent = QueueEvent <$> liftIO Event.newSet
 
-waitForQueue :: QueueEvent -> Program r ()
-waitForQueue (QueueEvent event) = liftIO $ Event.wait event
+-- | Block until the submission has been executed.
+wait :: QueueEvent -> Program r ()
+wait (QueueEvent event) = liftIO $ Event.wait event
+
+-- | Like wait, but with a timeout. A return value of False indicates a timeout
+--   occurred.
+--
+--   The timeout is specified in microseconds.
+waitTimeout :: QueueEvent -> Integer -> Program r Bool
+waitTimeout (QueueEvent event) timeout = liftIO $ Event.waitTimeout event timeout
+
+-- | Checks if the submission has been executed.
+isDone :: QueueEvent -> Program r Bool
+isDone (QueueEvent event) = liftIO $ Event.isSet event
 
 
 -- data WorkUnit = WorkUnit
@@ -179,13 +203,13 @@ submitNotify ManagedQueue{ requestChan } = do
 postWait :: ManagedQueue -> VkSubmitInfo -> Program r ()
 postWait mq submitInfo = do
   event <- postNotify mq submitInfo
-  waitForQueue event
+  wait event
 
 -- | Immediately wait for notification after submitting.
 submitWait :: ManagedQueue -> Program r ()
 submitWait mq = do
   event <- submitNotify mq
-  waitForQueue event
+  wait event
 
 
 -- | Creates a thread for automatic submission every n microseconds.

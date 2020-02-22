@@ -118,6 +118,7 @@ recordAll :: VkPipeline
           -> VkRenderPass
           -> VkPipelineLayout
           -> VkExtent2D
+          -> [QueueEvent]
           -> [Object]
           -> IORef [Mat44f]
           -> VkCommandBuffer
@@ -125,7 +126,7 @@ recordAll :: VkPipeline
           -> Mat44f
           -> Program r ()
 recordAll
-    pipeline rpass pipelineLayout swapExtent objects objTransformsRef
+    pipeline rpass pipelineLayout swapExtent loadEvents objects objTransformsRef
     cmdBuf framebuffer viewProjTransform = do
 
   -- render pass
@@ -166,8 +167,12 @@ recordAll
 
   objTransforms <- readIORef objTransformsRef
 
-  forM_ (zip objTransforms objects) $ \(objTransform, object) -> do
-    recordObject pipelineLayout cmdBuf (objTransform %* viewProjTransform) object
+  -- TODO should stop checking once all are loaded
+  loaded <- and <$> mapM isDone loadEvents
+
+  when loaded $
+    forM_ (zip objTransforms objects) $ \(objTransform, object) -> do
+      recordObject pipelineLayout cmdBuf (objTransform %* viewProjTransform) object
 
   -- finishing up
   liftIO $ vkCmdEndRenderPass cmdBuf

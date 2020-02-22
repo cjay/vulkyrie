@@ -30,22 +30,23 @@ import           Lib.Vulkan.Buffer
 import           Lib.Vulkan.Command
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Memory
+import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Sync
 
 
 createTextureInfo :: EngineCapability
                   -> FilePath
-                  -> Resource r (VkSemaphore, VkDescriptorImageInfo)
+                  -> Resource r (QueueEvent, VkDescriptorImageInfo)
 createTextureInfo cap@EngineCapability{..} path = do
-    (sem, textureView, mipLevels) <- createTextureImageView cap path
+    (finishEvent, textureView, mipLevels) <- createTextureImageView cap path
     textureSampler <- createTextureSampler dev mipLevels
     let info = textureImageInfo textureView textureSampler
-    return (sem, info)
+    return (finishEvent, info)
 
 
 createTextureImageView :: EngineCapability
                        -> FilePath
-                       -> Resource r (VkSemaphore, VkImageView, Word32)
+                       -> Resource r (QueueEvent, VkImageView, Word32)
 createTextureImageView ecap@EngineCapability{..} path = do
   Image { imageWidth, imageHeight, imageData }
     <- onCreate $ (liftIO $ readImage path) >>= \case
@@ -63,10 +64,10 @@ createTextureImageView ecap@EngineCapability{..} path = do
     (VK_IMAGE_USAGE_TRANSFER_SRC_BIT .|. VK_IMAGE_USAGE_TRANSFER_DST_BIT .|. VK_IMAGE_USAGE_SAMPLED_BIT)
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
-  sems <- onCreate $ acquireSemaphores semPool 3
-  let [sem0, sem1, sem2] = sems
+  sems <- onCreate $ acquireSemaphores semPool 2
+  let [sem0, sem1] = sems
 
-  onCreate $ do
+  finishEvent <- onCreate $ do
     postWith_ cmdCap cmdQueue [] [sem0] $
       transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM Undef_TransDst mipLevels
 
@@ -87,14 +88,14 @@ createTextureImageView ecap@EngineCapability{..} path = do
       copyBufferToImage cmdBuf stagingBuf image
         (fromIntegral imageWidth) (fromIntegral imageHeight)
 
-    postWith_ cmdCap cmdQueue [(sem1, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem2] $
+    postWith cmdCap cmdQueue [(sem1, VK_PIPELINE_STAGE_TRANSFER_BIT)] [] $
       -- generateMipmaps does this as a side effect:
       -- transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM TransDst_ShaderRO mipLevels
       generateMipmaps pdev image VK_FORMAT_R8G8B8A8_UNORM (fromIntegral imageWidth) (fromIntegral imageHeight) mipLevels
 
   imageView <- createImageView dev image VK_FORMAT_R8G8B8A8_UNORM VK_IMAGE_ASPECT_COLOR_BIT mipLevels
 
-  return (sem2, imageView, mipLevels)
+  return (finishEvent, imageView, mipLevels)
 
 
 generateMipmaps :: VkPhysicalDevice
