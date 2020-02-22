@@ -79,9 +79,9 @@ runVulkanProgram = runProgram checkStatus $ do
   windowSizeChanged <- newIORef False
   window <- initGLFWWindow 800 600 "vulkan-experiment" windowSizeChanged
 
-  vulkanInstance <- createGLFWVulkanInstance "vulkan-experiment-instance"
+  vulkanInstance <- auto $ createGLFWVulkanInstance "vulkan-experiment-instance"
 
-  vulkanSurface <- createSurface vulkanInstance window
+  vulkanSurface <- auto $ createSurface vulkanInstance window
   logInfo $ "Createad surface: " ++ show vulkanSurface
 
   glfwWaitEventsMeanwhile $ do
@@ -138,10 +138,10 @@ runVulkanProgram = runProgram checkStatus $ do
 
     (indexSem, indexBuffer) <- auto $ createIndexBuffer cap indices
 
-    frameDSL <- createDescriptorSetLayout dev [] --[uniformBinding 0]
+    frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
     -- TODO automate bind ids
-    materialDSL <- createDescriptorSetLayout dev [samplerBinding 0]
-    pipelineLayout <- createPipelineLayout dev
+    materialDSL <- auto $ createDescriptorSetLayout dev [samplerBinding 0]
+    pipelineLayout <- auto $ createPipelineLayout dev
       -- descriptor set numbers 0,1,..
       [frameDSL, materialDSL]
       -- push constant ranges
@@ -157,7 +157,7 @@ runVulkanProgram = runProgram checkStatus $ do
     -- (transObjMems, transObjBufs) <- unzip <$> uboCreateBuffers pdev dev transObjSize maxFramesInFlight
     -- descriptorBufferInfos <- mapM (uboBufferInfo transObjSize) transObjBufs
 
-    descriptorPool <- createDescriptorPool dev 100 -- TODO make dynamic
+    descriptorPool <- auto $ createDescriptorPool dev 100 -- TODO make dynamic
     -- frameDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool maxFramesInFlight frameDSL
     materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
 
@@ -217,9 +217,9 @@ runVulkanProgram = runProgram checkStatus $ do
       oldSwapchainSlot <- createSwapchainSlot dev
       swapInfo <- readIORef swapInfoRef
       swapImgViews <- auto $ mapM (\image -> createImageView dev image (swapImgFormat swapInfo) VK_IMAGE_ASPECT_COLOR_BIT 1) (swapImgs swapInfo)
-      renderPass <- createRenderPass dev swapInfo depthFormat msaaSamples
+      renderPass <- auto $ createRenderPass dev swapInfo depthFormat msaaSamples
       graphicsPipeline
-        <- createGraphicsPipeline dev swapInfo
+        <- auto $ createGraphicsPipeline dev swapInfo
                                   vertIBD vertIADs
                                   [shaderVert, shaderFrag]
                                   renderPass
@@ -235,7 +235,7 @@ runVulkanProgram = runProgram checkStatus $ do
                                  : (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
                                  : sems)
       framebuffers
-        <- createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
+        <- auto $ createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
 
       objTransformsRef <- newIORef [translate3 $ vec3 0 1 1, translate3 $ vec3 0 0 0]
 

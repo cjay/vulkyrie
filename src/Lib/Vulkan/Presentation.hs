@@ -1,4 +1,4 @@
-{-# LANGUAGE Strict                #-}
+{-# LANGUAGE Strict #-}
 module Lib.Vulkan.Presentation
   ( SwapchainInfo (..)
   , createSurface
@@ -18,12 +18,13 @@ import           Graphics.Vulkan.Marshal.Create
 import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 import           Lib.Vulkan.Device
 
 
-createSurface :: VkInstance -> GLFW.Window -> Program r VkSurfaceKHR
-createSurface vkInstance window =
-  allocResource (\s -> liftIO $ vkDestroySurfaceKHR vkInstance s VK_NULL) $
+createSurface :: VkInstance -> GLFW.Window -> Resource r VkSurfaceKHR
+createSurface vkInstance window = resource $
+  metaResource (\s -> liftIO $ vkDestroySurfaceKHR vkInstance s VK_NULL) $
     allocaPeek $
       runVk . GLFW.createWindowSurface vkInstance window VK_NULL
 

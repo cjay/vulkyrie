@@ -18,6 +18,7 @@ import           Numeric.DataFrame
 
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 import           Lib.Vulkan.Presentation
 
 
@@ -29,7 +30,7 @@ createGraphicsPipeline :: VkDevice
                        -> VkRenderPass
                        -> VkPipelineLayout
                        -> VkSampleCountFlagBits
-                       -> Program r VkPipeline
+                       -> Resource r VkPipeline
 createGraphicsPipeline
     dev SwapchainInfo{ swapExtent } bindDesc attrDescs shaderDescs renderPass pipelineLayout msaaSamples =
   let -- vertex input
@@ -181,7 +182,7 @@ createGraphicsPipeline
           &* set @"basePipelineHandle" VK_NULL_HANDLE
           &* set @"basePipelineIndex" (-1)
 
-    allocResource
+    resource $ metaResource
       (\gp -> liftIO $ vkDestroyPipeline dev gp VK_NULL) $
       withVkPtr gpCreateInfo $ \gpciPtr -> allocaPeek $
         runVk . vkCreateGraphicsPipelines dev VK_NULL 1 gpciPtr VK_NULL
@@ -200,7 +201,7 @@ pushConstantRange stageFlags offset size = createVk
 createPipelineLayout :: VkDevice
                      -> [VkDescriptorSetLayout]
                      -> [VkPushConstantRange]
-                     -> Program r VkPipelineLayout
+                     -> Resource r VkPipelineLayout
 createPipelineLayout dev descrSetLayouts pushConstRanges = do
   let plCreateInfo = createVk @VkPipelineLayoutCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
@@ -209,7 +210,7 @@ createPipelineLayout dev descrSetLayouts pushConstRanges = do
         -- the sequence of descr set layouts determines the set numbers
         &* setListCountAndRef @"setLayoutCount" @"pSetLayouts" descrSetLayouts   -- Optional
         &* setListCountAndRef @"pushConstantRangeCount" @"pPushConstantRanges" pushConstRanges -- Optional
-  allocResource
+  resource $ metaResource
     (\pl -> liftIO $ vkDestroyPipelineLayout dev pl VK_NULL) $
     withVkPtr plCreateInfo $ \plciPtr -> allocaPeek $
       runVk . vkCreatePipelineLayout dev plciPtr VK_NULL
@@ -219,7 +220,7 @@ createRenderPass :: VkDevice
                  -> SwapchainInfo
                  -> VkFormat
                  -> VkSampleCountFlagBits
-                 -> Program r VkRenderPass
+                 -> Resource r VkRenderPass
 createRenderPass dev SwapchainInfo{ swapImgFormat } depthFormat samples =
   let -- attachment description
       colorAttachment = createVk @VkAttachmentDescription
@@ -299,7 +300,7 @@ createRenderPass dev SwapchainInfo{ swapImgFormat } depthFormat samples =
         &* set @"dependencyCount" 1
         &* setVkRef @"pDependencies" dependency
 
-  in allocResource
+  in resource $ metaResource
        (\rp -> liftIO $ vkDestroyRenderPass dev rp VK_NULL) $
        withVkPtr rpCreateInfo $ \rpciPtr -> allocaPeek $
          runVk . vkCreateRenderPass dev rpciPtr VK_NULL

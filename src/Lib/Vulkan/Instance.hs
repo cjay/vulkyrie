@@ -1,4 +1,4 @@
-{-# LANGUAGE Strict           #-}
+{-# LANGUAGE Strict #-}
 module Lib.Vulkan.Instance
     ( createVulkanInstance
     , defaultLayers
@@ -11,6 +11,7 @@ import           Graphics.Vulkan.Marshal.Create
 
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 
 -- | Run an action with vulkan instance
 createVulkanInstance :: String -- ^ application name
@@ -22,9 +23,9 @@ createVulkanInstance :: String -- ^ application name
                         --   or from GLFW
                      -> [String]
                         -- ^ required layer names
-                     -> Program r VkInstance
+                     -> Resource r VkInstance
 createVulkanInstance progName engineName extensions layers' =
-  allocResource destroyVulkanInstance $ do
+  resource $ metaResource destroyVulkanInstance $ do
 
     extStrings <- liftIO $ mapM peekCString extensions
     logDebug $ unlines

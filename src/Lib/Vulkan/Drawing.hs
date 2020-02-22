@@ -41,11 +41,11 @@ createFramebuffers :: VkDevice
                    -> [VkImageView]
                    -> VkImageView
                    -> VkImageView
-                   -> Program r [VkFramebuffer]
+                   -> Resource r [VkFramebuffer]
 createFramebuffers dev renderPass SwapchainInfo{ swapExtent } swapImgViews depthImgView colorImgView =
-    allocResource
-      (liftIO . mapM_  (\fb -> vkDestroyFramebuffer dev fb VK_NULL) )
-      (mapM createFB swapImgViews)
+  resource $ metaResource
+    (liftIO . mapM_  (\fb -> vkDestroyFramebuffer dev fb VK_NULL) )
+    (mapM createFB swapImgViews)
   where
     createFB swapImgView =
       let fbci = createVk @VkFramebufferCreateInfo

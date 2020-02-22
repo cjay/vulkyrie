@@ -7,13 +7,14 @@ module Lib.GLFW
     , glfwWaitEventsMeanwhile
     ) where
 
-import           Control.Monad       (unless, when, forever)
+import           Control.Monad       (forever, unless, when)
 import           Graphics.UI.GLFW    (ClientAPI (..), WindowHint (..))
 import qualified Graphics.UI.GLFW    as GLFW
 import           Graphics.Vulkan
 
 import           Lib.MonadIO.IORef
 import           Lib.Program
+import           Lib.Resource
 import           Lib.Vulkan.Instance
 
 
@@ -82,10 +83,10 @@ glfwWaitMinimized win = liftIO go where
     GLFW.waitEvents
     when (x == 0 && y == 0) go
 
-createGLFWVulkanInstance :: String -> Program r VkInstance
+createGLFWVulkanInstance :: String -> Resource r VkInstance
 createGLFWVulkanInstance progName = do
     -- get required extension names from GLFW
-    glfwReqExts <- liftIO GLFW.getRequiredInstanceExtensions
+    glfwReqExts <- onCreate $ liftIO GLFW.getRequiredInstanceExtensions
     createVulkanInstance
       progName
       "My perfect Haskell engine"

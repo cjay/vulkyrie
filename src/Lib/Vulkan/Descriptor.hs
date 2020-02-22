@@ -16,6 +16,7 @@ import           Graphics.Vulkan.Marshal.Create
 
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 
 
 {- some old brainstorming, probably too over-engineered for now:
@@ -57,9 +58,10 @@ data DynamicDescriptorPool = DynamicDescriptorPool
 
 
 -- TODO make pool size dynamic
-createDescriptorPool :: VkDevice -> Int -> Program r VkDescriptorPool
+createDescriptorPool :: VkDevice -> Int -> Resource r VkDescriptorPool
 createDescriptorPool dev n =
-  allocResource (liftIO . flip (vkDestroyDescriptorPool dev) VK_NULL) $
+  resource $ metaResource
+    (liftIO . flip (vkDestroyDescriptorPool dev) VK_NULL) $
     allocaPeek $ \pPtr -> withVkPtr
       ( createVk
         $  set @"sType" VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
@@ -99,14 +101,14 @@ samplerBinding bindId =
 
 createDescriptorSetLayout :: VkDevice
                           -> [VkDescriptorSetLayoutBinding]
-                          -> Program r VkDescriptorSetLayout
+                          -> Resource r VkDescriptorSetLayout
 createDescriptorSetLayout dev bindings =
   let dslCreateInfo = createVk @VkDescriptorSetLayoutCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
         &* set @"pNext" VK_NULL
         &* set @"flags" VK_ZERO_FLAGS
         &* setListCountAndRef @"bindingCount" @"pBindings" bindings
-  in allocResource
+  in resource $ metaResource
      (\dsl -> liftIO $ vkDestroyDescriptorSetLayout dev dsl VK_NULL) $
      withVkPtr dslCreateInfo $ \dslciPtr -> allocaPeek $
        runVk . vkCreateDescriptorSetLayout dev dslciPtr VK_NULL
