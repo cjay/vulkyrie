@@ -58,6 +58,7 @@ findMemoryType memProps typeFilter properties = do
   go 0
 
 
+-- TODO unify with allocBindBufferMem
 allocBindImageMem :: MemoryPool -> VkMemoryPropertyFlags -> VkImage -> Program r MemoryLoc
 allocBindImageMem memPool@MemoryPool{dev, memProps} propFlags image = do
   memRequirements <- allocaPeek $ \reqsPtr ->

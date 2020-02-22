@@ -134,9 +134,9 @@ runVulkanProgram = runProgram checkStatus $ do
         indices = rectIndices
 
     (vertexSem, vertexBuffer) <-
-      createVertexBuffer cap vertices
+      auto $ createVertexBuffer cap vertices
 
-    (indexSem, indexBuffer) <- createIndexBuffer cap indices
+    (indexSem, indexBuffer) <- auto $ createIndexBuffer cap indices
 
     frameDSL <- createDescriptorSetLayout dev [] --[uniformBinding 0]
     -- TODO automate bind ids
@@ -149,7 +149,7 @@ runVulkanProgram = runProgram checkStatus $ do
       ]
 
     let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
-    (textureSems, descrTextureInfos) <- unzip <$> mapM
+    (textureSems, descrTextureInfos) <- auto $ unzip <$> mapM
       (createTextureInfo cap) texturePaths
 
     depthFormat <- findDepthFormat pdev
@@ -216,7 +216,7 @@ runVulkanProgram = runProgram checkStatus $ do
       -- need this for delayed destruction of the old swapchain if it gets replaced
       oldSwapchainSlot <- createSwapchainSlot dev
       swapInfo <- readIORef swapInfoRef
-      swapImgViews <- mapM (\image -> createImageView dev image (swapImgFormat swapInfo) VK_IMAGE_ASPECT_COLOR_BIT 1) (swapImgs swapInfo)
+      swapImgViews <- auto $ mapM (\image -> createImageView dev image (swapImgFormat swapInfo) VK_IMAGE_ASPECT_COLOR_BIT 1) (swapImgs swapInfo)
       renderPass <- createRenderPass dev swapInfo depthFormat msaaSamples
       graphicsPipeline
         <- createGraphicsPipeline dev swapInfo
@@ -226,9 +226,9 @@ runVulkanProgram = runProgram checkStatus $ do
                                   pipelineLayout
                                   msaaSamples
 
-      (colorAttSem, colorAttImgView) <- createColorAttImgView cap
+      (colorAttSem, colorAttImgView) <- auto $ createColorAttImgView cap
                           (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
-      (depthAttSem, depthAttImgView) <- createDepthAttImgView cap
+      (depthAttSem, depthAttImgView) <- auto $ createDepthAttImgView cap
                           (swapExtent swapInfo) msaaSamples
       sems <- takeMVar nextSems
       putMVar nextSems ((colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)

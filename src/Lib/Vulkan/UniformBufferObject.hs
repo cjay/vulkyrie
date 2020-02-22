@@ -26,9 +26,9 @@ uboCreateBuffers
   :: EngineCapability
   -> VkDeviceSize -- ^ size of uniform buffer object
   -> Int          -- ^ frames in flight
-  -> Program r [(MemoryLoc, VkBuffer)]
+  -> Resource r [(MemoryLoc, VkBuffer)]
 uboCreateBuffers ecap size n = do
-      sequence $ replicate n $ auto $ createBuffer ecap size
+      sequence $ replicate n $ createBuffer ecap size
          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
          ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
