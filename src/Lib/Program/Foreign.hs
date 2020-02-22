@@ -52,8 +52,7 @@ withVkArrayLen :: (Storable a, VulkanMarshal a) => [a] -> (Word32 -> Ptr a -> Pr
 withVkArrayLen xs pf = liftIOWith (withArrayLen xs . curry) (uncurry pf)
 {-# INLINE withVkArrayLen #-}
 
--- | Despite its name, this command does not copy data from a created pointer.
---   It uses `newVkData` function inside.
+-- | Uses `newVkData`, deallocation happens via GC.
 allocaPeekVk :: VulkanMarshal a
              => (Ptr a -> Program () ())
              -> Program r a
