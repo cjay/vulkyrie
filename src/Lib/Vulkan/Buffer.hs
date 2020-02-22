@@ -11,6 +11,7 @@ import           Graphics.Vulkan.Marshal.Create
 
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Memory
 
@@ -19,8 +20,8 @@ createBuffer :: EngineCapability
              -> VkDeviceSize
              -> VkBufferUsageFlags
              -> VkMemoryPropertyFlags
-             -> Program r (MemoryLoc, VkBuffer)
-createBuffer EngineCapability{dev, memPool} bSize bUsage bMemPropFlags = do
+             -> Resource r (MemoryLoc, VkBuffer)
+createBuffer EngineCapability{dev, memPool} bSize bUsage bMemPropFlags =
     let bufferInfo = createVk @VkBufferCreateInfo
           $  set @"sType" VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO
           &* set @"pNext" VK_NULL
@@ -29,17 +30,18 @@ createBuffer EngineCapability{dev, memPool} bSize bUsage bMemPropFlags = do
           &* set @"sharingMode" VK_SHARING_MODE_EXCLUSIVE
           &* set @"queueFamilyIndexCount" 0
           &* set @"pQueueFamilyIndices" VK_NULL
-    (buf, freeBufLater) <- allocResource'
-      (\vb -> liftIO $ vkDestroyBuffer dev vb VK_NULL) $
-      withVkPtr bufferInfo $ \biPtr -> allocaPeek $
-        runVk . vkCreateBuffer dev biPtr VK_NULL
+        metaBuffer = metaResource
+            (\vb -> liftIO $ vkDestroyBuffer dev vb VK_NULL) $
+            withVkPtr bufferInfo $ \biPtr -> allocaPeek $
+              runVk . vkCreateBuffer dev biPtr VK_NULL
+    in do
+      (destroyBuf, buf) <- onCreate $ manual metaBuffer
+      -- TODO resource instead of creation, with actual Resource
+      memLoc <- onCreate $ allocBindBufferMem memPool bMemPropFlags buf
+      -- The buf will be released before the memory
+      onDestroy destroyBuf
 
-    memLoc <- allocBindBufferMem memPool bMemPropFlags buf
-    -- The buf will be released before release of any of the resources
-    -- allocated above, but after release on any allocations below.
-    freeBufLater
-
-    return (memLoc, buf)
+      return (memLoc, buf)
 
 
 copyBuffer :: VkCommandBuffer -> VkBuffer -> VkBuffer -> VkDeviceSize -> Program r ()
@@ -49,5 +51,3 @@ copyBuffer cmdBuf srcBuffer dstBuffer bSize = do
         &* set @"dstOffset" 0
         &* set @"size" bSize
   withVkPtr copyRegion $ liftIO . vkCmdCopyBuffer cmdBuf srcBuffer dstBuffer 1
-
-

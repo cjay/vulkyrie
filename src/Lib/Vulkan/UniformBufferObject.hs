@@ -15,6 +15,7 @@ import           Numeric.DataFrame
 
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 import           Lib.Vulkan.Buffer
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Memory
@@ -27,7 +28,7 @@ uboCreateBuffers
   -> Int          -- ^ frames in flight
   -> Program r [(MemoryLoc, VkBuffer)]
 uboCreateBuffers ecap size n = do
-      sequence $ replicate n $ createBuffer ecap size
+      sequence $ replicate n $ auto $ createBuffer ecap size
          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
          ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 

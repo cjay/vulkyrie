@@ -12,12 +12,13 @@ import           Numeric.DataFrame
 
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 import           Lib.Vulkan.Buffer
 import           Lib.Vulkan.Command
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Memory
-import           Lib.Vulkan.Vertex
 import           Lib.Vulkan.Sync
+import           Lib.Vulkan.Vertex
 
 
 createVertexBuffer :: EngineCapability
@@ -29,14 +30,14 @@ createVertexBuffer ecap@EngineCapability{..} (XFrame vertices) = do
     let bSize = bSizeOf vertices
 
     (_, vertexBuf) <-
-      createBuffer ecap bSize
+      auto $ createBuffer ecap bSize
         ( VK_BUFFER_USAGE_TRANSFER_DST_BIT .|. VK_BUFFER_USAGE_VERTEX_BUFFER_BIT )
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
     sem <- head <$> acquireSemaphores semPool 1
     postWith_ cmdCap cmdQueue [] [sem] $ \cmdBuf -> do
       (stagingMem, stagingBuf) <-
-        createBuffer ecap bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+        auto $ createBuffer ecap bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
           ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
       -- copy data
@@ -58,14 +59,14 @@ createIndexBuffer ecap@EngineCapability{..} (XFrame indices) = do
     let bSize = bSizeOf indices
 
     (_, vertexBuf) <-
-      createBuffer ecap bSize
+      auto $ createBuffer ecap bSize
         ( VK_BUFFER_USAGE_TRANSFER_DST_BIT .|. VK_BUFFER_USAGE_INDEX_BUFFER_BIT )
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
     sem <- head <$> acquireSemaphores semPool 1
     postWith_ cmdCap cmdQueue [] [sem] $ \cmdBuf -> do
       (stagingMem, stagingBuf) <-
-        createBuffer ecap bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+        auto $ createBuffer ecap bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
           ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
       -- copy data

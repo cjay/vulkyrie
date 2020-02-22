@@ -25,6 +25,7 @@ import           Graphics.Vulkan.Marshal.Create
 
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Resource
 import           Lib.Vulkan.Buffer
 import           Lib.Vulkan.Command
 import           Lib.Vulkan.Engine
@@ -71,7 +72,7 @@ createTextureImageView ecap@EngineCapability{..} path = do
   -- buffer after data copy is complete
   postWith_ cmdCap cmdQueue [(sem0, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem1] $ \cmdBuf -> do
     (stagingMem, stagingBuf) <-
-      createBuffer ecap bufSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+      auto $ createBuffer ecap bufSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
         ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
     -- copy data
