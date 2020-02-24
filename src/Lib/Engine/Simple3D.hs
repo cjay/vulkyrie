@@ -20,12 +20,8 @@ import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
 import           Graphics.Vulkan.Marshal.Create.DataFrame
-import           Lib.MonadIO.IORef
 import           Lib.Program
 import           Lib.Program.Foreign
-import           Lib.Vulkan.Command
-import           Lib.Vulkan.Queue
-import           Lib.Vulkan.Sync
 
 
 data BufferLoc = BufferLoc
@@ -40,28 +36,27 @@ data DescrBindInfo = DescrBindInfo
   }
 
 
+-- Id of per-frame descriptor set
 frameSetId :: Word32
 frameSetId = 0
 
+-- Id of per-material descriptor set
 materialSetId :: Word32
 materialSetId = 1
 
+-- Id of per-object descriptor set
 objectSetId :: Word32
 objectSetId = 2
 
 
 data Object = Object
-  {
-    modelMatrix      :: Mat44f
-    -- objectBindInfo   :: [DescrBindInfo] -- one per frame in flight
+  { modelMatrix      :: Mat44f
+    -- ^ placement in world space
   , materialBindInfo :: DescrBindInfo
-    -- textureIndex     :: Word32
   , vertexBufferLoc  :: BufferLoc
   , indexBufferLoc   :: BufferLoc
   , firstIndex       :: Word32
   , indexCount       :: Word32
-  -- hopefully never needed, especially not negative:
-  -- , vertexOffset :: Int32
   -- not yet:
   -- , pipeline :: VkPipeline
   }
@@ -127,10 +122,10 @@ recordObject pipelineLayout cmdBuf transform Object{..} = do
 
 data RenderContext
   = RenderContext
-  { pipeline :: VkPipeline
-  , renderPass :: VkRenderPass
+  { pipeline       :: VkPipeline
+  , renderPass     :: VkRenderPass
   , pipelineLayout :: VkPipelineLayout
-  , extent :: VkExtent2D
+  , extent         :: VkExtent2D
   }
 
 recordAll :: RenderContext

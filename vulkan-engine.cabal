@@ -32,6 +32,8 @@ library
                         Lib.Program
                         Lib.Program.Foreign
                         Lib.Resource
+                        Lib.Tests
+                        Lib.Utils
                         Lib.Vulkan.Buffer
                         Lib.Vulkan.Command
                         Lib.Vulkan.Descriptor

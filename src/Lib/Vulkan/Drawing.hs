@@ -94,7 +94,7 @@ data RenderData
 
 
 drawFrame :: EngineCapability -> RenderData -> Program r Bool
-drawFrame EngineCapability{..} RenderData{..} = do
+drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
     frameIndex <- readIORef frameIndexRef
     isOnQueue <-
       maybe False (const True) <$> tryTakeMVar (frameOnQueueVars !! frameIndex)
@@ -105,8 +105,8 @@ drawFrame EngineCapability{..} RenderData{..} = do
       liftIO $ Event.signal frameFinishedEvent
       -- could also take current time here to measure frametimes
 
-    let SwapchainInfo {..} = swapInfo
-        DevQueues {..} = queues
+    let SwapchainInfo { swapchain } = swapInfo
+        DevQueues { presentQueue } = queues
 
     imageAvailSem <- head <$> acquireSemaphores semPool 1
     let renderFinishedSem = (renderFinishedSems !! frameIndex)

@@ -67,7 +67,7 @@ objMatrixOverTime = do
 
 
 loadShaders :: EngineCapability -> Program r [VkPipelineShaderStageCreateInfo]
-loadShaders EngineCapability { dev } = do
+loadShaders EngineCapability{ dev } = do
     vertSM <- auto $ shaderModuleFile dev "shaders/triangle.vert.spv"
     fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
 
@@ -180,7 +180,7 @@ prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
 
 
 makeWorld :: MyAppState -> Program r [Object]
-makeWorld MyAppState{..} = do
+makeWorld MyAppState{ assets } = do
   let Assets{..} = assets
   -- objTransformsRef <- newIORef [translate3 $ vec3 0 1 1, translate3 $ vec3 0 0 0]
   objMatrix <- objMatrixOverTime
@@ -211,7 +211,7 @@ makeWorld MyAppState{..} = do
 
 
 myAppStart :: EngineCapability -> Program r MyAppState
-myAppStart cap@EngineCapability{..} = do
+myAppStart cap@EngineCapability{ dev } = do
   shaderStages <- loadShaders cap
   (materialDSL, pipelineLayout) <- makePipelineLayouts dev
   assets <- loadAssets cap materialDSL
@@ -233,11 +233,11 @@ myAppRecordFrame appState@MyAppState{..} cmdBuf framebuffer = do
 
 data MyAppState
   = MyAppState
-  { shaderStages   :: [VkPipelineShaderStageCreateInfo]
-  , pipelineLayout :: VkPipelineLayout
-  , cap            :: EngineCapability
-  , assets         :: Assets
-  , renderContextVar  :: MVar RenderContext
+  { shaderStages     :: [VkPipelineShaderStageCreateInfo]
+  , pipelineLayout   :: VkPipelineLayout
+  , cap              :: EngineCapability
+  , assets           :: Assets
+  , renderContextVar :: MVar RenderContext
   }
 
 
@@ -256,16 +256,18 @@ runMyVulkanProgram = do
 -- | s is the shared app state handle (usually containing constants/IORefs/MVars)
 data App s
   = App
-  { windowName :: String
-  , windowSize :: (Int, Int)
-  , appStart   :: forall r. EngineCapability -> Program r s
-  -- ^ makes the shared app state handle
-  , appNewSwapchain :: forall r a. s -> SwapchainInfo -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
-  , appRecordFrame :: forall r. s -> VkCommandBuffer -> VkFramebuffer -> Program r ()
+  { windowName      :: String
+  , windowSize      :: (Int, Int)
+  , appStart        :: forall r. EngineCapability -> Program r s
+    -- ^ makes the shared app state handle
+  , appNewSwapchain :: forall r a. s -> SwapchainInfo ->
+                       Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
+  , appRecordFrame  :: forall r. s -> VkCommandBuffer -> VkFramebuffer ->
+                       Program r ()
   }
 
 runVulkanProgram :: App s -> IO ()
-runVulkanProgram App { .. } = runProgram checkStatus $ do
+runVulkanProgram App{ .. } = runProgram checkStatus $ do
   windowSizeChanged <- newIORef False
   let (windowWidth, windowHeight) = windowSize
   window <- initGLFWWindow windowWidth windowHeight windowName windowSizeChanged
@@ -322,7 +324,7 @@ runVulkanProgram App { .. } = runProgram checkStatus $ do
     swapchainSlot <- createSwapchainSlot dev
     swapInfoRef <- createSwapchain dev scsd queues vulkanSurface swapchainSlot Nothing >>= newIORef
 
-    -- TODO only needed if commands need to happen before first draw, I think
+    -- Those are only needed if commands need to happen before first draw, I think:
     -- attachQueuePump gfxQueue 16666
     -- removeQueuePump gfxQueue
 
