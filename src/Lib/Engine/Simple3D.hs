@@ -7,6 +7,7 @@ module Lib.Engine.Simple3D
   , objectSetId
   , Object(..)
   , recordObject
+  , RenderContext(..)
   , recordAll
   ) where
 
@@ -51,9 +52,9 @@ objectSetId = 2
 
 data Object = Object
   {
-    -- modelMatrix      :: Mat44f
+    modelMatrix      :: Mat44f
     -- objectBindInfo   :: [DescrBindInfo] -- one per frame in flight
-    materialBindInfo :: DescrBindInfo
+  , materialBindInfo :: DescrBindInfo
     -- textureIndex     :: Word32
   , vertexBufferLoc  :: BufferLoc
   , indexBufferLoc   :: BufferLoc
@@ -74,6 +75,16 @@ bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = locally $ do
   dynOffPtr <- newArrayRes dynamicOffsets
   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
     descrSetId descrSetCnt descrSetPtr dynOffCnt dynOffPtr
+
+
+viewProjMatrix :: VkExtent2D -> Program r Mat44f
+viewProjMatrix extent = do
+  let width = getField @"width" extent
+  let height = getField @"height" extent
+  let aspectRatio = fromIntegral width / fromIntegral height
+  let view = lookAt (vec3 0 0 (-1)) (vec3 2 2 2) (vec3 0 0 0)
+  let proj = perspective 0.1 20 (45/360*2*pi) aspectRatio
+  return $ view %* proj
 
 
 -- | Update push constants: transformation matrix
@@ -114,31 +125,32 @@ recordObject pipelineLayout cmdBuf transform Object{..} = do
     indexCount 1 firstIndex 0 0 -- index count, instance count, first index, vertex offset, first instance
 
 
-recordAll :: VkPipeline
-          -> VkRenderPass
-          -> VkPipelineLayout
-          -> VkExtent2D
-          -> [QueueEvent]
+data RenderContext
+  = RenderContext
+  { pipeline :: VkPipeline
+  , renderPass :: VkRenderPass
+  , pipelineLayout :: VkPipelineLayout
+  , extent :: VkExtent2D
+  }
+
+recordAll :: RenderContext
           -> [Object]
-          -> IORef [Mat44f]
           -> VkCommandBuffer
           -> VkFramebuffer
-          -> Mat44f
           -> Program r ()
 recordAll
-    pipeline rpass pipelineLayout swapExtent loadEvents objects objTransformsRef
-    cmdBuf framebuffer viewProjTransform = do
+    RenderContext{..} objects cmdBuf framebuffer = do
 
   -- render pass
   let renderPassBeginInfo = createVk @VkRenderPassBeginInfo
         $  set @"sType" VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
         &* set @"pNext" VK_NULL
-        &* set @"renderPass" rpass
+        &* set @"renderPass" renderPass
         &* set @"framebuffer" framebuffer
         &* setVk @"renderArea"
             (  setVk @"offset"
                 ( set @"x" 0 &* set @"y" 0 )
-            &* set @"extent" swapExtent
+            &* set @"extent" extent
             )
         -- TODO only the first command buffer should clear
         &* setListCountAndRef @"clearValueCount" @"pClearValues"
@@ -165,14 +177,11 @@ recordAll
   --     -- first set, set count, sets, dyn offset count, dyn offsets
   --     frameSetId 1 frameDsPtr 0 VK_NULL
 
-  objTransforms <- readIORef objTransformsRef
+  viewProjTransform <- viewProjMatrix extent
+  -- objTransforms <- readIORef objTransformsRef
 
-  -- TODO should stop checking once all are loaded
-  loaded <- and <$> mapM isDone loadEvents
-
-  when loaded $
-    forM_ (zip objTransforms objects) $ \(objTransform, object) -> do
-      recordObject pipelineLayout cmdBuf (objTransform %* viewProjTransform) object
+  forM_ objects $ \object ->
+    recordObject pipelineLayout cmdBuf (modelMatrix object %* viewProjTransform) object
 
   -- finishing up
   liftIO $ vkCmdEndRenderPass cmdBuf

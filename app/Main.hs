@@ -8,7 +8,7 @@ main :: IO ()
 main = do
   runProgram checkStatus tests
   putStrLn " -- end of tests -- "
-  runVulkanProgram
+  runMyVulkanProgram
 
 tests :: Program r ()
 tests = do

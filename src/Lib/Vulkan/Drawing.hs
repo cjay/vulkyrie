@@ -84,9 +84,8 @@ data RenderData
     -- ^ to execute on memories[*imgIndexPtr] before drawing
   -- , descrSetMutator        :: forall r. VkDescriptorSet -> Program r ()
     -- ^ update per-frame uniforms
-  , recCmdBuffer              :: forall r. VkCommandBuffer -> VkFramebuffer -> Mat44f -> Program r ()
-    -- ^ update cmdBuf
-  , getViewProjMatrix              :: forall r. Program r Mat44f
+  , recCmdBuffer              :: forall r. VkCommandBuffer -> VkFramebuffer -> Program r ()
+    -- ^ record cmdBuf
   -- , frameDescrSets            :: [VkDescriptorSet]
     -- ^ one per frame-in-flight
   , framebuffers              :: [VkFramebuffer]
@@ -109,15 +108,15 @@ drawFrame EngineCapability{..} RenderData{..} = do
     let SwapchainInfo {..} = swapInfo
         DevQueues {..} = queues
 
-    imageAvailable <- head <$> acquireSemaphores semPool 1
-    let renderFinished = (renderFinishedSems !! frameIndex)
+    imageAvailSem <- head <$> acquireSemaphores semPool 1
+    let renderFinishedSem = (renderFinishedSems !! frameIndex)
     -- Acquiring an image from the swapchain
     -- Can throw VK_ERROR_OUT_OF_DATE_KHR
     (runVk $ vkAcquireNextImageKHR
           dev swapchain maxBound
-          imageAvailable VK_NULL_HANDLE imgIndexPtr) `catchError`
+          imageAvailSem VK_NULL_HANDLE imgIndexPtr) `catchError`
       ( \err -> do
-          releaseSemaphores semPool [imageAvailable]
+          releaseSemaphores semPool [imageAvailSem]
           throwError err
       )
 
@@ -128,18 +127,17 @@ drawFrame EngineCapability{..} RenderData{..} = do
     nextS <- takeMVar nextSems
     putMVar nextSems []
 
-    viewProjMatrix <- getViewProjMatrix
     nextEvent <- postWith cmdCap cmdQueue
-      ((imageAvailable, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextS)
-      [renderFinished] $ \cmdBuf -> do
+      ((imageAvailSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextS)
+      [renderFinishedSem] $ \cmdBuf -> do
       -- let frameDescrSet = frameDescrSets !! frameIndex
       let framebuffer = framebuffers !! imgIndex
       -- descrSetMutator frameDescrSet
-      recCmdBuffer cmdBuf framebuffer viewProjMatrix
+      recCmdBuffer cmdBuf framebuffer
 
     -- Complication because multiple queues are used:
     -- Using submitNotify instead of submit to block until vkQueueSubmit is
-    -- done, because the renderFinished semaphore needs to be signaled, or have
+    -- done, because the renderFinishedSem semaphore needs to be signaled, or have
     -- an associated semaphore signal operation previously submitted for
     -- execution, before it is waited on via vkQueuePresentKHR below.
     -- TODO maybe manage both queues together to avoid blocking here
@@ -153,7 +151,7 @@ drawFrame EngineCapability{..} RenderData{..} = do
           &* set @"pNext" VK_NULL
           &* set @"pImageIndices" imgIndexPtr
           &* set        @"waitSemaphoreCount" 1
-          &* setListRef @"pWaitSemaphores" [renderFinished]
+          &* setListRef @"pWaitSemaphores" [renderFinishedSem]
           &* set        @"swapchainCount" 1
           &* setListRef @"pSwapchains"    [swapchain]
 

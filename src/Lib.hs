@@ -1,7 +1,8 @@
-{-# LANGUAGE Strict          #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE Strict     #-}
 module Lib
   ( runVulkanProgram
+  , runMyVulkanProgram
   ) where
 
 import qualified Control.Concurrent.Event             as Event
@@ -64,47 +65,9 @@ objMatrixOverTime = do
   return $ rotation seconds
 
 
-viewProjMatrix :: VkExtent2D -> Program r Mat44f
-viewProjMatrix extent = do
-  let width = getField @"width" extent
-  let height = getField @"height" extent
-  let aspectRatio = fromIntegral width / fromIntegral height
-  let view = lookAt (vec3 0 0 (-1)) (vec3 2 2 2) (vec3 0 0 0)
-  let proj = perspective 0.1 20 (45/360*2*pi) aspectRatio
-  return $ view %* proj
 
-
-runVulkanProgram :: IO ()
-runVulkanProgram = runProgram checkStatus $ do
-  windowSizeChanged <- newIORef False
-  window <- initGLFWWindow 800 600 "vulkan-experiment" windowSizeChanged
-
-  vulkanInstance <- auto $ createGLFWVulkanInstance "vulkan-experiment-instance"
-
-  vulkanSurface <- auto $ createSurface vulkanInstance window
-  logInfo $ "Createad surface: " ++ show vulkanSurface
-
-  glfwWaitEventsMeanwhile $ do
-    (_, pdev) <- pickPhysicalDevice vulkanInstance (Just vulkanSurface)
-    logInfo $ "Selected physical device: " ++ show pdev
-    msaaSamples <- getMaxUsableSampleCount pdev
-
-    (dev, queues) <- createGraphicsDevice pdev vulkanSurface
-
-    msp <- auto $ metaMasterSemaphorePool dev
-    gfxQueue <- auto $ metaManagedQueue dev (graphicsQueue queues) msp
-    attachQueuePump gfxQueue 16666
-    cpp <- auto $ metaCommandPoolPool dev (graphicsFamIdx queues)
-
-    semPool <- auto $ metaSemaphorePool msp
-    cmdCap <- auto $ metaCommandCapability cpp
-    memPool <- auto $ metaMemoryPool pdev dev
-    -- TODO create permanently mapped reusable staging buffer
-    let cap = EngineCapability{ pdev, dev, cmdCap, cmdQueue=gfxQueue, semPool, memPool }
-
-    logInfo $ "Createad device: " ++ show dev
-    logInfo $ "Createad queues: " ++ show queues
-
+loadShaders :: EngineCapability -> Program r [VkPipelineShaderStageCreateInfo]
+loadShaders EngineCapability { dev } = do
     vertSM <- auto $ shaderModuleFile dev "shaders/triangle.vert.spv"
     fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
 
@@ -121,6 +84,217 @@ runVulkanProgram = runProgram checkStatus $ do
     logInfo $ "Createad vertex shader module: " ++ show shaderVert
     logInfo $ "Createad fragment shader module: " ++ show shaderFrag
 
+    return [shaderVert, shaderFrag]
+
+
+makePipelineLayouts :: VkDevice -> Program r (VkDescriptorSetLayout, VkPipelineLayout)
+makePipelineLayouts dev = do
+  frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
+  -- TODO automate bind ids
+  materialDSL <- auto $ createDescriptorSetLayout dev [samplerBinding 0]
+  pipelineLayout <- auto $ createPipelineLayout dev
+    -- descriptor set numbers 0,1,..
+    [frameDSL, materialDSL]
+    -- push constant ranges
+    [ pushConstantRange VK_SHADER_STAGE_VERTEX_BIT 0 64
+    ]
+
+  -- (transObjMems, transObjBufs) <- unzip <$> uboCreateBuffers pdev dev transObjSize maxFramesInFlight
+  -- descriptorBufferInfos <- mapM (uboBufferInfo transObjSize) transObjBufs
+
+  -- frameDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool maxFramesInFlight frameDSL
+
+  -- forM_ (zip descriptorBufferInfos frameDescrSets) $
+    -- \(bufInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [bufInfo] []
+
+  return (materialDSL, pipelineLayout)
+
+
+
+loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Program r Assets
+loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
+  let vertices = rectVertices
+      indices = rectIndices
+      indexCount = dfLen indices
+
+  (vertexBufReady, vertexBuffer) <-
+    auto $ createVertexBuffer cap vertices
+
+  (indexBufReady, indexBuffer) <- auto $ createIndexBuffer cap indices
+  let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
+  (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
+    (createTextureInfo cap) texturePaths
+
+  let loadEvents = textureReadyEvents <> [vertexBufReady, indexBufReady]
+
+  materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
+
+  forM_ (zip descrTextureInfos materialDescrSets) $
+    \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
+
+  return $ Assets {..}
+
+data Assets
+  = Assets
+  { loadEvents        :: [QueueEvent]
+  , materialDescrSets :: [VkDescriptorSet]
+  , vertexBuffer      :: VkBuffer
+  , indexBuffer       :: VkBuffer
+  , indexCount        :: Word32
+  }
+
+
+prepareRender :: EngineCapability
+              -> SwapchainInfo
+              -> [VkPipelineShaderStageCreateInfo]
+              -> VkPipelineLayout
+              -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
+prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
+  msaaSamples <- getMaxUsableSampleCount pdev
+  depthFormat <- findDepthFormat pdev
+
+  swapImgViews <- auto $
+    mapM (\image -> createImageView dev image (swapImgFormat swapInfo) VK_IMAGE_ASPECT_COLOR_BIT 1)
+         (swapImgs swapInfo)
+  renderPass <- auto $ createRenderPass dev swapInfo depthFormat msaaSamples
+  graphicsPipeline
+    <- auto $ createGraphicsPipeline dev swapInfo
+                              vertIBD vertIADs
+                              shaderStages
+                              renderPass
+                              pipelineLayout
+                              msaaSamples
+
+  (colorAttSem, colorAttImgView) <- auto $ createColorAttImgView cap
+                      (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
+  (depthAttSem, depthAttImgView) <- auto $ createDepthAttImgView cap
+                      (swapExtent swapInfo) msaaSamples
+  let nextSems = [(colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+                 , (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
+                 ]
+  framebuffers
+    <- auto $ createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
+
+  return (framebuffers, nextSems, RenderContext graphicsPipeline renderPass pipelineLayout (swapExtent swapInfo))
+
+
+
+makeWorld :: MyAppState -> Program r [Object]
+makeWorld MyAppState{..} = do
+  let Assets{..} = assets
+  -- objTransformsRef <- newIORef [translate3 $ vec3 0 1 1, translate3 $ vec3 0 0 0]
+  objMatrix <- objMatrixOverTime
+
+  let objs =
+        [ Object
+          { materialBindInfo = DescrBindInfo (materialDescrSets !! 0) []
+          , vertexBufferLoc = BufferLoc vertexBuffer 0
+          , indexBufferLoc = BufferLoc indexBuffer 0
+          , firstIndex = 0
+          , indexCount
+          , modelMatrix = objMatrix %* (translate3 $ vec3 0 1 1)
+          }
+        , Object
+          { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) []
+          , vertexBufferLoc = BufferLoc vertexBuffer 0
+          , indexBufferLoc = BufferLoc indexBuffer 0
+          , firstIndex = 0
+          , indexCount
+          , modelMatrix = objMatrix
+          }
+        ]
+
+  -- TODO should stop checking once all are loaded
+  loaded <- and <$> mapM isDone loadEvents
+
+  if loaded then return objs else return []
+
+
+myAppStart :: EngineCapability -> Program r MyAppState
+myAppStart cap@EngineCapability{..} = do
+  shaderStages <- loadShaders cap
+  (materialDSL, pipelineLayout) <- makePipelineLayouts dev
+  assets <- loadAssets cap materialDSL
+  renderContextVar <- newEmptyMVar
+  return $ MyAppState{..}
+
+myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
+myAppNewSwapchain MyAppState{..} swapInfo = do
+  _ <- tryTakeMVar renderContextVar
+  (framebuffers, nextSems, renderContext) <- prepareRender cap swapInfo shaderStages pipelineLayout
+  putMVar renderContextVar renderContext
+  return (framebuffers, nextSems)
+
+myAppRecordFrame :: MyAppState -> VkCommandBuffer -> VkFramebuffer -> Program r ()
+myAppRecordFrame appState@MyAppState{..} cmdBuf framebuffer = do
+  objs <- makeWorld appState
+  renderContext <- readMVar renderContextVar
+  recordAll renderContext objs cmdBuf framebuffer
+
+data MyAppState
+  = MyAppState
+  { shaderStages   :: [VkPipelineShaderStageCreateInfo]
+  , pipelineLayout :: VkPipelineLayout
+  , cap            :: EngineCapability
+  , assets         :: Assets
+  , renderContextVar  :: MVar RenderContext
+  }
+
+
+runMyVulkanProgram :: IO ()
+runMyVulkanProgram = do
+  let app = App
+        { windowName = "vulkan-experiment"
+        , windowSize = (800, 600)
+        , appStart = myAppStart
+        , appNewSwapchain = myAppNewSwapchain
+        , appRecordFrame = myAppRecordFrame
+        }
+  runVulkanProgram app
+
+
+-- | s is the shared app state handle (usually containing constants/IORefs/MVars)
+data App s
+  = App
+  { windowName :: String
+  , windowSize :: (Int, Int)
+  , appStart   :: forall r. EngineCapability -> Program r s
+  -- ^ makes the shared app state handle
+  , appNewSwapchain :: forall r a. s -> SwapchainInfo -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
+  , appRecordFrame :: forall r. s -> VkCommandBuffer -> VkFramebuffer -> Program r ()
+  }
+
+runVulkanProgram :: App s -> IO ()
+runVulkanProgram App { .. } = runProgram checkStatus $ do
+  windowSizeChanged <- newIORef False
+  let (windowWidth, windowHeight) = windowSize
+  window <- initGLFWWindow windowWidth windowHeight windowName windowSizeChanged
+  vulkanInstance <- auto $ createGLFWVulkanInstance (windowName <> "-instance")
+  vulkanSurface <- auto $ createSurface vulkanInstance window
+  logInfo $ "Createad surface: " ++ show vulkanSurface
+
+  glfwWaitEventsMeanwhile $ do
+    (_, pdev) <- pickPhysicalDevice vulkanInstance (Just vulkanSurface)
+    logInfo $ "Selected physical device: " ++ show pdev
+
+    (dev, queues) <- createGraphicsDevice pdev vulkanSurface
+    logInfo $ "Createad device: " ++ show dev
+    logInfo $ "Createad queues: " ++ show queues
+
+    msp <- auto $ metaMasterSemaphorePool dev
+    gfxQueue <- auto $ metaManagedQueue dev (graphicsQueue queues) msp
+    cpp <- auto $ metaCommandPoolPool dev (graphicsFamIdx queues)
+
+    semPool <- auto $ metaSemaphorePool msp
+    cmdCap <- auto $ metaCommandCapability cpp
+    memPool <- auto $ metaMemoryPool pdev dev
+    descriptorPool <- auto $ createDescriptorPool dev 100 -- TODO make dynamic
+    -- TODO create permanently mapped reusable staging buffer
+    let cap = EngineCapability{ pdev, dev, cmdCap, cmdQueue=gfxQueue, semPool, memPool, descriptorPool }
+
+    logInfo $ "Starting App.."
+    appState <- appStart cap
+
     frameIndexRef <- newIORef 0
     renderFinishedSems <- createFrameSemaphores dev
     queueEvents <- sequence $ replicate maxFramesInFlight $ newDoneQueueEvent >>= newIORef
@@ -129,62 +303,6 @@ runVulkanProgram = runProgram checkStatus $ do
 
     -- we need this later, but don't want to realloc every swapchain recreation.
     imgIndexPtr <- mallocRes
-
-    let vertices = rectVertices
-        indices = rectIndices
-
-    (vertexBufReady, vertexBuffer) <-
-      auto $ createVertexBuffer cap vertices
-
-    (indexBufReady, indexBuffer) <- auto $ createIndexBuffer cap indices
-
-    frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
-    -- TODO automate bind ids
-    materialDSL <- auto $ createDescriptorSetLayout dev [samplerBinding 0]
-    pipelineLayout <- auto $ createPipelineLayout dev
-      -- descriptor set numbers 0,1,..
-      [frameDSL, materialDSL]
-      -- push constant ranges
-      [ pushConstantRange VK_SHADER_STAGE_VERTEX_BIT 0 64
-      ]
-
-    let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
-    (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
-      (createTextureInfo cap) texturePaths
-
-    let loadEvents = textureReadyEvents <> [vertexBufReady, indexBufReady]
-
-    depthFormat <- findDepthFormat pdev
-
-    -- (transObjMems, transObjBufs) <- unzip <$> uboCreateBuffers pdev dev transObjSize maxFramesInFlight
-    -- descriptorBufferInfos <- mapM (uboBufferInfo transObjSize) transObjBufs
-
-    descriptorPool <- auto $ createDescriptorPool dev 100 -- TODO make dynamic
-    -- frameDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool maxFramesInFlight frameDSL
-    materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
-
-    -- forM_ (zip descriptorBufferInfos frameDescrSets) $
-      -- \(bufInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [bufInfo] []
-
-    forM_ (zip descrTextureInfos materialDescrSets) $
-      \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
-
-    let objs =
-          [ Object
-            { materialBindInfo = DescrBindInfo (materialDescrSets !! 0) []
-            , vertexBufferLoc = BufferLoc vertexBuffer 0
-            , indexBufferLoc = BufferLoc indexBuffer 0
-            , firstIndex = 0
-            , indexCount = dfLen indices
-            }
-          , Object
-            { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) []
-            , vertexBufferLoc = BufferLoc vertexBuffer 0
-            , indexBufferLoc = BufferLoc indexBuffer 0
-            , firstIndex = 0
-            , indexCount = dfLen indices
-            }
-          ]
 
     let beforeSwapchainCreation :: Program r ()
         beforeSwapchainCreation = do
@@ -204,7 +322,9 @@ runVulkanProgram = runProgram checkStatus $ do
     swapchainSlot <- createSwapchainSlot dev
     swapInfoRef <- createSwapchain dev scsd queues vulkanSurface swapchainSlot Nothing >>= newIORef
 
-    removeQueuePump gfxQueue
+    -- TODO only needed if commands need to happen before first draw, I think
+    -- attachQueuePump gfxQueue 16666
+    -- removeQueuePump gfxQueue
 
     nextSems <- newMVar []
 
@@ -214,65 +334,35 @@ runVulkanProgram = runProgram checkStatus $ do
       -- need this for delayed destruction of the old swapchain if it gets replaced
       oldSwapchainSlot <- createSwapchainSlot dev
       swapInfo <- readIORef swapInfoRef
-      swapImgViews <- auto $ mapM (\image -> createImageView dev image (swapImgFormat swapInfo) VK_IMAGE_ASPECT_COLOR_BIT 1) (swapImgs swapInfo)
-      renderPass <- auto $ createRenderPass dev swapInfo depthFormat msaaSamples
-      graphicsPipeline
-        <- auto $ createGraphicsPipeline dev swapInfo
-                                  vertIBD vertIADs
-                                  [shaderVert, shaderFrag]
-                                  renderPass
-                                  pipelineLayout
-                                  msaaSamples
 
-      (colorAttSem, colorAttImgView) <- auto $ createColorAttImgView cap
-                          (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
-      (depthAttSem, depthAttImgView) <- auto $ createDepthAttImgView cap
-                          (swapExtent swapInfo) msaaSamples
+      (framebuffers, nextAppSems) <- appNewSwapchain appState swapInfo
       sems <- takeMVar nextSems
-      putMVar nextSems ((colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-                                 : (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
-                                 : sems)
-      framebuffers
-        <- auto $ createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
-
-      objTransformsRef <- newIORef [translate3 $ vec3 0 1 1, translate3 $ vec3 0 0 0]
-
-      let rdata = RenderData
-            { swapInfo
-            , queues
-            , imgIndexPtr
-            , frameIndexRef
-            , renderFinishedSems
-            , nextSems
-            , frameFinishedEvent
-            , queueEvents
-            , frameOnQueueVars
-            -- , memories           = transObjMems
-            -- , memoryMutator      = \mem -> do
-            --     t <- updateTransObj (swapExtent swapInfo)
-            --     uboUpdate dev transObjSize mem t
-            -- , descrSetMutator    = updateDescrSet dev descrTextureInfos
-            , recCmdBuffer       = recordAll graphicsPipeline
-                                        renderPass pipelineLayout (swapExtent swapInfo)
-                                        loadEvents objs objTransformsRef
-            , getViewProjMatrix = viewProjMatrix (swapExtent swapInfo)
-            -- , frameDescrSets
-            , framebuffers
-            }
-
-      logInfo $ "Createad swapchain image views: " ++ show swapImgViews
-      logInfo $ "Createad renderpass: " ++ show renderPass
-      logInfo $ "Createad pipeline: " ++ show graphicsPipeline
-      logInfo $ "Createad framebuffers: " ++ show framebuffers
+      putMVar nextSems (sems <> nextAppSems)
 
       -- part of dumb fps counter
       frameCount :: IORef Int <- newIORef 0
       currentSec :: IORef Int <- newIORef 0
 
       shouldExit <- glfwMainLoop window $ do
-        objMatrix <- objMatrixOverTime
-        writeIORef objTransformsRef [objMatrix %* (translate3 $ vec3 0 1 1) , objMatrix]
-
+        let rdata = RenderData
+              { swapInfo
+              , queues
+              , imgIndexPtr
+              , frameIndexRef
+              , renderFinishedSems
+              , nextSems
+              , frameFinishedEvent
+              , queueEvents
+              , frameOnQueueVars
+              -- , memories           = transObjMems
+              -- , memoryMutator      = \mem -> do
+              --     t <- updateTransObj (swapExtent swapInfo)
+              --     uboUpdate dev transObjSize mem t
+              -- , descrSetMutator    = updateDescrSet dev descrTextureInfos
+              , recCmdBuffer       = appRecordFrame appState
+              -- , frameDescrSets
+              , framebuffers
+              }
         needRecreation <- drawFrame cap rdata `catchError` ( \err@(VulkanException ecode _) ->
           case ecode of
             Just VK_ERROR_OUT_OF_DATE_KHR -> do
@@ -290,7 +380,6 @@ runVulkanProgram = runProgram checkStatus $ do
             when (cur /= 0) $ print count
             writeIORef currentSec (floor seconds)
             writeIORef frameCount 0
-            -- exitFailure
           else do
             modifyIORef' frameCount $ \c -> c + 1
 
@@ -308,8 +397,12 @@ runVulkanProgram = runProgram checkStatus $ do
       -- after glfwMainLoop exits, we need to wait for the frame to finish before deallocating things
       if shouldExit
       then runVk $ vkDeviceWaitIdle dev
-      -- using Event here properly deals with multiple waiting threads, in contrast to using plain MVars
-      else liftIO $ sequence_ $ replicate 2 $ Event.wait frameFinishedEvent
+      -- Using Event here properly deals with multiple waiting threads, in
+      -- contrast to using plain MVars. The wait here is to make sure it's safe
+      -- to destroy the old swapchain (via oldSwapchainSlot). It doesn't affect
+      -- rendering, because a new thread has been already started for the new
+      -- swapchain via asyncRedo.
+      else liftIO $ sequence_ $ replicate maxFramesInFlight $ Event.wait frameFinishedEvent
       -- logInfo "Finished waiting after main loop termination before deallocating."
   return ()
 

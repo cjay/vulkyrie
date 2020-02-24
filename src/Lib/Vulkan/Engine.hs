@@ -16,5 +16,5 @@ data EngineCapability = EngineCapability
   , cmdQueue :: ManagedQueue
   , semPool  :: SemaphorePool
   , memPool  :: MemoryPool
+  , descriptorPool :: VkDescriptorPool
   }
-

@@ -136,7 +136,7 @@ getMaxUsableSampleCount pdev = do
       -- need to convert from "VkSampleCountBitmask FlagMask" to "VkSampleCountBitmask FlagBit"
       VkSampleCountBitmask rawFlags = highestCount
       result = VkSampleCountBitmask rawFlags
-  logInfo $ show limits
+  -- logInfo $ show limits
   return result
 
 
