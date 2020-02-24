@@ -23,6 +23,7 @@ flag dev
 library
     hs-source-dirs:     src
     exposed-modules:    Lib
+                        Lib.Engine.Main
                         Lib.Engine.Simple3D
                         Lib.GLFW
                         Lib.MonadIO.Chan
@@ -32,7 +33,7 @@ library
                         Lib.Program
                         Lib.Program.Foreign
                         Lib.Resource
-                        Lib.Tests
+                        -- Lib.Tests
                         Lib.Utils
                         Lib.Vulkan.Buffer
                         Lib.Vulkan.Command
