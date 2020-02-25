@@ -72,16 +72,6 @@ bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = locally $ do
     descrSetId descrSetCnt descrSetPtr dynOffCnt dynOffPtr
 
 
-viewProjMatrix :: VkExtent2D -> Program r Mat44f
-viewProjMatrix extent = do
-  let width = getField @"width" extent
-  let height = getField @"height" extent
-  let aspectRatio = fromIntegral width / fromIntegral height
-  let view = lookAt (vec3 0 0 (-1)) (vec3 2 2 2) (vec3 0 0 0)
-  let proj = perspective 0.1 20 (45/360*2*pi) aspectRatio
-  return $ view %* proj
-
-
 -- | Update push constants: transformation matrix
 pushTransform :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Program r ()
 pushTransform cmdBuf pipelineLayout df = do
@@ -129,12 +119,13 @@ data RenderContext
   }
 
 recordAll :: RenderContext
+          -> Mat44f
           -> [Object]
           -> VkCommandBuffer
           -> VkFramebuffer
           -> Program r ()
 recordAll
-    RenderContext{..} objects cmdBuf framebuffer = do
+    RenderContext{..} viewProjTransform objects cmdBuf framebuffer = do
 
   -- render pass
   let renderPassBeginInfo = createVk @VkRenderPassBeginInfo
@@ -172,7 +163,6 @@ recordAll
   --     -- first set, set count, sets, dyn offset count, dyn offsets
   --     frameSetId 1 frameDsPtr 0 VK_NULL
 
-  viewProjTransform <- viewProjMatrix extent
   -- objTransforms <- readIORef objTransformsRef
 
   forM_ objects $ \object ->

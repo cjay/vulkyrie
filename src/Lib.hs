@@ -1,14 +1,16 @@
-{-# LANGUAGE Strict     #-}
+{-# LANGUAGE Strict #-}
 module Lib
   ( runMyVulkanProgram
   ) where
 
 import           Control.Monad
+import qualified Graphics.UI.GLFW         as GLFW
 import           Graphics.Vulkan.Core_1_0
 import           Numeric.DataFrame
 
 import           Lib.Engine.Main
 import           Lib.Engine.Simple3D
+import           Lib.MonadIO.IORef
 import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Resource
@@ -55,6 +57,18 @@ objMatrixOverTime = do
   seconds <- getTime
   return $ rotation seconds
 
+
+-- | cam rotation using (yaw, pitch)
+viewProjMatrix :: VkExtent2D -> (Double, Double) -> Program r Mat44f
+viewProjMatrix extent (yaw, pitch) = do
+  let width = getField @"width" extent
+      height = getField @"height" extent
+      aspectRatio = fromIntegral width / fromIntegral height
+      camPos = vec3 0 0 (-4)
+      -- view = lookAt (vec3 0 0 (-1)) camPos (vec3 0 0 0)
+      view = translate3 camPos %* (rotateEuler (-realToFrac pitch) (realToFrac yaw) 0)
+      proj = perspective 0.1 20 (90/360*2*pi) aspectRatio
+  return $ view %* proj
 
 
 loadShaders :: EngineCapability -> Program r [VkPipelineShaderStageCreateInfo]
@@ -203,14 +217,36 @@ makeWorld MyAppState{ assets } = do
 
   if allDone then return objs else return []
 
+myAppNewWindow :: GLFW.Window -> Program r WindowState
+myAppNewWindow window = do
+  liftIO $ GLFW.setCursorInputMode window GLFW.CursorInputMode'Disabled
+  rawSupported <- liftIO $ GLFW.rawMouseMotionSupported
+  if rawSupported
+    then do
+      liftIO $ GLFW.setRawMouseMotion window True
+      logInfo "Raw mouse mode activated"
+    else logInfo $ "Now raw mouse support"
 
-myAppStart :: EngineCapability -> Program r MyAppState
-myAppStart cap@EngineCapability{ dev } = do
+  startPos <- liftIO $ GLFW.getCursorPos window
+  mousePos <- newMVar startPos
+  liftIO $ GLFW.setCursorPosCallback window $ Just $ \_ x y -> do
+    -- putStrLn $ "mouse(" <> show x <> "," <> show y <> ")"
+    _ <- swapMVar mousePos (x, y)
+    return ()
+  prevMousePos <- newEmptyMVar
+  prevFrameTime <- newEmptyMVar
+
+  return WindowState {..}
+
+myAppStart :: WindowState -> EngineCapability -> Program r MyAppState
+myAppStart winState cap@EngineCapability{ dev } = do
   shaderStages <- loadShaders cap
   (materialDSL, pipelineLayout) <- makePipelineLayouts dev
   -- TODO beware of automatic resource lifetimes when making assets dynamic
   assets <- loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
+  lookDir <- newMVar (0, 0)
+  inputMutex <- newMVar ()
   return $ MyAppState{..}
 
 myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
@@ -220,11 +256,55 @@ myAppNewSwapchain MyAppState{..} swapInfo = do
   putMVar renderContextVar renderContext
   return (framebuffers, nextSems)
 
+-- | for FPS controls: can only look further down if you look straight up
+clampPitch :: Double -> Double
+clampPitch a = min (max a (-pi)) pi
+
+normalizeYaw :: Double -> Double
+normalizeYaw a =
+  let (_::Int, na) = properFraction $ a / (2*pi)
+  in na * 2 * pi
+
 myAppRecordFrame :: MyAppState -> VkCommandBuffer -> VkFramebuffer -> Program r ()
 myAppRecordFrame appState@MyAppState{..} cmdBuf framebuffer = do
+  let WindowState{..} = winState
   objs <- makeWorld appState
   renderContext <- readMVar renderContextVar
-  recordAll renderContext objs cmdBuf framebuffer
+
+  takeMVar inputMutex
+
+  mayPrevTime <- tryTakeMVar prevFrameTime
+  t <- getTime
+  let dt = case mayPrevTime of
+        Nothing -> 0
+        Just pt -> t - pt
+  putMVar prevFrameTime t
+
+  (x, y) <- readMVar mousePos
+  prev <- tryTakeMVar prevMousePos
+  let (dx, dy) = case prev of
+        Just (px, py) -> (x-px, y-py)
+        Nothing       -> (0, 0)
+  putMVar prevMousePos (x, y)
+
+  let sens = 0.15
+      mult = sens * dt
+  (yaw, pitch) <- takeMVar lookDir
+  let newDir = (normalizeYaw (yaw + dx * mult), clampPitch (pitch + dy * mult))
+  putMVar lookDir newDir
+
+  putMVar inputMutex ()
+
+  viewProjTransform <- viewProjMatrix (extent renderContext) newDir
+  recordAll renderContext viewProjTransform objs cmdBuf framebuffer
+
+
+data WindowState
+  = WindowState
+  { mousePos      :: MVar (Double, Double)
+  , prevMousePos  :: MVar (Double, Double)
+  , prevFrameTime :: MVar Double
+  }
 
 data MyAppState
   = MyAppState
@@ -233,6 +313,9 @@ data MyAppState
   , cap              :: EngineCapability
   , assets           :: Assets
   , renderContextVar :: MVar RenderContext
+  , winState         :: WindowState
+  , lookDir          :: MVar (Double, Double)
+  , inputMutex       :: MVar ()
   }
 
 
@@ -241,6 +324,7 @@ runMyVulkanProgram = do
   let app = App
         { windowName = "vulkan-experiment"
         , windowSize = (800, 600)
+        , appNewWindow = myAppNewWindow
         , appStart = myAppStart
         , appNewSwapchain = myAppNewSwapchain
         , appRecordFrame = myAppRecordFrame

@@ -8,6 +8,7 @@ module Lib.Engine.Main
 
 import qualified Control.Concurrent.Event             as Event
 import           Control.Monad
+import qualified Graphics.UI.GLFW                     as GLFW
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 
@@ -28,11 +29,14 @@ import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Sync
 
 -- | s is the shared app state handle (usually containing constants/IORefs/MVars)
-data App s
+--   w is the window state handle
+data App s w
   = App
   { windowName      :: String
   , windowSize      :: (Int, Int)
-  , appStart        :: forall r. EngineCapability -> Program r s
+  , appNewWindow    :: forall r. GLFW.Window -> Program r w
+    -- ^ this runs once in the main thread, after GLFW initalization
+  , appStart        :: forall r. w -> EngineCapability -> Program r s
     -- ^ makes the shared app state handle
   , appNewSwapchain :: forall r a. s -> SwapchainInfo ->
                        Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
@@ -40,7 +44,7 @@ data App s
                        Program r ()
   }
 
-runVulkanProgram :: App s -> IO ()
+runVulkanProgram :: App s w -> IO ()
 runVulkanProgram App{ .. } = runProgram checkStatus $ do
   windowSizeChanged <- newIORef False
   let (windowWidth, windowHeight) = windowSize
@@ -48,6 +52,8 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
   vulkanInstance <- auto $ createGLFWVulkanInstance (windowName <> "-instance")
   vulkanSurface <- auto $ createSurface vulkanInstance window
   logInfo $ "Createad surface: " ++ show vulkanSurface
+
+  winState <- appNewWindow window
 
   glfwWaitEventsMeanwhile $ do
     (_, pdev) <- pickPhysicalDevice vulkanInstance (Just vulkanSurface)
@@ -69,7 +75,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     let cap = EngineCapability{ pdev, dev, cmdCap, cmdQueue=gfxQueue, semPool, memPool, descriptorPool }
 
     logInfo $ "Starting App.."
-    appState <- appStart cap
+    appState <- appStart winState cap
 
     frameIndexRef <- newIORef 0
     renderFinishedSems <- createFrameSemaphores dev
