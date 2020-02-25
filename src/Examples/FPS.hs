@@ -1,5 +1,5 @@
 {-# LANGUAGE Strict #-}
-module Lib
+module Examples.FPS
   ( runMyVulkanProgram
   ) where
 
@@ -10,7 +10,6 @@ import           Numeric.DataFrame
 
 import           Lib.Engine.Main
 import           Lib.Engine.Simple3D
-import           Lib.MonadIO.IORef
 import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Resource
