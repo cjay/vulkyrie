@@ -36,6 +36,8 @@ data App s w
   , windowSize      :: (Int, Int)
   , appNewWindow    :: forall r. GLFW.Window -> Program r w
     -- ^ this runs once in the main thread, after GLFW initalization
+  , appMainThreadHook :: w -> IO ()
+    -- ^ this runs between calls to GLFW.waitEventsTimeout in the main thread
   , appStart        :: forall r. w -> EngineCapability -> Program r s
     -- ^ makes the shared app state handle
   , appNewSwapchain :: forall r a. s -> SwapchainInfo ->
@@ -55,7 +57,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
 
   winState <- appNewWindow window
 
-  glfwWaitEventsMeanwhile $ do
+  glfwWaitEventsMeanwhile (appMainThreadHook winState) $ do
     (_, pdev) <- pickPhysicalDevice vulkanInstance (Just vulkanSurface)
     logInfo $ "Selected physical device: " ++ show pdev
 

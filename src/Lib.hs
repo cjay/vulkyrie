@@ -228,15 +228,22 @@ myAppNewWindow window = do
     else logInfo $ "Now raw mouse support"
 
   startPos <- liftIO $ GLFW.getCursorPos window
+  anchorMousePos <- newMVar startPos
   mousePos <- newMVar startPos
-  liftIO $ GLFW.setCursorPosCallback window $ Just $ \_ x y -> do
-    -- putStrLn $ "mouse(" <> show x <> "," <> show y <> ")"
-    _ <- swapMVar mousePos (x, y)
-    return ()
-  prevMousePos <- newEmptyMVar
-  prevFrameTime <- newEmptyMVar
+  -- liftIO $ GLFW.setCursorPosCallback window $ Just $ \_ x y -> do
+  --   -- putStrLn $ "mouse(" <> show x <> "," <> show y <> ")"
+  --   _ <- swapMVar mousePos (x, y)
+  --   return ()
 
   return WindowState {..}
+
+myAppMainThreadHook :: WindowState -> IO ()
+myAppMainThreadHook WindowState {..} = do
+  pos <- GLFW.getCursorPos window
+  _ <- tryTakeMVar mousePos
+  putMVar mousePos pos
+  -- putStrLn "."
+  return ()
 
 myAppStart :: WindowState -> EngineCapability -> Program r MyAppState
 myAppStart winState cap@EngineCapability{ dev } = do
@@ -245,7 +252,6 @@ myAppStart winState cap@EngineCapability{ dev } = do
   -- TODO beware of automatic resource lifetimes when making assets dynamic
   assets <- loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
-  lookDir <- newMVar (0, 0)
   inputMutex <- newMVar ()
   return $ MyAppState{..}
 
@@ -258,12 +264,10 @@ myAppNewSwapchain MyAppState{..} swapInfo = do
 
 -- | for FPS controls: can only look further down if you look straight up
 clampPitch :: Double -> Double
-clampPitch a = min (max a (-pi)) pi
+clampPitch a = min (max a (-1)) 1
 
 normalizeYaw :: Double -> Double
-normalizeYaw a =
-  let (_::Int, na) = properFraction $ a / (2*pi)
-  in na * 2 * pi
+normalizeYaw = snd . (properFraction :: Double -> (Int, Double))
 
 myAppRecordFrame :: MyAppState -> VkCommandBuffer -> VkFramebuffer -> Program r ()
 myAppRecordFrame appState@MyAppState{..} cmdBuf framebuffer = do
@@ -273,37 +277,32 @@ myAppRecordFrame appState@MyAppState{..} cmdBuf framebuffer = do
 
   takeMVar inputMutex
 
-  mayPrevTime <- tryTakeMVar prevFrameTime
-  t <- getTime
-  let dt = case mayPrevTime of
-        Nothing -> 0
-        Just pt -> t - pt
-  putMVar prevFrameTime t
-
+  -- _ <- takeMVar mousePos
+  liftIO $ GLFW.postEmptyEvent
   (x, y) <- readMVar mousePos
-  prev <- tryTakeMVar prevMousePos
-  let (dx, dy) = case prev of
-        Just (px, py) -> (x-px, y-py)
-        Nothing       -> (0, 0)
-  putMVar prevMousePos (x, y)
+  (ax, ay) <- takeMVar anchorMousePos
+  let (dx, dy) = (x-ax, y-ay)
 
-  let sens = 0.15
-      mult = sens * dt
-  (yaw, pitch) <- takeMVar lookDir
-  let newDir = (normalizeYaw (yaw + dx * mult), clampPitch (pitch + dy * mult))
-  putMVar lookDir newDir
+  let sens = 0.0015
+      normPitch = clampPitch (dy * sens)
+      lookDir = (normalizeYaw (dx * sens) * pi, normPitch * pi)
+      ay' = case normPitch of
+        1  -> y - 1 / sens
+        -1 -> y + 1 / sens
+        _  -> ay
+  putMVar anchorMousePos (ax, ay')
 
   putMVar inputMutex ()
 
-  viewProjTransform <- viewProjMatrix (extent renderContext) newDir
+  viewProjTransform <- viewProjMatrix (extent renderContext) lookDir
   recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 
 data WindowState
   = WindowState
-  { mousePos      :: MVar (Double, Double)
-  , prevMousePos  :: MVar (Double, Double)
-  , prevFrameTime :: MVar Double
+  { window         :: GLFW.Window
+  , mousePos       :: MVar (Double, Double)
+  , anchorMousePos :: MVar (Double, Double)
   }
 
 data MyAppState
@@ -314,7 +313,6 @@ data MyAppState
   , assets           :: Assets
   , renderContextVar :: MVar RenderContext
   , winState         :: WindowState
-  , lookDir          :: MVar (Double, Double)
   , inputMutex       :: MVar ()
   }
 
@@ -325,6 +323,7 @@ runMyVulkanProgram = do
         { windowName = "vulkan-experiment"
         , windowSize = (800, 600)
         , appNewWindow = myAppNewWindow
+        , appMainThreadHook = myAppMainThreadHook
         , appStart = myAppStart
         , appNewSwapchain = myAppNewSwapchain
         , appRecordFrame = myAppRecordFrame

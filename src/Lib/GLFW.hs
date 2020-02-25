@@ -73,8 +73,10 @@ glfwMainLoop w action = go
 --   Waits repeatedly with 1 second timeout to allow exceptions to be handled
 --   without events happening. If waiting without timeout, the waitEvents
 --   function would need to be marked interruptible in the GLFW binding.
-glfwWaitEventsMeanwhile :: Program' () -> Program r ()
-glfwWaitEventsMeanwhile action = occupyThreadAndFork (liftIO $ forever $ GLFW.waitEventsTimeout 1.0) action
+glfwWaitEventsMeanwhile :: IO () -> Program' () -> Program r ()
+glfwWaitEventsMeanwhile mainThreadHook action =
+  occupyThreadAndFork
+    (liftIO $ forever $ GLFW.waitEventsTimeout 1 >> mainThreadHook) action
 
 
 glfwWaitMinimized :: GLFW.Window -> Program r ()
