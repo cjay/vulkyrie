@@ -116,7 +116,7 @@ loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
   (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
     (createTextureInfo cap) texturePaths
 
-  let loadEvents = textureReadyEvents <> [vertexBufReady, indexBufReady]
+  loadEvents <- newMVar $ textureReadyEvents <> [vertexBufReady, indexBufReady]
 
   materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
 
@@ -127,7 +127,7 @@ loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
 
 data Assets
   = Assets
-  { loadEvents        :: [QueueEvent]
+  { loadEvents        :: MVar [QueueEvent]
   , materialDescrSets :: [VkDescriptorSet]
   , vertexBuffer      :: VkBuffer
   , indexBuffer       :: VkBuffer
@@ -195,16 +195,20 @@ makeWorld MyAppState{ assets } = do
           }
         ]
 
-  -- TODO should stop checking once all are loaded
-  loaded <- and <$> mapM isDone loadEvents
+  -- a bit simplistic. when hot loading assets, better filter the objects that depend on them
+  events <- takeMVar loadEvents
+  notDone <- filterM (fmap not . isDone) events
+  let allDone = null notDone
+  putMVar loadEvents notDone
 
-  if loaded then return objs else return []
+  if allDone then return objs else return []
 
 
 myAppStart :: EngineCapability -> Program r MyAppState
 myAppStart cap@EngineCapability{ dev } = do
   shaderStages <- loadShaders cap
   (materialDSL, pipelineLayout) <- makePipelineLayouts dev
+  -- TODO beware of automatic resource lifetimes when making assets dynamic
   assets <- loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
   return $ MyAppState{..}
@@ -245,7 +249,7 @@ runMyVulkanProgram = do
 
 
 {-
--- TODO not needed right now
+-- not needed right now
 updateDescrSet :: VkDevice
                -> [VkDescriptorImageInfo]
                -> VkDescriptorSet
