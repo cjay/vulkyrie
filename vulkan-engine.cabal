@@ -23,8 +23,10 @@ flag dev
 library
     hs-source-dirs:     src
     exposed-modules:    Examples.FPS
+                        Examples.Flat
                         Lib.Engine.Main
                         Lib.Engine.Simple3D
+                        Lib.Engine.Simple2D
                         Lib.GLFW
                         Lib.MonadIO.Chan
                         Lib.MonadIO.IORef

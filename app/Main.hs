@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Examples.FPS
+import Examples.Flat
 -- import Lib.Tests
 
 main :: IO ()

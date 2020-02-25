@@ -13,8 +13,8 @@ import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
-import           Graphics.Vulkan.Marshal.Create.DataFrame
-import           Numeric.DataFrame
+-- import           Graphics.Vulkan.Marshal.Create.DataFrame
+-- import           Numeric.DataFrame
 
 import           Lib.Program
 import           Lib.Program.Foreign
@@ -24,7 +24,7 @@ import           Lib.Vulkan.Presentation
 
 createGraphicsPipeline :: VkDevice
                        -> SwapchainInfo
-                       -> VkVertexInputBindingDescription
+                       -> [VkVertexInputBindingDescription]
                        -> [VkVertexInputAttributeDescription]
                        -> [VkPipelineShaderStageCreateInfo]
                        -> VkRenderPass
@@ -32,14 +32,13 @@ createGraphicsPipeline :: VkDevice
                        -> VkSampleCountFlagBits
                        -> Resource r VkPipeline
 createGraphicsPipeline
-    dev SwapchainInfo{ swapExtent } bindDesc attrDescs shaderDescs renderPass pipelineLayout msaaSamples =
+    dev SwapchainInfo{ swapExtent } bindDescs attrDescs shaderDescs renderPass pipelineLayout msaaSamples =
   let -- vertex input
       vertexInputInfo = createVk @VkPipelineVertexInputStateCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
         &* set @"pNext" VK_NULL
         &* set @"flags" VK_ZERO_FLAGS
-        &* set @"vertexBindingDescriptionCount" 1
-        &* setDFRef @"pVertexBindingDescriptions" (scalar bindDesc)
+        &* setListCountAndRef @"vertexBindingDescriptionCount" @"pVertexBindingDescriptions" bindDescs
         &* setListCountAndRef @"vertexAttributeDescriptionCount" @"pVertexAttributeDescriptions" attrDescs
 
       -- input assembly
