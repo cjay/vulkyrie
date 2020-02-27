@@ -77,16 +77,18 @@ data RenderData
     -- ^ signals completion of a frame to deallocators
   , frameOnQueueVars          :: [MVar ()]
     -- ^ one per frame-in-flight
+
   -- , memories                  :: [VkDeviceMemory]
-    -- ^ one per frame-in-flight
+  --   -- ^ one per frame-in-flight
   -- , memoryMutator             :: forall r. VkDeviceMemory -> Program r ()
-    -- ^ to execute on memories[*imgIndexPtr] before drawing
+  --   -- ^ to execute on memories[*imgIndexPtr] before drawing
   -- , descrSetMutator        :: forall r. VkDescriptorSet -> Program r ()
-    -- ^ update per-frame uniforms
+  --   -- ^ update per-frame uniforms
   , recCmdBuffer              :: forall r. VkCommandBuffer -> VkFramebuffer -> Program r ()
     -- ^ record cmdBuf
+
   -- , frameDescrSets            :: [VkDescriptorSet]
-    -- ^ one per frame-in-flight
+  --   -- ^ one per frame-in-flight
   , framebuffers              :: [VkFramebuffer]
     -- ^ one per swapchain image
   }
