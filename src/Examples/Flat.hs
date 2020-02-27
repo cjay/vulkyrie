@@ -3,13 +3,16 @@ module Examples.Flat
   ( runMyVulkanProgram
   ) where
 
+import           Control.Concurrent       (ThreadId, forkIO, modifyMVar_)
 import           Control.Monad
+import           Graphics.UI.GLFW         (Key, KeyState)
 import qualified Graphics.UI.GLFW         as GLFW
 import           Graphics.Vulkan.Core_1_0
 import           Numeric.DataFrame
 
 import           Lib.Engine.Main
 import           Lib.Engine.Simple2D
+import           Lib.MonadIO.Chan
 import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Resource
@@ -143,9 +146,8 @@ prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
 
 
 
-makeWorld :: MyAppState -> Program r [Object]
-makeWorld MyAppState{ assets } = do
-  let Assets{..} = assets
+makeWorld :: GameState -> Assets -> Program r ((Double, Double), [Object])
+makeWorld GameState {..} Assets {..} = do
 
   let objs =
         [ Object
@@ -164,10 +166,35 @@ makeWorld MyAppState{ assets } = do
   let allDone = null notDone
   putMVar loadEvents notDone
 
-  if allDone then return objs else return []
+  return (camPos, if allDone then objs else [])
+
+gameStep :: KeyEvent -> GameState -> IO GameState
+gameStep keyEvent GameState {..} = do
+  let camPos' =
+        case keyEvent of
+          (KeyEvent GLFW.Key'Left GLFW.KeyState'Released) -> (fst camPos - 1, snd camPos)
+          (KeyEvent GLFW.Key'Right GLFW.KeyState'Released) -> (fst camPos + 1, snd camPos)
+          (KeyEvent GLFW.Key'Up GLFW.KeyState'Released) -> (fst camPos, snd camPos - 1)
+          (KeyEvent GLFW.Key'Down GLFW.KeyState'Released) -> (fst camPos, snd camPos + 1)
+          _ -> camPos
+  return $ GameState camPos'
+
+startGameThread :: MVar GameState -> Chan KeyEvent -> IO ThreadId
+startGameThread gsVar keyEventChan = do
+  forkIO $ forever $ do
+    ke <- readChan keyEventChan
+    modifyMVar_ gsVar (gameStep ke)
+  -- possible extra thread for animations etc might look like this:
+  -- forkIO $ forever $ do
+  --   wait nextTick
+  --   modifyMVar_ gsVar (gameTick ke)
 
 myAppNewWindow :: GLFW.Window -> Program r WindowState
 myAppNewWindow window = do
+  keyEvents <- newChan
+  let keyCallback _ key _ keyState _ = do
+        writeChan keyEvents KeyEvent{..}
+  liftIO $ GLFW.setKeyCallback window (Just keyCallback)
   return WindowState {..}
 
 myAppMainThreadHook :: WindowState -> IO ()
@@ -175,12 +202,14 @@ myAppMainThreadHook WindowState {..} = do
   return ()
 
 myAppStart :: WindowState -> EngineCapability -> Program r MyAppState
-myAppStart winState cap@EngineCapability{ dev } = do
+myAppStart winState@WindowState{ keyEvents } cap@EngineCapability{ dev } = do
   shaderStages <- loadShaders cap
   (materialDSL, pipelineLayout) <- makePipelineLayouts dev
   -- TODO beware of automatic resource lifetimes when making assets dynamic
   assets <- loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
+  gameState <- newMVar initialGameState
+  _ <- liftIO $ startGameThread gameState keyEvents
   return $ MyAppState{..}
 
 myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
@@ -191,19 +220,36 @@ myAppNewSwapchain MyAppState{..} swapInfo = do
   return (framebuffers, nextSems)
 
 myAppRecordFrame :: MyAppState -> VkCommandBuffer -> VkFramebuffer -> Program r ()
-myAppRecordFrame appState@MyAppState{..} cmdBuf framebuffer = do
+myAppRecordFrame MyAppState{..} cmdBuf framebuffer = do
   let WindowState{..} = winState
-  objs <- makeWorld appState
-  renderContext <- readMVar renderContextVar
-  let camPos = (1, 1)
 
+  gs <- readMVar gameState
+  (camPos, objs) <- makeWorld gs assets
+
+  renderContext <- readMVar renderContextVar
   viewProjTransform <- viewProjMatrix (extent renderContext) camPos
   recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
+data GameState
+  = GameState
+  { camPos :: (Double, Double)
+  }
+
+initialGameState :: GameState
+initialGameState = GameState
+  { camPos = (0, 0)
+  }
+
+data KeyEvent
+  = KeyEvent
+  { key      :: Key
+  , keyState :: KeyState
+  }
 
 data WindowState
   = WindowState
-  { window         :: GLFW.Window
+  { window    :: GLFW.Window
+  , keyEvents :: Chan KeyEvent
   }
 
 data MyAppState
@@ -214,6 +260,7 @@ data MyAppState
   , assets           :: Assets
   , renderContextVar :: MVar RenderContext
   , winState         :: WindowState
+  , gameState        :: MVar GameState
   }
 
 
