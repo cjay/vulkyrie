@@ -23,16 +23,17 @@ import           Lib.Vulkan.Presentation
 
 
 createGraphicsPipeline :: VkDevice
-                       -> SwapchainInfo
+                       -> VkExtent2D
                        -> [VkVertexInputBindingDescription]
                        -> [VkVertexInputAttributeDescription]
                        -> [VkPipelineShaderStageCreateInfo]
                        -> VkRenderPass
                        -> VkPipelineLayout
                        -> VkSampleCountFlagBits
+                       -> Bool
                        -> Resource r VkPipeline
 createGraphicsPipeline
-    dev SwapchainInfo{ swapExtent } bindDescs attrDescs shaderDescs renderPass pipelineLayout msaaSamples =
+    dev swapExtent bindDescs attrDescs shaderDescs renderPass pipelineLayout msaaSamples enableAlpha =
   let -- vertex input
       vertexInputInfo = createVk @VkPipelineVertexInputStateCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
@@ -100,17 +101,14 @@ createGraphicsPipeline
         &* set @"alphaToCoverageEnable" VK_FALSE -- Optional
         &* set @"alphaToOneEnable" VK_FALSE -- Optional
 
-      -- Depth and stencil testing
-      -- we will pass null pointer in a corresponding place
-
-      -- color blending
+      -- one of these for each color attachment
       colorBlendAttachment = createVk @VkPipelineColorBlendAttachmentState
         $  set @"colorWriteMask"
             (   VK_COLOR_COMPONENT_R_BIT .|. VK_COLOR_COMPONENT_G_BIT
             .|. VK_COLOR_COMPONENT_B_BIT .|. VK_COLOR_COMPONENT_A_BIT )
-        &* set @"blendEnable" VK_FALSE
-        &* set @"srcColorBlendFactor" VK_BLEND_FACTOR_ONE -- Optional
-        &* set @"dstColorBlendFactor" VK_BLEND_FACTOR_ZERO -- Optional
+        &* set @"blendEnable" (if enableAlpha then VK_TRUE else VK_FALSE)
+        &* set @"srcColorBlendFactor" VK_BLEND_FACTOR_SRC_ALPHA -- Optional
+        &* set @"dstColorBlendFactor" VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA -- Optional
         &* set @"colorBlendOp" VK_BLEND_OP_ADD -- Optional
         &* set @"srcAlphaBlendFactor" VK_BLEND_FACTOR_ONE -- Optional
         &* set @"dstAlphaBlendFactor" VK_BLEND_FACTOR_ZERO -- Optional
@@ -133,8 +131,8 @@ createGraphicsPipeline
         $  set @"sType" VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
         &* set @"pNext" VK_NULL
         &* set @"flags" VK_ZERO_FLAGS
-        &* set @"depthTestEnable" VK_TRUE
-        &* set @"depthWriteEnable" VK_TRUE
+        &* set @"depthTestEnable" (if enableAlpha then VK_FALSE else VK_TRUE)
+        &* set @"depthWriteEnable" (if enableAlpha then VK_FALSE else VK_TRUE)
         &* set @"depthCompareOp" VK_COMPARE_OP_LESS
         &* set @"depthBoundsTestEnable" VK_FALSE
         &* set @"minDepthBounds" 0.0

@@ -16,6 +16,7 @@ import           Lib.MonadIO.Chan
 import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Resource
+import           Lib.Utils                (orthogonalVk, scale)
 import           Lib.Vulkan.Descriptor
 import           Lib.Vulkan.Device
 import           Lib.Vulkan.Drawing
@@ -28,20 +29,18 @@ import           Lib.Vulkan.Shader
 -- import           Lib.Vulkan.UniformBufferObject
 
 
+
+
 -- | cam pos using (x, y), ortho projection from z -10 to +10 excluding boundaries.
 viewProjMatrix :: VkExtent2D -> (Double, Double) -> Program r Mat44f
 viewProjMatrix extent (x, y) = do
-  let width = fromIntegral $ getField @"width" extent
-      height = fromIntegral $ getField @"height" extent
-      camPos = vec3 (realToFrac x) (realToFrac y) 10
+  let width :: Float = fromIntegral $ getField @"width" extent
+      height :: Float = fromIntegral $ getField @"height" extent
+      camPos = vec3 (realToFrac x) (realToFrac y) 0
       view = translate3 (- camPos)
       camHeight = 5
-      proj = orthogonal 0 20 (width/height * camHeight) camHeight
+      proj = orthogonalVk 0.1 10 (width/height * camHeight) camHeight
   return $ view %* proj
-
-
-scale :: Float -> Float -> Float -> Mat44f
-scale sx sy sz = DF4 (DF4 (S sx) (S 0.0) (S 0.0) (S 0.0)) (DF4 (S 0.0) (S sy) (S 0.0) (S 0.0)) (DF4 (S 0.0) (S 0.0) (S sz) (S 0.0)) (DF4 (S 0.0) (S 0.0) (S 0.0) (S 1.0))
 
 
 loadShaders :: EngineCapability -> Program r [VkPipelineShaderStageCreateInfo]
@@ -91,7 +90,7 @@ makePipelineLayouts dev = do
 
 loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Program r Assets
 loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
-  let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
+  let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg", "sprite.png"]
   (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
     (createTextureInfo cap) texturePaths
 
@@ -117,32 +116,34 @@ prepareRender :: EngineCapability
               -> VkPipelineLayout
               -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
 prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
+  let SwapchainInfo { swapExtent, swapImgFormat } = swapInfo
   msaaSamples <- getMaxUsableSampleCount pdev
   depthFormat <- findDepthFormat pdev
 
   swapImgViews <- auto $
-    mapM (\image -> createImageView dev image (swapImgFormat swapInfo) VK_IMAGE_ASPECT_COLOR_BIT 1)
+    mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1)
          (swapImgs swapInfo)
   renderPass <- auto $ createRenderPass dev swapInfo depthFormat msaaSamples
   graphicsPipeline
-    <- auto $ createGraphicsPipeline dev swapInfo
+    <- auto $ createGraphicsPipeline dev swapExtent
                               [] []
                               shaderStages
                               renderPass
                               pipelineLayout
                               msaaSamples
+                              True
 
   (colorAttSem, colorAttImgView) <- auto $ createColorAttImgView cap
-                      (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
+                                    swapImgFormat swapExtent msaaSamples
   (depthAttSem, depthAttImgView) <- auto $ createDepthAttImgView cap
-                      (swapExtent swapInfo) msaaSamples
+                                    swapExtent msaaSamples
   let nextSems = [(colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
                  , (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
                  ]
   framebuffers
     <- auto $ createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
 
-  return (framebuffers, nextSems, RenderContext graphicsPipeline renderPass pipelineLayout (swapExtent swapInfo))
+  return (framebuffers, nextSems, RenderContext graphicsPipeline renderPass pipelineLayout swapExtent)
 
 
 
@@ -152,11 +153,15 @@ makeWorld GameState {..} Assets {..} = do
   let objs =
         [ Object
           { materialBindInfo = DescrBindInfo (materialDescrSets !! 0) []
-          , modelMatrix = (scale 2 2 1) %* (translate3 $ vec3 0 0 0)
+          , modelMatrix = (scale 2 2 1) %* (translate3 $ vec3 0 (0) (1))
           }
         , Object
           { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) []
-          , modelMatrix = translate3 $ vec3 2 0 0
+          , modelMatrix = translate3 $ vec3 (0.5) 0 (1)
+          }
+        , Object
+          { materialBindInfo = DescrBindInfo (materialDescrSets !! 2) []
+          , modelMatrix = (scale 2 2 1) %* (translate3 $ vec3 (-1) (-1) 1)
           }
         ]
 

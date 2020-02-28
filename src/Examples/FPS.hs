@@ -13,6 +13,7 @@ import           Lib.Engine.Simple3D
 import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Resource
+import           Lib.Utils                (perspectiveVk, scale)
 import           Lib.Vulkan.Descriptor
 import           Lib.Vulkan.Device
 import           Lib.Vulkan.Drawing
@@ -63,10 +64,10 @@ viewProjMatrix extent (yaw, pitch) = do
   let width = getField @"width" extent
       height = getField @"height" extent
       aspectRatio = fromIntegral width / fromIntegral height
-      camPos = vec3 0 0 (-4)
+      camPos = vec3 0 0 (-3)
       -- view = lookAt (vec3 0 0 (-1)) camPos (vec3 0 0 0)
-      view = translate3 camPos %* (rotateEuler (-realToFrac pitch) (realToFrac yaw) 0)
-      proj = perspective 0.1 20 (90/360*2*pi) aspectRatio
+      view = translate3 (- camPos) %* (rotateEuler (realToFrac pitch) (-realToFrac yaw) 0)
+      proj = perspectiveVk 0.1 200 (90/360*2*pi) aspectRatio
   return $ view %* proj
 
 
@@ -154,32 +155,34 @@ prepareRender :: EngineCapability
               -> VkPipelineLayout
               -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
 prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
+  let SwapchainInfo { swapExtent, swapImgFormat } = swapInfo
   msaaSamples <- getMaxUsableSampleCount pdev
   depthFormat <- findDepthFormat pdev
 
   swapImgViews <- auto $
-    mapM (\image -> createImageView dev image (swapImgFormat swapInfo) VK_IMAGE_ASPECT_COLOR_BIT 1)
+    mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1)
          (swapImgs swapInfo)
   renderPass <- auto $ createRenderPass dev swapInfo depthFormat msaaSamples
   graphicsPipeline
-    <- auto $ createGraphicsPipeline dev swapInfo
+    <- auto $ createGraphicsPipeline dev swapExtent
                               [vertIBD] vertIADs
                               shaderStages
                               renderPass
                               pipelineLayout
                               msaaSamples
+                              False
 
   (colorAttSem, colorAttImgView) <- auto $ createColorAttImgView cap
-                      (swapImgFormat swapInfo) (swapExtent swapInfo) msaaSamples
+                                    swapImgFormat swapExtent msaaSamples
   (depthAttSem, depthAttImgView) <- auto $ createDepthAttImgView cap
-                      (swapExtent swapInfo) msaaSamples
+                                    swapExtent msaaSamples
   let nextSems = [(colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
                  , (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
                  ]
   framebuffers
     <- auto $ createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
 
-  return (framebuffers, nextSems, RenderContext graphicsPipeline renderPass pipelineLayout (swapExtent swapInfo))
+  return (framebuffers, nextSems, RenderContext graphicsPipeline renderPass pipelineLayout swapExtent)
 
 
 
@@ -205,6 +208,39 @@ makeWorld MyAppState{ assets } = do
           , firstIndex = 0
           , indexCount
           , modelMatrix = objMatrix
+          }
+        -- the room:
+        , Object
+          { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) []
+          , vertexBufferLoc = BufferLoc vertexBuffer 0
+          , indexBufferLoc = BufferLoc indexBuffer 0
+          , firstIndex = 0
+          , indexCount
+          , modelMatrix = rotateX (-pi/2) %* scale 100 100 100 %* translate3 (vec3 0 25 0)
+          }
+        , Object
+          { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) []
+          , vertexBufferLoc = BufferLoc vertexBuffer 0
+          , indexBufferLoc = BufferLoc indexBuffer 0
+          , firstIndex = 0
+          , indexCount
+          , modelMatrix = rotateX (pi/2) %* scale 100 100 100 %* translate3 (vec3 0 (-25) 0)
+          }
+        , Object
+          { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) []
+          , vertexBufferLoc = BufferLoc vertexBuffer 0
+          , indexBufferLoc = BufferLoc indexBuffer 0
+          , firstIndex = 0
+          , indexCount
+          , modelMatrix = rotateY (pi/2) %* scale 100 100 100 %* translate3 (vec3 25 0 0)
+          }
+        , Object
+          { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) []
+          , vertexBufferLoc = BufferLoc vertexBuffer 0
+          , indexBufferLoc = BufferLoc indexBuffer 0
+          , firstIndex = 0
+          , indexCount
+          , modelMatrix = rotateY (-pi/2) %* scale 100 100 100 %* translate3 (vec3 (-25) 0 0)
           }
         ]
 
@@ -263,10 +299,7 @@ myAppNewSwapchain MyAppState{..} swapInfo = do
 
 -- | for FPS controls: can only look further down if you look straight up
 clampPitch :: Double -> Double
-clampPitch a = min (max a (-1)) 1
-
-normalizeYaw :: Double -> Double
-normalizeYaw = snd . (properFraction :: Double -> (Int, Double))
+clampPitch a = min (max a (-0.5)) 0.5
 
 myAppRecordFrame :: MyAppState -> VkCommandBuffer -> VkFramebuffer -> Program r ()
 myAppRecordFrame appState@MyAppState{..} cmdBuf framebuffer = do
@@ -282,13 +315,11 @@ myAppRecordFrame appState@MyAppState{..} cmdBuf framebuffer = do
   (ax, ay) <- takeMVar anchorMousePos
   let (dx, dy) = (x-ax, y-ay)
 
-  let sens = 0.0015
-      normPitch = clampPitch (dy * sens)
-      lookDir = (normalizeYaw (dx * sens) * pi, normPitch * pi)
-      ay' = case normPitch of
-        1  -> y - 1 / sens
-        -1 -> y + 1 / sens
-        _  -> ay
+  let sens = 0.0015 -- half revolutions per mouse count
+      rawPitch = dy * sens
+      normPitch = clampPitch rawPitch
+      lookDir = (dx * sens * pi, normPitch * pi)
+      ay' = ay + (rawPitch - normPitch) / sens
   putMVar anchorMousePos (ax, ay')
 
   putMVar inputMutex ()
