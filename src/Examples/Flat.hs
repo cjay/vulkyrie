@@ -31,7 +31,7 @@ import           Lib.Vulkan.Shader
 
 
 
--- | cam pos using (x, y), ortho projection from z -10 to +10 excluding boundaries.
+-- | cam pos using (x, y), ortho projection from z 0.1 to 10 excluding boundaries.
 viewProjMatrix :: VkExtent2D -> (Double, Double) -> Program r Mat44f
 viewProjMatrix extent (x, y) = do
   let width :: Float = fromIntegral $ getField @"width" extent
@@ -92,7 +92,7 @@ loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Program r Assets
 loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
   let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg", "sprite.png"]
   (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
-    (createTextureInfo cap) texturePaths
+    (createTextureInfo cap True) texturePaths
 
   loadEvents <- newMVar $ textureReadyEvents
 

@@ -35,11 +35,12 @@ import           Lib.Vulkan.Sync
 
 
 createTextureInfo :: EngineCapability
+                  -> Bool
                   -> FilePath
                   -> Resource r (QueueEvent, VkDescriptorImageInfo)
-createTextureInfo cap@EngineCapability{..} path = do
+createTextureInfo cap@EngineCapability{..} magPixelated path = do
     (finishEvent, textureView, mipLevels) <- createTextureImageView cap path
-    textureSampler <- createTextureSampler dev mipLevels
+    textureSampler <- createTextureSampler dev mipLevels magPixelated
     let info = textureImageInfo textureView textureSampler
     return (finishEvent, info)
 
@@ -225,12 +226,13 @@ generateMipmaps pdev image format width height mipLevels cmdBuf = do
 
 createTextureSampler :: VkDevice
                      -> Word32
+                     -> Bool
                      -> Resource r VkSampler
-createTextureSampler dev mipLevels =
+createTextureSampler dev mipLevels magPixelated =
   let samplerCreateInfo = createVk @VkSamplerCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO
         &* set @"pNext" VK_NULL_HANDLE
-        &* set @"magFilter" VK_FILTER_LINEAR
+        &* set @"magFilter" (if magPixelated then VK_FILTER_NEAREST else VK_FILTER_LINEAR)
         &* set @"minFilter" VK_FILTER_LINEAR
         &* set @"addressModeU" VK_SAMPLER_ADDRESS_MODE_REPEAT
         &* set @"addressModeV" VK_SAMPLER_ADDRESS_MODE_REPEAT
