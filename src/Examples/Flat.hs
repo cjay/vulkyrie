@@ -3,13 +3,13 @@ module Examples.Flat
   ( runMyVulkanProgram
   ) where
 
-import           Control.Concurrent       (ThreadId, forkIO, modifyMVar_)
+import           Control.Concurrent       (forkIO)
 import           Control.Monad
-import           Graphics.UI.GLFW         (Key, KeyState)
 import qualified Graphics.UI.GLFW         as GLFW
 import           Graphics.Vulkan.Core_1_0
 import           Numeric.DataFrame
 
+import           Examples.Flat.Game
 import           Lib.Engine.Main
 import           Lib.Engine.Simple2D
 import           Lib.MonadIO.Chan
@@ -32,11 +32,11 @@ import           Lib.Vulkan.Shader
 
 
 -- | cam pos using (x, y), ortho projection from z 0.1 to 10 excluding boundaries.
-viewProjMatrix :: VkExtent2D -> (Double, Double) -> Program r Mat44f
-viewProjMatrix extent (x, y) = do
+viewProjMatrix :: VkExtent2D -> Vec2f -> Program r Mat44f
+viewProjMatrix extent (Vec2 x y) = do
   let width :: Float = fromIntegral $ getField @"width" extent
       height :: Float = fromIntegral $ getField @"height" extent
-      camPos = vec3 (realToFrac x) (realToFrac y) 0
+      camPos = Vec3 x y 0
       view = translate3 (- camPos)
       camHeight = 5
       proj = orthogonalVk 0.1 10 (width/height * camHeight) camHeight
@@ -147,23 +147,15 @@ prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
 
 
 
-makeWorld :: GameState -> Assets -> Program r ((Double, Double), [Object])
+makeWorld :: GameState -> Assets -> Program r (Vec2f, [Object])
 makeWorld GameState {..} Assets {..} = do
 
-  let objs =
-        [ Object
-          { materialBindInfo = DescrBindInfo (materialDescrSets !! 0) []
-          , modelMatrix = (scale 2 2 1) %* (translate3 $ vec3 0 (0) (1))
-          }
-        , Object
+  let objs = flip map walls $
+        \(Vec2 x y) ->
+          Object
           { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) []
-          , modelMatrix = translate3 $ vec3 (0.5) 0 (1)
+          , modelMatrix = (scale 1 1 1) %* (translate3 $ vec3 (realToFrac x) (realToFrac y) (1))
           }
-        , Object
-          { materialBindInfo = DescrBindInfo (materialDescrSets !! 2) []
-          , modelMatrix = (scale 2 2 1) %* (translate3 $ vec3 (-1) (-1) 1)
-          }
-        ]
 
   -- a bit simplistic. when hot loading assets, better filter the objects that depend on them
   events <- takeMVar loadEvents
@@ -173,32 +165,11 @@ makeWorld GameState {..} Assets {..} = do
 
   return (camPos, if allDone then objs else [])
 
-gameStep :: KeyEvent -> GameState -> IO GameState
-gameStep keyEvent GameState {..} = do
-  let camPos' =
-        case keyEvent of
-          (KeyEvent GLFW.Key'Left GLFW.KeyState'Released) -> (fst camPos - 1, snd camPos)
-          (KeyEvent GLFW.Key'Right GLFW.KeyState'Released) -> (fst camPos + 1, snd camPos)
-          (KeyEvent GLFW.Key'Up GLFW.KeyState'Released) -> (fst camPos, snd camPos - 1)
-          (KeyEvent GLFW.Key'Down GLFW.KeyState'Released) -> (fst camPos, snd camPos + 1)
-          _ -> camPos
-  return $ GameState camPos'
-
-startGameThread :: MVar GameState -> Chan KeyEvent -> IO ThreadId
-startGameThread gsVar keyEventChan = do
-  forkIO $ forever $ do
-    ke <- readChan keyEventChan
-    modifyMVar_ gsVar (gameStep ke)
-  -- possible extra thread for animations etc might look like this:
-  -- forkIO $ forever $ do
-  --   wait nextTick
-  --   modifyMVar_ gsVar (gameTick ke)
-
 myAppNewWindow :: GLFW.Window -> Program r WindowState
 myAppNewWindow window = do
   keyEvents <- newChan
   let keyCallback _ key _ keyState _ = do
-        writeChan keyEvents KeyEvent{..}
+        writeChan keyEvents $ KeyEvent key keyState
   liftIO $ GLFW.setKeyCallback window (Just keyCallback)
   return WindowState {..}
 
@@ -214,7 +185,7 @@ myAppStart winState@WindowState{ keyEvents } cap@EngineCapability{ dev } = do
   assets <- loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
   gameState <- newMVar initialGameState
-  _ <- liftIO $ startGameThread gameState keyEvents
+  _ <- liftIO $ forkIO $ runGame gameState keyEvents
   return $ MyAppState{..}
 
 myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
@@ -235,26 +206,10 @@ myAppRecordFrame MyAppState{..} cmdBuf framebuffer = do
   viewProjTransform <- viewProjMatrix (extent renderContext) camPos
   recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
-data GameState
-  = GameState
-  { camPos :: (Double, Double)
-  }
-
-initialGameState :: GameState
-initialGameState = GameState
-  { camPos = (0, 0)
-  }
-
-data KeyEvent
-  = KeyEvent
-  { key      :: Key
-  , keyState :: KeyState
-  }
-
 data WindowState
   = WindowState
   { window    :: GLFW.Window
-  , keyEvents :: Chan KeyEvent
+  , keyEvents :: Chan Event
   }
 
 data MyAppState
