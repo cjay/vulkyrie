@@ -20,7 +20,6 @@ import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_surface
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
-import           Lib.Vulkan.Instance
 
 import           Lib.Program
 import           Lib.Program.Foreign
@@ -192,8 +191,7 @@ createGraphicsDevice :: VkPhysicalDevice
                      -> VkSurfaceKHR
                      -> Program r (VkDevice, DevQueues)
 createGraphicsDevice pdev surf
-  | layers <- defaultLayers
-  , extensions <- [VK_KHR_SWAPCHAIN_EXTENSION_NAME] = do
+  | extensions <- [VK_KHR_SWAPCHAIN_EXTENSION_NAME] = do
   -- check physical device extensions
 
   -- find an appropriate queue family
@@ -222,8 +220,8 @@ createGraphicsDevice pdev surf
         &* set @"flags" VK_ZERO_FLAGS
         &* setListRef @"pQueueCreateInfos" (Map.elems qcInfoMap)
         &* set @"queueCreateInfoCount" (fromIntegral $ Map.size qcInfoMap)
-        &* set @"enabledLayerCount" (fromIntegral $ length layers)
-        &* setStrListRef @"ppEnabledLayerNames" layers
+        &* set @"enabledLayerCount" 0 -- deprecated
+        &* setStrListRef @"ppEnabledLayerNames" [] -- deprecated
         &* set @"enabledExtensionCount" (fromIntegral $ length extensions)
         &* setListRef @"ppEnabledExtensionNames" extensions
         &* setVkRef @"pEnabledFeatures" pdevFeatures

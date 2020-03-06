@@ -28,6 +28,7 @@ library
                         Lib.Engine.Main
                         Lib.Engine.Simple3D
                         Lib.Engine.Simple2D
+                        Lib.Engine.Config
                         Lib.GLFW
                         Lib.MonadIO.Chan
                         Lib.MonadIO.IORef

@@ -8,6 +8,7 @@ import qualified Graphics.UI.GLFW         as GLFW
 import           Graphics.Vulkan.Core_1_0
 import           Numeric.DataFrame
 
+import           Lib.Engine.Config
 import           Lib.Engine.Main
 import           Lib.Engine.Simple3D
 import           Lib.MonadIO.MVar
@@ -352,6 +353,8 @@ runMyVulkanProgram = do
   let app = App
         { windowName = "vulkan-experiment"
         , windowSize = (800, 600)
+        , flags = [Validation]
+        , syncMode = VSync
         , appNewWindow = myAppNewWindow
         , appMainThreadHook = myAppMainThreadHook
         , appStart = myAppStart

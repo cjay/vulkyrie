@@ -6,7 +6,6 @@ module Lib.Vulkan.Presentation
   , createSwapchainSlot
   ) where
 
-import           Data.Maybe                           (fromMaybe)
 import           Data.Semigroup
 import qualified Graphics.UI.GLFW                     as GLFW
 import           Graphics.Vulkan
@@ -15,6 +14,7 @@ import           Graphics.Vulkan.Ext.VK_KHR_surface
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
 
+import           Lib.Engine.Config
 import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Program.Foreign
@@ -34,8 +34,7 @@ chooseSwapSurfaceFormat :: SwapchainSupportDetails
 chooseSwapSurfaceFormat SwapchainSupportDetails {..}
     = maybe (throwVkMsg "No available surface formats!")
             (pure . argVal . getMin)
-    . getOption
-    $ foldMap (Option . Just . Min . fmtCost) formats
+    $ foldMap (Just . Min . fmtCost) formats
   where
     argVal (Arg _ b) = b
     bestFmt :: VkSurfaceFormatKHR
@@ -49,22 +48,15 @@ chooseSwapSurfaceFormat SwapchainSupportDetails {..}
       (_, _) -> Arg 2 f
 
 
-chooseSwapPresentMode :: SwapchainSupportDetails -> VkPresentModeKHR
-chooseSwapPresentMode SwapchainSupportDetails {..}
-    = argVal . getMin
-    . fromMaybe (Min $ Arg 0 VK_PRESENT_MODE_FIFO_KHR)
-                -- VK_PRESENT_MODE_FIFO_KHR is guaranteed to be available
-    . getOption
-    $ foldMap (Option . Just . pmCost) presentModes
-  where
-    argVal (Arg _ b) = b
-    -- For VSYNC make sure that FIFO has less cost than IMMEDIATE.
-    -- Sadly MAILBOX is not available with MoltenVK
-    pmCost :: VkPresentModeKHR -> ArgMin Int VkPresentModeKHR
-    pmCost VK_PRESENT_MODE_MAILBOX_KHR = Min $ Arg 0 VK_PRESENT_MODE_MAILBOX_KHR
-    pmCost VK_PRESENT_MODE_IMMEDIATE_KHR = Min $ Arg 1 VK_PRESENT_MODE_IMMEDIATE_KHR
-    pmCost VK_PRESENT_MODE_FIFO_KHR = Min $ Arg 2 VK_PRESENT_MODE_FIFO_KHR
-    pmCost pm = Min $ Arg 3 pm
+chooseSwapPresentMode :: SwapchainSupportDetails -> SyncMode -> VkPresentModeKHR
+chooseSwapPresentMode SwapchainSupportDetails { presentModes } syncMode
+  = let prio = case syncMode of
+          -- Only the VK_PRESENT_MODE_FIFO_KHR mode is guaranteed to be available
+          VSyncTriple -> [VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR]
+          VSync -> [VK_PRESENT_MODE_FIFO_KHR]
+          NoSync -> [VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_FIFO_KHR]
+    in head [x | x <- prio, x `elem` presentModes]
+  -- TODO if VSyncTriple and MAILBOX is not available, implement DIY triple buffering
 
 
 chooseSwapExtent :: SwapchainSupportDetails -> VkExtent2D
@@ -101,16 +93,17 @@ createSwapchain :: VkDevice
                 -> SwapchainSupportDetails
                 -> DevQueues
                 -> VkSurfaceKHR
+                -> SyncMode
                 -> MVar VkSwapchainKHR
                 -> Maybe (MVar VkSwapchainKHR)
                 -> Program r SwapchainInfo
-createSwapchain dev scsd queues surf slot mayOldSlot = do
+createSwapchain dev scsd queues surf syncMode slot mayOldSlot = do
   mayOldSwapchain <- tryTakeMVar slot
   sequence_ $ putMVar <$> mayOldSlot <*> mayOldSwapchain
 
   -- TODO not necessary every time I think
   surfFmt <- chooseSwapSurfaceFormat scsd
-  let spMode = chooseSwapPresentMode scsd
+  let spMode = chooseSwapPresentMode scsd syncMode
       sExtent = chooseSwapExtent scsd
   logInfo $ "available present modes " ++ show (presentModes scsd)
   logInfo $ "using present mode " ++ show spMode

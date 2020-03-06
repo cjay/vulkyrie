@@ -64,5 +64,6 @@ destroyVulkanInstance vkInstance
 
 defaultLayers :: [String]
 defaultLayers
-  = ["VK_LAYER_LUNARG_standard_validation" | isDev]
+  = []
+  -- = ["VK_LAYER_LUNARG_standard_validation" | isDev]
    --  ++ ["VK_LAYER_LUNARG_monitor" | isDev] -- dosen't exist on macOS

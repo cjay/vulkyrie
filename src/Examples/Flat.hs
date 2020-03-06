@@ -10,6 +10,7 @@ import           Graphics.Vulkan.Core_1_0
 import           Numeric.DataFrame
 
 import           Examples.Flat.Game
+import           Lib.Engine.Config
 import           Lib.Engine.Main
 import           Lib.Engine.Simple2D
 import           Lib.MonadIO.Chan
@@ -229,6 +230,8 @@ runMyVulkanProgram = do
   let app = App
         { windowName = "vulkan-experiment"
         , windowSize = (800, 600)
+        , flags = [Validation]
+        , syncMode = VSync
         , appNewWindow = myAppNewWindow
         , appMainThreadHook = myAppMainThreadHook
         , appStart = myAppStart

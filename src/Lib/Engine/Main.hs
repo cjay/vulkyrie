@@ -12,6 +12,7 @@ import qualified Graphics.UI.GLFW                     as GLFW
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 
+import           Lib.Engine.Config
 import           Lib.GLFW
 import           Lib.MonadIO.IORef
 import           Lib.MonadIO.MVar
@@ -34,6 +35,8 @@ data App s w
   = App
   { windowName      :: String
   , windowSize      :: (Int, Int)
+  , flags           :: [Flag]
+  , syncMode        :: SyncMode
   , appNewWindow    :: forall r. GLFW.Window -> Program r w
     -- ^ this runs once in the main thread, after GLFW initalization
   , appMainThreadHook :: w -> IO ()
@@ -51,7 +54,8 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
   windowSizeChanged <- newIORef False
   let (windowWidth, windowHeight) = windowSize
   window <- initGLFWWindow windowWidth windowHeight windowName windowSizeChanged
-  vulkanInstance <- auto $ createGLFWVulkanInstance (windowName <> "-instance")
+  let enabledLayers = ["VK_LAYER_LUNARG_standard_validation" | Validation `elem` flags ]
+  vulkanInstance <- auto $ createGLFWVulkanInstance (windowName <> "-instance") enabledLayers
   vulkanSurface <- auto $ createSurface vulkanInstance window
   logInfo $ "Createad surface: " ++ show vulkanSurface
 
@@ -104,7 +108,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     scsd <- querySwapchainSupport pdev vulkanSurface
 
     swapchainSlot <- createSwapchainSlot dev
-    swapInfoRef <- createSwapchain dev scsd queues vulkanSurface swapchainSlot Nothing >>= newIORef
+    swapInfoRef <- createSwapchain dev scsd queues vulkanSurface syncMode swapchainSlot Nothing >>= newIORef
 
     -- Those are only needed if commands need to happen before first draw, I think:
     -- attachQueuePump gfxQueue 16666
@@ -173,7 +177,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
           beforeSwapchainCreation
           logInfo "Recreating swapchain.."
           newScsd <- querySwapchainSupport pdev vulkanSurface
-          newSwapInfo <- createSwapchain dev newScsd queues vulkanSurface swapchainSlot (Just oldSwapchainSlot)
+          newSwapInfo <- createSwapchain dev newScsd queues vulkanSurface syncMode swapchainSlot (Just oldSwapchainSlot)
           atomicWriteIORef swapInfoRef newSwapInfo
           redoWithNewSwapchain
           return $ AbortLoop ()
