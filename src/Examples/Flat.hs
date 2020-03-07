@@ -137,11 +137,14 @@ prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
                                     swapImgFormat swapExtent msaaSamples
   (depthAttSem, depthAttImgView) <- auto $ createDepthAttImgView cap
                                     swapExtent msaaSamples
-  let nextSems = [(colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+  let nextSems = [ (colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
                  , (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
                  ]
-  framebuffers
-    <- auto $ createFramebuffers dev renderPass swapExtent swapImgViews depthAttImgView colorAttImgView
+  framebuffers <- mapM
+    (auto
+      . createFramebuffer dev renderPass swapExtent
+      . framebufferAttachments colorAttImgView depthAttImgView)
+    swapImgViews
 
   return (framebuffers, nextSems, RenderContext graphicsPipeline renderPass pipelineLayout swapExtent)
 

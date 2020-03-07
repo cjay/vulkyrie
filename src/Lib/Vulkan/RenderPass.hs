@@ -1,7 +1,8 @@
 {-# LANGUAGE Strict           #-}
 module Lib.Vulkan.RenderPass
   ( createRenderPass
-  , createFramebuffers
+  , framebufferAttachments
+  , createFramebuffer
   , createRenderPassBeginInfo
   ) where
 
@@ -110,35 +111,41 @@ createRenderPass dev colorFormat depthFormat samples =
          runVk . vkCreateRenderPass dev rpciPtr VK_NULL
 
 
-createFramebuffers :: VkDevice
-                   -> VkRenderPass
-                   -> VkExtent2D
-                   -> [VkImageView]
-                   -> VkImageView
-                   -> VkImageView
-                   -> Resource r [VkFramebuffer]
-createFramebuffers dev renderPass extent resolveImgViews depthImgView colorImgView =
+-- | to get them into the right order matching the renderpass definition
+framebufferAttachments :: VkImageView -- ^ color image view
+                       -> VkImageView -- ^ depth image view
+                       -> VkImageView -- ^ resolve image view
+                       -> [VkImageView]
+framebufferAttachments colorImgView depthImgView resolveImgView =
+  [colorImgView, depthImgView, resolveImgView]
+
+
+createFramebuffer :: VkDevice
+                  -> VkRenderPass
+                  -> VkExtent2D
+                  -> [VkImageView]
+                  -> Resource r VkFramebuffer
+createFramebuffer dev renderPass extent attachments =
   resource $ metaResource
-    (liftIO . mapM_  (\fb -> vkDestroyFramebuffer dev fb VK_NULL) )
-    (mapM createFB resolveImgViews)
-  where
-    createFB resolveImgView =
-      let fbci = createVk @VkFramebufferCreateInfo
+    (\fb -> liftIO $ vkDestroyFramebuffer dev fb VK_NULL)
+    (let fbci = createVk @VkFramebufferCreateInfo
             $  set @"sType" VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO
             &* set @"pNext" VK_NULL
             &* set @"flags" VK_ZERO_FLAGS
             &* set @"renderPass" renderPass
             -- this needs to fit the renderpass attachments
-            &* setListCountAndRef @"attachmentCount" @"pAttachments" [colorImgView, depthImgView, resolveImgView]
+            &* setListCountAndRef @"attachmentCount" @"pAttachments" attachments
             &* set @"width" (getField @"width" extent)
             &* set @"height" (getField @"height" extent)
             &* set @"layers" 1
       in allocaPeek $ \fbPtr -> withVkPtr fbci $ \fbciPtr ->
           runVk $ vkCreateFramebuffer dev fbciPtr VK_NULL fbPtr
+    )
 
 
 createRenderPassBeginInfo :: VkRenderPass -> VkFramebuffer -> VkExtent2D -> VkRenderPassBeginInfo
-createRenderPassBeginInfo renderPass framebuffer extent = createVk @VkRenderPassBeginInfo
+createRenderPassBeginInfo renderPass framebuffer extent =
+  createVk @VkRenderPassBeginInfo
       $  set @"sType" VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
       &* set @"pNext" VK_NULL
       &* set @"renderPass" renderPass
@@ -149,7 +156,9 @@ createRenderPassBeginInfo renderPass framebuffer extent = createVk @VkRenderPass
           &* set @"extent" extent
           )
       &* setListCountAndRef @"clearValueCount" @"pClearValues"
-          -- this needs to fit the renderpass attachments
+          -- This needs to fit the renderpass attachments. Clear values for
+          -- attachments that don't use VK_ATTACHMENT_LOAD_OP_CLEAR in loadOp or
+          -- stencilLoadOp are ignored.
           [  createVk @VkClearValue
              $ setVk @"color"
              $ setVec @"float32" (vec4 0 0 0.2 1)
