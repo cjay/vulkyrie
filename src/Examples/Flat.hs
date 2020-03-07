@@ -10,7 +10,6 @@ import           Graphics.Vulkan.Core_1_0
 import           Numeric.DataFrame
 
 import           Examples.Flat.Game
-import           Lib.Engine.Config
 import           Lib.Engine.Main
 import           Lib.Engine.Simple2D
 import           Lib.MonadIO.Chan

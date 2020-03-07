@@ -8,7 +8,6 @@ import qualified Graphics.UI.GLFW         as GLFW
 import           Graphics.Vulkan.Core_1_0
 import           Numeric.DataFrame
 
-import           Lib.Engine.Config
 import           Lib.Engine.Main
 import           Lib.Engine.Simple3D
 import           Lib.MonadIO.MVar

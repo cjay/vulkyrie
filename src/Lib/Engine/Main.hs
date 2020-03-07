@@ -2,6 +2,7 @@
 {-# LANGUAGE Strict     #-}
 module Lib.Engine.Main
   ( App (..)
+  , EngineFlag (..)
   , runVulkanProgram
   ) where
 
@@ -12,7 +13,6 @@ import qualified Graphics.UI.GLFW                     as GLFW
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 
-import           Lib.Engine.Config
 import           Lib.Engine.Draw
 import           Lib.GLFW
 import           Lib.MonadIO.IORef
@@ -29,13 +29,16 @@ import           Lib.Vulkan.Presentation
 import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Sync
 
+
+data EngineFlag = Validation deriving (Eq, Ord, Show)
+
 -- | s is the shared app state handle (usually containing constants/IORefs/MVars)
 --   w is the window state handle
 data App s w
   = App
   { windowName      :: String
   , windowSize      :: (Int, Int)
-  , flags           :: [Flag]
+  , flags           :: [EngineFlag]
   , syncMode        :: SyncMode
   , maxFramesInFlight :: Int
   , appNewWindow    :: forall r. GLFW.Window -> Program r w

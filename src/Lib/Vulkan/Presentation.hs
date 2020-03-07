@@ -1,6 +1,7 @@
 {-# LANGUAGE Strict #-}
 module Lib.Vulkan.Presentation
   ( SwapchainInfo (..)
+  , SyncMode (..)
   , createSurface
   , createSwapchain
   , createSwapchainSlot
@@ -14,13 +15,13 @@ import           Graphics.Vulkan.Ext.VK_KHR_surface
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
 
-import           Lib.Engine.Config
 import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Resource
 import           Lib.Vulkan.Device
 
+data SyncMode = VSyncTriple | VSync | NoSync deriving (Eq, Ord, Show)
 
 createSurface :: VkInstance -> GLFW.Window -> Resource r VkSurfaceKHR
 createSurface vkInstance window = resource $
