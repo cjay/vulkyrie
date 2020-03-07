@@ -16,20 +16,19 @@ import           Numeric.Vector
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Resource
-import           Lib.Vulkan.Presentation
 
 
 
 createRenderPass :: VkDevice
-                 -> SwapchainInfo
+                 -> VkFormat
                  -> VkFormat
                  -> VkSampleCountFlagBits
                  -> Resource r VkRenderPass
-createRenderPass dev SwapchainInfo{ swapImgFormat } depthFormat samples =
+createRenderPass dev colorFormat depthFormat samples =
   let -- attachment description
       colorAttachment = createVk @VkAttachmentDescription
         $  set @"flags" VK_ZERO_FLAGS
-        &* set @"format" swapImgFormat
+        &* set @"format" colorFormat
         &* set @"samples" samples
         &* set @"loadOp" VK_ATTACHMENT_LOAD_OP_CLEAR
         &* set @"storeOp" VK_ATTACHMENT_STORE_OP_STORE
@@ -49,9 +48,10 @@ createRenderPass dev SwapchainInfo{ swapImgFormat } depthFormat samples =
         &* set @"initialLayout" VK_IMAGE_LAYOUT_UNDEFINED
         &* set @"finalLayout" VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
 
-      colorAttachmentResolve = createVk @VkAttachmentDescription
+      -- this is needed for msaa
+      resolveAttachment = createVk @VkAttachmentDescription
         $  set @"flags" VK_ZERO_FLAGS
-        &* set @"format" swapImgFormat
+        &* set @"format" colorFormat
         &* set @"samples" VK_SAMPLE_COUNT_1_BIT
         &* set @"loadOp" VK_ATTACHMENT_LOAD_OP_DONT_CARE
         &* set @"storeOp" VK_ATTACHMENT_STORE_OP_STORE
@@ -69,7 +69,7 @@ createRenderPass dev SwapchainInfo{ swapImgFormat } depthFormat samples =
         $  set @"attachment" 1
         &* set @"layout" VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
 
-      colorAttachmentResolveRef = createVk @VkAttachmentReference
+      resolveAttachmentRef = createVk @VkAttachmentReference
         $  set @"attachment" 2
         &* set @"layout" VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
 
@@ -78,7 +78,7 @@ createRenderPass dev SwapchainInfo{ swapImgFormat } depthFormat samples =
         &* set @"colorAttachmentCount" 1
         &* setVkRef @"pColorAttachments" colorAttachmentRef
         &* setVkRef @"pDepthStencilAttachment" depthAttachmentRef
-        &* setVkRef @"pResolveAttachments" colorAttachmentResolveRef
+        &* setVkRef @"pResolveAttachments" resolveAttachmentRef
         &* set @"pPreserveAttachments" VK_NULL
         &* set @"pInputAttachments" VK_NULL
 
@@ -98,7 +98,7 @@ createRenderPass dev SwapchainInfo{ swapImgFormat } depthFormat samples =
         $  set @"sType" VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO
         &* set @"pNext" VK_NULL
         &* setListCountAndRef @"attachmentCount" @"pAttachments"
-            [colorAttachment, depthAttachment, colorAttachmentResolve]
+            [colorAttachment, depthAttachment, resolveAttachment]
         &* set @"subpassCount" 1
         &* setVkRef @"pSubpasses" subpass
         &* set @"dependencyCount" 1
@@ -112,25 +112,26 @@ createRenderPass dev SwapchainInfo{ swapImgFormat } depthFormat samples =
 
 createFramebuffers :: VkDevice
                    -> VkRenderPass
-                   -> SwapchainInfo
+                   -> VkExtent2D
                    -> [VkImageView]
                    -> VkImageView
                    -> VkImageView
                    -> Resource r [VkFramebuffer]
-createFramebuffers dev renderPass SwapchainInfo{ swapExtent } swapImgViews depthImgView colorImgView =
+createFramebuffers dev renderPass extent resolveImgViews depthImgView colorImgView =
   resource $ metaResource
     (liftIO . mapM_  (\fb -> vkDestroyFramebuffer dev fb VK_NULL) )
-    (mapM createFB swapImgViews)
+    (mapM createFB resolveImgViews)
   where
-    createFB swapImgView =
+    createFB resolveImgView =
       let fbci = createVk @VkFramebufferCreateInfo
             $  set @"sType" VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO
             &* set @"pNext" VK_NULL
             &* set @"flags" VK_ZERO_FLAGS
             &* set @"renderPass" renderPass
-            &* setListCountAndRef @"attachmentCount" @"pAttachments" [colorImgView, depthImgView, swapImgView]
-            &* set @"width" (getField @"width" swapExtent)
-            &* set @"height" (getField @"height" swapExtent)
+            -- this needs to fit the renderpass attachments
+            &* setListCountAndRef @"attachmentCount" @"pAttachments" [colorImgView, depthImgView, resolveImgView]
+            &* set @"width" (getField @"width" extent)
+            &* set @"height" (getField @"height" extent)
             &* set @"layers" 1
       in allocaPeek $ \fbPtr -> withVkPtr fbci $ \fbciPtr ->
           runVk $ vkCreateFramebuffer dev fbciPtr VK_NULL fbPtr
@@ -148,11 +149,13 @@ createRenderPassBeginInfo renderPass framebuffer extent = createVk @VkRenderPass
           &* set @"extent" extent
           )
       &* setListCountAndRef @"clearValueCount" @"pClearValues"
+          -- this needs to fit the renderpass attachments
           [  createVk @VkClearValue
              $ setVk @"color"
              $ setVec @"float32" (vec4 0 0 0.2 1)
           ,  createVk @VkClearValue
              $ setVk @"depthStencil"
+             -- this needs to fit pipeline settings regarding depth, including depthCompareOp
              $  set @"depth" 1.0
              &* set @"stencil" 0
           ]

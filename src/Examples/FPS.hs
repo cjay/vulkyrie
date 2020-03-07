@@ -156,14 +156,13 @@ prepareRender :: EngineCapability
               -> VkPipelineLayout
               -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
 prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
-  let SwapchainInfo { swapExtent, swapImgFormat } = swapInfo
+  let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
   msaaSamples <- getMaxUsableSampleCount pdev
   depthFormat <- findDepthFormat pdev
 
   swapImgViews <- auto $
-    mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1)
-         (swapImgs swapInfo)
-  renderPass <- auto $ createRenderPass dev swapInfo depthFormat msaaSamples
+    mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
+  renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples
   graphicsPipeline
     <- auto $ createGraphicsPipeline dev swapExtent
                               [vertIBD] vertIADs
@@ -181,7 +180,7 @@ prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
                  , (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
                  ]
   framebuffers
-    <- auto $ createFramebuffers dev renderPass swapInfo swapImgViews depthAttImgView colorAttImgView
+    <- auto $ createFramebuffers dev renderPass swapExtent swapImgViews depthAttImgView colorAttImgView
 
   return (framebuffers, nextSems, RenderContext graphicsPipeline renderPass pipelineLayout swapExtent)
 

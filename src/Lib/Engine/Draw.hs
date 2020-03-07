@@ -20,17 +20,15 @@ import           Lib.MonadIO.Thread
 import           Lib.Program
 import           Lib.Program.Foreign
 import           Lib.Vulkan.Command
-import           Lib.Vulkan.Device
 import           Lib.Vulkan.Engine
-import           Lib.Vulkan.Presentation
 import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Sync
 
 
 data RenderData
   = RenderData
-  { swapInfo                  :: SwapchainInfo
-  , queues                    :: DevQueues
+  { swapchain                 :: VkSwapchainKHR
+  , presentQueue              :: VkQueue
   , imgIndexPtr               :: Ptr Word32
   , frameIndexRef             :: IORef Int
   , renderFinishedSems        :: [VkSemaphore]
@@ -69,9 +67,6 @@ drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
       wait oldEvent
       liftIO $ Event.signal frameFinishedEvent
       -- could also take current time here to measure frametimes
-
-    let SwapchainInfo { swapchain } = swapInfo
-        DevQueues { presentQueue } = queues
 
     imageAvailSem <- head <$> acquireSemaphores semPool 1
     let renderFinishedSem = renderFinishedSems !! frameIndex

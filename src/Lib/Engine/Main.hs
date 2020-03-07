@@ -122,7 +122,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
       logInfo "New thread: Creating things that depend on the swapchain.."
       -- need this for delayed destruction of the old swapchain if it gets replaced
       oldSwapchainSlot <- createSwapchainSlot dev
-      swapInfo <- readIORef swapInfoRef
+      swapInfo@SwapchainInfo { swapchain } <- readIORef swapInfoRef
 
       (framebuffers, nextAppSems) <- appNewSwapchain appState swapInfo
       sems <- takeMVar nextSems
@@ -134,8 +134,8 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
 
       shouldExit <- glfwMainLoop window $ do
         let rdata = RenderData
-              { swapInfo
-              , queues
+              { swapchain
+              , presentQueue = Lib.Vulkan.Device.presentQueue queues
               , imgIndexPtr
               , frameIndexRef
               , renderFinishedSems
