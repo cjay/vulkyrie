@@ -1,6 +1,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE Strict     #-}
-module Lib.Vulkan.Drawing
+module Lib.Engine.Draw
   ( RenderData (..)
   , drawFrame
   ) where

@@ -25,6 +25,7 @@ library
     exposed-modules:    Examples.FPS
                         Examples.Flat
                         Examples.Flat.Game
+                        Lib.Engine.Draw
                         Lib.Engine.Main
                         Lib.Engine.Simple3D
                         Lib.Engine.Simple2D
@@ -43,7 +44,6 @@ library
                         Lib.Vulkan.Command
                         Lib.Vulkan.Descriptor
                         Lib.Vulkan.Device
-                        Lib.Vulkan.Drawing
                         Lib.Vulkan.Engine
                         Lib.Vulkan.Image
                         Lib.Vulkan.Instance

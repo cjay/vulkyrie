@@ -13,6 +13,7 @@ import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 
 import           Lib.Engine.Config
+import           Lib.Engine.Draw
 import           Lib.GLFW
 import           Lib.MonadIO.IORef
 import           Lib.MonadIO.MVar
@@ -22,7 +23,6 @@ import           Lib.Resource
 import           Lib.Vulkan.Command
 import           Lib.Vulkan.Descriptor
 import           Lib.Vulkan.Device
-import           Lib.Vulkan.Drawing
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Memory
 import           Lib.Vulkan.Presentation
