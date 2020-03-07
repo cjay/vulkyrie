@@ -2,15 +2,13 @@
 {-# LANGUAGE Strict     #-}
 module Lib.Vulkan.Drawing
   ( RenderData (..)
-  , createFramebuffers
-  , createFrameSemaphores
   , drawFrame
-  , maxFramesInFlight
   ) where
 
 import           Control.Concurrent.Event             (Event)
 import qualified Control.Concurrent.Event             as Event
 import           Control.Monad
+import           Data.Maybe
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
@@ -21,47 +19,12 @@ import           Lib.MonadIO.MVar
 import           Lib.MonadIO.Thread
 import           Lib.Program
 import           Lib.Program.Foreign
-import           Lib.Resource
 import           Lib.Vulkan.Command
 import           Lib.Vulkan.Device
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Presentation
 import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Sync
-
-
-maxFramesInFlight :: Int
-maxFramesInFlight = 2
-
-
-createFramebuffers :: VkDevice
-                   -> VkRenderPass
-                   -> SwapchainInfo
-                   -> [VkImageView]
-                   -> VkImageView
-                   -> VkImageView
-                   -> Resource r [VkFramebuffer]
-createFramebuffers dev renderPass SwapchainInfo{ swapExtent } swapImgViews depthImgView colorImgView =
-  resource $ metaResource
-    (liftIO . mapM_  (\fb -> vkDestroyFramebuffer dev fb VK_NULL) )
-    (mapM createFB swapImgViews)
-  where
-    createFB swapImgView =
-      let fbci = createVk @VkFramebufferCreateInfo
-            $  set @"sType" VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO
-            &* set @"pNext" VK_NULL
-            &* set @"flags" VK_ZERO_FLAGS
-            &* set @"renderPass" renderPass
-            &* setListCountAndRef @"attachmentCount" @"pAttachments" [colorImgView, depthImgView, swapImgView]
-            &* set @"width" (getField @"width" swapExtent)
-            &* set @"height" (getField @"height" swapExtent)
-            &* set @"layers" 1
-      in allocaPeek $ \fbPtr -> withVkPtr fbci $ \fbciPtr ->
-          runVk $ vkCreateFramebuffer dev fbciPtr VK_NULL fbPtr
-
-
-createFrameSemaphores :: VkDevice -> Program r [VkSemaphore]
-createFrameSemaphores dev = sequence $ replicate maxFramesInFlight (auto $ metaSemaphore dev)
 
 
 data RenderData
@@ -91,6 +54,7 @@ data RenderData
   --   -- ^ one per frame-in-flight
   , framebuffers              :: [VkFramebuffer]
     -- ^ one per swapchain image
+  , maxFramesInFlight         :: Int
   }
 
 
@@ -98,7 +62,7 @@ drawFrame :: EngineCapability -> RenderData -> Program r Bool
 drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
     frameIndex <- readIORef frameIndexRef
     isOnQueue <-
-      maybe False (const True) <$> tryTakeMVar (frameOnQueueVars !! frameIndex)
+      isJust <$> tryTakeMVar (frameOnQueueVars !! frameIndex)
     -- could be not on queue because of retry due to VK_ERROR_OUT_OF_DATE_KHR below
     oldEvent <- readIORef (queueEvents !! frameIndex)
     when isOnQueue $ do
@@ -110,12 +74,13 @@ drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
         DevQueues { presentQueue } = queues
 
     imageAvailSem <- head <$> acquireSemaphores semPool 1
-    let renderFinishedSem = (renderFinishedSems !! frameIndex)
+    let renderFinishedSem = renderFinishedSems !! frameIndex
     -- Acquiring an image from the swapchain
     -- Can throw VK_ERROR_OUT_OF_DATE_KHR
-    (runVk $ vkAcquireNextImageKHR
-          dev swapchain maxBound
-          imageAvailSem VK_NULL_HANDLE imgIndexPtr) `catchError`
+    runVk ( vkAcquireNextImageKHR
+            dev swapchain maxBound
+            imageAvailSem VK_NULL_HANDLE imgIndexPtr
+          ) `catchError`
       ( \err -> do
           releaseSemaphores semPool [imageAvailSem]
           throwError err
@@ -162,6 +127,5 @@ drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
     withVkPtr presentInfo $
       -- Can throw VK_ERROR_OUT_OF_DATE_KHR
       runVk . vkQueuePresentKHR presentQueue
-    isSuboptimal <- (== VK_SUBOPTIMAL_KHR) . currentStatus <$> get
 
-    return isSuboptimal
+    (== VK_SUBOPTIMAL_KHR) . currentStatus <$> get

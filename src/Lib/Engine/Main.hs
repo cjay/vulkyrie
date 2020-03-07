@@ -37,6 +37,7 @@ data App s w
   , windowSize      :: (Int, Int)
   , flags           :: [Flag]
   , syncMode        :: SyncMode
+  , maxFramesInFlight :: Int
   , appNewWindow    :: forall r. GLFW.Window -> Program r w
     -- ^ this runs once in the main thread, after GLFW initalization
   , appMainThreadHook :: w -> IO ()
@@ -84,7 +85,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     appState <- appStart winState cap
 
     frameIndexRef <- newIORef 0
-    renderFinishedSems <- createFrameSemaphores dev
+    renderFinishedSems <- sequence $ replicate maxFramesInFlight (auto $ metaSemaphore dev)
     queueEvents <- sequence $ replicate maxFramesInFlight $ newDoneQueueEvent >>= newIORef
     frameFinishedEvent <- liftIO $ Event.new
     frameOnQueueVars <- sequence $ replicate maxFramesInFlight $ newEmptyMVar
@@ -150,6 +151,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
               , recCmdBuffer       = appRecordFrame appState
               -- , frameDescrSets
               , framebuffers
+              , maxFramesInFlight = maxFramesInFlight
               }
         needRecreation <- drawFrame cap rdata `catchError` ( \err@(VulkanException ecode _) ->
           case ecode of

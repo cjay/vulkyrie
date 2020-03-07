@@ -51,6 +51,7 @@ library
                         Lib.Vulkan.Queue
                         Lib.Vulkan.Pipeline
                         Lib.Vulkan.Presentation
+                        Lib.Vulkan.RenderPass
                         Lib.Vulkan.Shader
                         Lib.Vulkan.Shader.TH
                         Lib.Vulkan.Sync

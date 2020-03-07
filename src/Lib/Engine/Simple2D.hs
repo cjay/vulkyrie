@@ -17,10 +17,9 @@ import           Numeric.DataFrame.IO
 
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
-import           Graphics.Vulkan.Marshal.Create
-import           Graphics.Vulkan.Marshal.Create.DataFrame
 import           Lib.Program
 import           Lib.Program.Foreign
+import           Lib.Vulkan.RenderPass
 
 
 data DescrBindInfo = DescrBindInfo
@@ -104,29 +103,7 @@ recordAll
     RenderContext{..} viewProjTransform objects cmdBuf framebuffer = do
 
   -- render pass
-  let renderPassBeginInfo = createVk @VkRenderPassBeginInfo
-        $  set @"sType" VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO
-        &* set @"pNext" VK_NULL
-        &* set @"renderPass" renderPass
-        &* set @"framebuffer" framebuffer
-        &* setVk @"renderArea"
-            (  setVk @"offset"
-                ( set @"x" 0 &* set @"y" 0 )
-            &* set @"extent" extent
-            )
-        -- TODO only the first command buffer should clear
-        &* setListCountAndRef @"clearValueCount" @"pClearValues"
-            [ ( createVk @VkClearValue
-                $ setVk @"color"
-                  $ setVec @"float32" (vec4 0 0 0.2 1)
-              )
-            , ( createVk @VkClearValue
-                $ setVk @"depthStencil"
-                  $  set @"depth" 1.0
-                  &* set @"stencil" 0
-              )
-            ]
-
+  let renderPassBeginInfo = createRenderPassBeginInfo renderPass framebuffer extent
   withVkPtr renderPassBeginInfo $ \rpbiPtr ->
     liftIO $ vkCmdBeginRenderPass cmdBuf rpbiPtr VK_SUBPASS_CONTENTS_INLINE
 

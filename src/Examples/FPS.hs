@@ -17,11 +17,11 @@ import           Lib.Resource
 import           Lib.Utils                (perspectiveVk, scale)
 import           Lib.Vulkan.Descriptor
 import           Lib.Vulkan.Device
-import           Lib.Vulkan.Drawing
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Image
 import           Lib.Vulkan.Pipeline
 import           Lib.Vulkan.Presentation
+import           Lib.Vulkan.RenderPass
 import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Shader
 -- import           Lib.Vulkan.UniformBufferObject
@@ -355,6 +355,7 @@ runMyVulkanProgram = do
         , windowSize = (800, 600)
         , flags = [Validation]
         , syncMode = VSync
+        , maxFramesInFlight = 2
         , appNewWindow = myAppNewWindow
         , appMainThreadHook = myAppMainThreadHook
         , appStart = myAppStart
