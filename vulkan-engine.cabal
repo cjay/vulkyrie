@@ -1,6 +1,6 @@
-name:                vulkan-engine
+name:                vulkyrie
 version:             0.1.0.0
-synopsis:            Haskell-Vulkan experiment, not yet an engine
+synopsis:            Vulkan based Graphics Engine
 description:         ...
 homepage:            https://github.com/cjay/vulkan-engine
 license:             BSD3
@@ -22,45 +22,45 @@ flag dev
 
 library
     hs-source-dirs:     src
-    exposed-modules:    Examples.FPS
-                        Examples.Flat
-                        Examples.Flat.Game
-                        Examples.TransformationObject
-                        Examples.Vertex
-                        Lib.Engine.Draw
-                        Lib.Engine.Main
-                        Lib.Engine.Simple3D
-                        Lib.Engine.Simple2D
-                        Lib.Engine.Config
-                        Lib.GLFW
-                        Lib.MonadIO.Chan
-                        Lib.MonadIO.IORef
-                        Lib.MonadIO.MVar
-                        Lib.MonadIO.Thread
-                        Lib.Program
-                        Lib.Program.Foreign
-                        Lib.Resource
-                        -- Lib.Tests
-                        Lib.Utils
-                        Lib.Vulkan.Default.Pipeline
-                        Lib.Vulkan.Default.RenderPass
-                        Lib.Vulkan.Buffer
-                        Lib.Vulkan.Command
-                        Lib.Vulkan.Descriptor
-                        Lib.Vulkan.Device
-                        Lib.Vulkan.Engine
-                        Lib.Vulkan.Framebuffer
-                        Lib.Vulkan.Image
-                        Lib.Vulkan.Instance
-                        Lib.Vulkan.Memory
-                        Lib.Vulkan.Queue
-                        Lib.Vulkan.PipelineLayout
-                        Lib.Vulkan.Presentation
-                        Lib.Vulkan.Shader
-                        Lib.Vulkan.Shader.TH
-                        Lib.Vulkan.Sync
-                        Lib.Vulkan.UniformBufferObject
-                        Lib.Vulkan.VertexBuffer
+    exposed-modules:    Vulkyrie.Examples.FPS
+                        Vulkyrie.Examples.Flat
+                        Vulkyrie.Examples.Flat.Game
+                        Vulkyrie.Examples.TransformationObject
+                        Vulkyrie.Examples.Vertex
+                        Vulkyrie.Engine.Draw
+                        Vulkyrie.Engine.Main
+                        Vulkyrie.Engine.Simple3D
+                        Vulkyrie.Engine.Simple2D
+                        Vulkyrie.Engine.Config
+                        Vulkyrie.GLFW
+                        Vulkyrie.MonadIO.Chan
+                        Vulkyrie.MonadIO.IORef
+                        Vulkyrie.MonadIO.MVar
+                        Vulkyrie.MonadIO.Thread
+                        Vulkyrie.Program
+                        Vulkyrie.Program.Foreign
+                        Vulkyrie.Resource
+                        -- Vulkyrie.Tests
+                        Vulkyrie.Utils
+                        Vulkyrie.Vulkan.Default.Pipeline
+                        Vulkyrie.Vulkan.Default.RenderPass
+                        Vulkyrie.Vulkan.Buffer
+                        Vulkyrie.Vulkan.Command
+                        Vulkyrie.Vulkan.Descriptor
+                        Vulkyrie.Vulkan.Device
+                        Vulkyrie.Vulkan.Engine
+                        Vulkyrie.Vulkan.Framebuffer
+                        Vulkyrie.Vulkan.Image
+                        Vulkyrie.Vulkan.Instance
+                        Vulkyrie.Vulkan.Memory
+                        Vulkyrie.Vulkan.Queue
+                        Vulkyrie.Vulkan.PipelineLayout
+                        Vulkyrie.Vulkan.Presentation
+                        Vulkyrie.Vulkan.Shader
+                        Vulkyrie.Vulkan.Shader.TH
+                        Vulkyrie.Vulkan.Sync
+                        Vulkyrie.Vulkan.UniformBufferObject
+                        Vulkyrie.Vulkan.VertexBuffer
     build-depends:      apecs
                       , async
                       , base >= 4.9
@@ -104,7 +104,7 @@ executable vulkan-experiment
     main-is:             Main.hs
     ghc-options:         -threaded -with-rtsopts=-N
     build-depends:       base
-                       , vulkan-engine
+                       , vulkyrie
     default-language:    Haskell2010
     if flag(dev)
         cpp-options: -DDEVELOPMENT

@@ -1,8 +1,8 @@
 module Main (main) where
 
-import Examples.Flat
--- import Examples.FPS
--- import Lib.Tests
+import Vulkyrie.Examples.Flat
+-- import Vulkyrie.Examples.FPS
+-- import Vulkyrie.Tests
 
 main :: IO ()
 main = do
