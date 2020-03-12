@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE PolyKinds        #-}
 {-# LANGUAGE Strict           #-}
-module Lib.Vulkan.Pipeline
+module Lib.Vulkan.Default.Pipeline
   ( createGraphicsPipeline
   ) where
 

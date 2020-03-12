@@ -20,7 +20,7 @@ import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Lib.Program
 import           Lib.Program.Foreign
-import           Lib.Vulkan.RenderPass
+import           Lib.Vulkan.Default.RenderPass
 
 
 data BufferLoc = BufferLoc

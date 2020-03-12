@@ -15,15 +15,15 @@ import           Lib.MonadIO.MVar
 import           Lib.Program
 import           Lib.Resource
 import           Lib.Utils                (perspectiveVk, scale)
+import           Lib.Vulkan.Default.Pipeline
+import           Lib.Vulkan.Default.RenderPass
 import           Lib.Vulkan.Descriptor
 import           Lib.Vulkan.Device
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Framebuffer
 import           Lib.Vulkan.Image
-import           Lib.Vulkan.Pipeline
 import           Lib.Vulkan.PipelineLayout
 import           Lib.Vulkan.Presentation
-import           Lib.Vulkan.RenderPass
 import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Shader
 -- import           Lib.Vulkan.UniformBufferObject

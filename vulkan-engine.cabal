@@ -42,6 +42,8 @@ library
                         Lib.Resource
                         -- Lib.Tests
                         Lib.Utils
+                        Lib.Vulkan.Default.Pipeline
+                        Lib.Vulkan.Default.RenderPass
                         Lib.Vulkan.Buffer
                         Lib.Vulkan.Command
                         Lib.Vulkan.Descriptor
@@ -52,10 +54,8 @@ library
                         Lib.Vulkan.Instance
                         Lib.Vulkan.Memory
                         Lib.Vulkan.Queue
-                        Lib.Vulkan.Pipeline
                         Lib.Vulkan.PipelineLayout
                         Lib.Vulkan.Presentation
-                        Lib.Vulkan.RenderPass
                         Lib.Vulkan.Shader
                         Lib.Vulkan.Shader.TH
                         Lib.Vulkan.Sync

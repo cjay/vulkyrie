@@ -1,5 +1,5 @@
 {-# LANGUAGE Strict           #-}
-module Lib.Vulkan.RenderPass
+module Lib.Vulkan.Default.RenderPass
   ( createPrivateAttachments
   , createRenderPass
   , createRenderPassBeginInfo
