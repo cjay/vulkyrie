@@ -25,6 +25,7 @@ import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Framebuffer
 import           Lib.Vulkan.Image
 import           Lib.Vulkan.Pipeline
+import           Lib.Vulkan.PipelineLayout
 import           Lib.Vulkan.Presentation
 import           Lib.Vulkan.RenderPass
 import           Lib.Vulkan.Queue
