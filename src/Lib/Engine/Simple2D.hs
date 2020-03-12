@@ -60,9 +60,9 @@ bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = locally $ do
 
 -- | Update push constants: transformation matrix
 pushTransform :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Program r ()
-pushTransform cmdBuf pipelineLayout df = do
-  liftIO $ thawPinDataFrame df >>= (flip withDataFramePtr $ \ptr ->
-    vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_VERTEX_BIT 0 64 (castPtr ptr))
+pushTransform cmdBuf pipelineLayout df =
+  liftIO $ thawPinDataFrame df >>= flip withDataFramePtr
+    (vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_VERTEX_BIT 0 64 . castPtr)
 
 {-      not in use
 -- | Update push constants: texture index

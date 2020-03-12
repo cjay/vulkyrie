@@ -6,6 +6,7 @@ module Examples.FPS
 import           Control.Monad
 import qualified Graphics.UI.GLFW         as GLFW
 import           Graphics.Vulkan.Core_1_0
+import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Numeric.DataFrame
 
 import           Lib.Engine.Main
@@ -161,7 +162,7 @@ prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
 
   swapImgViews <- auto $
     mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
-  renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples
+  renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
   graphicsPipeline
     <- auto $ createGraphicsPipeline dev swapExtent
                               [vertIBD] vertIADs
@@ -171,19 +172,10 @@ prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
                               msaaSamples
                               False
 
-  (colorAttSem, colorAttImgView) <- auto $ createColorAttImgView cap
-                                    swapImgFormat swapExtent msaaSamples
-  (depthAttSem, depthAttImgView) <- auto $ createDepthAttImgView cap
-                                    swapExtent msaaSamples
-  let nextSems = [ (colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-                 , (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
-                 ]
+  (nextSems, privAttachments) <- auto $ createPrivateAttachments cap swapExtent swapImgFormat msaaSamples
   framebuffers <- mapM
-    (auto
-      . createFramebuffer dev renderPass swapExtent
-      . framebufferAttachments colorAttImgView depthAttImgView)
+    (auto . createFramebuffer dev renderPass swapExtent . (privAttachments <>) . (:[]))
     swapImgViews
-
   return (framebuffers, nextSems, RenderContext graphicsPipeline renderPass pipelineLayout swapExtent)
 
 

@@ -6,7 +6,9 @@ module Examples.Flat
 import           Control.Concurrent       (forkIO)
 import           Control.Monad
 import qualified Graphics.UI.GLFW         as GLFW
+import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
+import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Numeric.DataFrame
 
 import           Examples.Flat.Game
@@ -118,11 +120,13 @@ prepareRender :: EngineCapability
 prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
   let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
   msaaSamples <- getMaxUsableSampleCount pdev
+  -- to turn off msaa:
+  -- let msaaSamples = VK_SAMPLE_COUNT_1_BIT
   depthFormat <- findDepthFormat pdev
 
   swapImgViews <- auto $
     mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
-  renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples
+  renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
   graphicsPipeline
     <- auto $ createGraphicsPipeline dev swapExtent
                               [] []
@@ -132,17 +136,9 @@ prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
                               msaaSamples
                               True
 
-  (colorAttSem, colorAttImgView) <- auto $ createColorAttImgView cap
-                                    swapImgFormat swapExtent msaaSamples
-  (depthAttSem, depthAttImgView) <- auto $ createDepthAttImgView cap
-                                    swapExtent msaaSamples
-  let nextSems = [ (colorAttSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-                 , (depthAttSem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT)
-                 ]
+  (nextSems, privAttachments) <- auto $ createPrivateAttachments cap swapExtent swapImgFormat msaaSamples
   framebuffers <- mapM
-    (auto
-      . createFramebuffer dev renderPass swapExtent
-      . framebufferAttachments colorAttImgView depthAttImgView)
+    (auto . createFramebuffer dev renderPass swapExtent . (privAttachments <>) . (:[]))
     swapImgViews
 
   return (framebuffers, nextSems, RenderContext graphicsPipeline renderPass pipelineLayout swapExtent)

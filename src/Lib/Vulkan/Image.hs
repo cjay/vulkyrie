@@ -503,7 +503,7 @@ hasStencilComponent format = format `elem`
 createDepthAttImgView :: EngineCapability
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
-                      -> Resource r (VkSemaphore, VkImageView)
+                      -> Resource r ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
 createDepthAttImgView ecap@EngineCapability{..} extent samples = do
   depthFormat <- onCreate $ findDepthFormat pdev
 
@@ -516,14 +516,14 @@ createDepthAttImgView ecap@EngineCapability{..} extent samples = do
     sem <- head <$> acquireSemaphores semPool 1
     postWith_ cmdCap cmdQueue [] [sem] $
       transitionImageLayout depthImage depthFormat Undef_DepthStencilAtt 1
-    return (sem, depthImageView)
+    return ((sem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT), depthImageView)
 
 
 createColorAttImgView :: EngineCapability
                       -> VkFormat
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
-                      -> Resource r (VkSemaphore, VkImageView)
+                      -> Resource r ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
 createColorAttImgView ecap@EngineCapability{..} format extent samples = do
   (_, colorImage) <- createImage ecap
     (getField @"width" extent) (getField @"height" extent) 1 samples format
@@ -536,4 +536,4 @@ createColorAttImgView ecap@EngineCapability{..} format extent samples = do
     sem <- head <$> acquireSemaphores semPool 1
     postWith_ cmdCap cmdQueue [] [sem] $
       transitionImageLayout colorImage format Undef_ColorAtt 1
-    return (sem, colorImageView)
+    return ((sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT), colorImageView)
