@@ -6,3 +6,5 @@ Initially forked from
 
 This is still in an early alpha stage, but should already be a useful starting point for people looking how to do more than 
 just draw a triangle with Vulkan in Haskell.
+
+For a non-trivial example project see [some-roguelike](https://github.com/cjay/some-roguelike).
