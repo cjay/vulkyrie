@@ -26,9 +26,9 @@ import           Lib.Vulkan.RenderPass
 import           Lib.Vulkan.Queue
 import           Lib.Vulkan.Shader
 -- import           Lib.Vulkan.UniformBufferObject
-import           Lib.Vulkan.Vertex
 import           Lib.Vulkan.VertexBuffer
 
+import Examples.Vertex
 
 rectVertices :: DataFrame Vertex '[XN 3]
 rectVertices = atLeastThree $ fromList

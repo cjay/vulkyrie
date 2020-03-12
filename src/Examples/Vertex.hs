@@ -2,7 +2,7 @@
 {-# LANGUAGE Strict         #-}
 {-# LANGUAGE TypeOperators  #-}
 {-# LANGUAGE KindSignatures #-}
-module Lib.Vulkan.Vertex
+module Examples.Vertex
   ( Vertex (..), vertIBD, vertIADs
   , loadModel
   , atLeastThree

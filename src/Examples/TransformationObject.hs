@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE Strict              #-}
-module Lib.Vulkan.TransformationObject
+module Examples.TransformationObject
   ( updateTransObj
   , transObjSize
   ) where

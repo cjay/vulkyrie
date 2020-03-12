@@ -25,6 +25,8 @@ library
     exposed-modules:    Examples.FPS
                         Examples.Flat
                         Examples.Flat.Game
+                        Examples.TransformationObject
+                        Examples.Vertex
                         Lib.Engine.Draw
                         Lib.Engine.Main
                         Lib.Engine.Simple3D
@@ -56,9 +58,7 @@ library
                         Lib.Vulkan.Shader
                         Lib.Vulkan.Shader.TH
                         Lib.Vulkan.Sync
-                        Lib.Vulkan.TransformationObject
                         Lib.Vulkan.UniformBufferObject
-                        Lib.Vulkan.Vertex
                         Lib.Vulkan.VertexBuffer
     build-depends:      apecs
                       , async
