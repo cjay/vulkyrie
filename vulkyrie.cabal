@@ -1,14 +1,14 @@
 name:                vulkyrie
 version:             0.1.0.0
 synopsis:            Vulkan based Graphics Engine
-description:         ...
-homepage:            https://github.com/cjay/vulkan-engine
+description:         A graphics engine based on Vulkan.
+homepage:            https://github.com/cjay/vulkyrie
 license:             BSD3
 license-file:        LICENSE
 author:              Johannes Krause
 maintainer:          cjay@brainuse.de
 copyright:           Copyright: (c) 2018-2020 Johannes Krause, Artem Chirkin
-category:            vulkan, bsd3, graphics, library, opengl
+category:            vulkan, bsd3, graphics, game engine, library
 build-type:          Simple
 cabal-version:       >=1.22
 extra-source-files:
@@ -116,4 +116,4 @@ executable vulkan-experiment
 
 source-repository head
     type:     git
-    location: https://github.com/cjay/vulkan-engine
+    location: https://github.com/cjay/vulkyrie.git
