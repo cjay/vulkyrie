@@ -22,6 +22,7 @@ import           Lib.Utils                (orthogonalVk, scale)
 import           Lib.Vulkan.Descriptor
 import           Lib.Vulkan.Device
 import           Lib.Vulkan.Engine
+import           Lib.Vulkan.Framebuffer
 import           Lib.Vulkan.Image
 import           Lib.Vulkan.Pipeline
 import           Lib.Vulkan.Presentation

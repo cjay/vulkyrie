@@ -2,7 +2,6 @@
 module Lib.Vulkan.RenderPass
   ( createPrivateAttachments
   , createRenderPass
-  , createFramebuffer
   , createRenderPassBeginInfo
   ) where
 
@@ -37,6 +36,7 @@ createPrivateAttachments cap extent imgFormat samples = do
     [createDepthAttImgView cap extent samples]
     <> [createColorAttImgView cap imgFormat extent samples | msaaOn]
 
+-- | Attachment order: Private attachments first, followed by one color output attachment having 1 sample.
 createRenderPass :: VkDevice
                  -> VkFormat
                  -> VkFormat
@@ -137,30 +137,6 @@ createRenderPass dev colorFormat depthFormat samples colorOutFinalLayout =
        (\rp -> liftIO $ vkDestroyRenderPass dev rp VK_NULL) $
        withVkPtr rpCreateInfo $ \rpciPtr -> allocaPeek $
          runVk . vkCreateRenderPass dev rpciPtr VK_NULL
-
-
--- | expects private attachments first, followed by the color output attachment
-createFramebuffer :: VkDevice
-                  -> VkRenderPass
-                  -> VkExtent2D
-                  -> [VkImageView]
-                  -> Resource r VkFramebuffer
-createFramebuffer dev renderPass extent attachments =
-  resource $ metaResource
-    (\fb -> liftIO $ vkDestroyFramebuffer dev fb VK_NULL)
-    (let fbci = createVk @VkFramebufferCreateInfo
-            $  set @"sType" VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO
-            &* set @"pNext" VK_NULL
-            &* set @"flags" VK_ZERO_FLAGS
-            &* set @"renderPass" renderPass
-            -- this needs to fit the renderpass attachments
-            &* setListCountAndRef @"attachmentCount" @"pAttachments" attachments
-            &* set @"width" (getField @"width" extent)
-            &* set @"height" (getField @"height" extent)
-            &* set @"layers" 1
-      in allocaPeek $ \fbPtr -> withVkPtr fbci $ \fbciPtr ->
-          runVk $ vkCreateFramebuffer dev fbciPtr VK_NULL fbPtr
-    )
 
 
 createRenderPassBeginInfo :: VkRenderPass -> VkFramebuffer -> VkExtent2D -> VkRenderPassBeginInfo
