@@ -18,11 +18,11 @@ import           Lib.Vulkan.Command
 import           Lib.Vulkan.Engine
 import           Lib.Vulkan.Memory
 import           Lib.Vulkan.Queue
-import           Lib.Vulkan.Vertex
 
 
-createVertexBuffer :: EngineCapability
-                   -> DataFrame Vertex '[XN 3]
+createVertexBuffer :: (PrimBytes v)
+                   => EngineCapability
+                   -> DataFrame v '[XN 3]
                       -- ^ A collection of at least three vertices
                    -> Resource r (QueueEvent, VkBuffer)
 createVertexBuffer ecap@EngineCapability{..} (XFrame vertices) = do
