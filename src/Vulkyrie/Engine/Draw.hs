@@ -29,15 +29,22 @@ data RenderData
   = RenderData
   { swapchain                 :: VkSwapchainKHR
   , presentQueue              :: VkQueue
+    -- ^ Presentation queue. Not necessarily the same as the graphics queue(s).
   , imgIndexPtr               :: Ptr Word32
+    -- ^ Swapchain image index. Written by vkAcquireNextImageKHR, read by vkQueuePresentKHR.
   , frameIndexRef             :: IORef Int
+    -- ^ Between 0 and maxFramesInFlight. Increments and wraps.
+    --   Index for frameOnQueueVars, queueEvents, and renderFinishedSems.
   , renderFinishedSems        :: [VkSemaphore]
+    -- ^ Signals completion of graphics queue submission. One per frame-in-flight.
   , nextSems                  :: MVar [(VkSemaphore, VkPipelineStageFlags)]
+    -- ^ Additional semaphores that the graphics queue submission needs to wait on.
   , frameFinishedEvent        :: Event
+    -- ^ Gets signalled
   , queueEvents               :: [IORef QueueEvent]
-    -- ^ signals completion of a frame to deallocators
+    -- ^ Signals completion of a frame to deallocators. One per frame-in-flight, no reuse.
   , frameOnQueueVars          :: [MVar ()]
-    -- ^ one per frame-in-flight
+    -- ^ One per frame-in-flight
 
   -- , memories                  :: [VkDeviceMemory]
   --   -- ^ one per frame-in-flight
@@ -53,6 +60,7 @@ data RenderData
   , framebuffers              :: [VkFramebuffer]
     -- ^ one per swapchain image
   , maxFramesInFlight         :: Int
+    -- ^ allowed number of unfinished submitted frames on the graphics queue
   }
 
 
@@ -62,9 +70,14 @@ drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
     isOnQueue <-
       isJust <$> tryTakeMVar (frameOnQueueVars !! frameIndex)
     -- could be not on queue because of retry due to VK_ERROR_OUT_OF_DATE_KHR below
+    -- TODO "holes" in the queue probably result in having less frames in flight while resizing windows
     oldEvent <- readIORef (queueEvents !! frameIndex)
     when isOnQueue $ do
       wait oldEvent
+      -- TODO It's suboptimal for frametime measurements that the wait and
+      -- signal happens here instead of earlier. At least considering the
+      -- submitNotify blocking call below, and postWith which seems to block
+      -- while recording.
       liftIO $ Event.signal frameFinishedEvent
       -- could also take current time here to measure frametimes
 
@@ -88,6 +101,8 @@ drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
     nextS <- takeMVar nextSems
     putMVar nextSems []
 
+    -- This intentionally blocks while recording the command buffer.
+    -- There can still be multiple frames already submitted.
     nextEvent <- postWith cmdCap cmdQueue
       ((imageAvailSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextS)
       [renderFinishedSem] $ \cmdBuf -> do

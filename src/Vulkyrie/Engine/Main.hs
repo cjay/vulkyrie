@@ -41,6 +41,7 @@ data App s w
   , flags           :: [EngineFlag]
   , syncMode        :: SyncMode
   , maxFramesInFlight :: Int
+    -- ^ allowed number of unfinished submitted frames on the graphics queue
   , appNewWindow    :: forall r. GLFW.Window -> Program r w
     -- ^ this runs once in the main thread, after GLFW initalization
   , appMainThreadHook :: w -> IO ()
@@ -75,14 +76,15 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
 
     msp <- auto $ metaMasterSemaphorePool dev
     gfxQueue <- auto $ metaManagedQueue dev (graphicsQueue queues) msp
-    cpp <- auto $ metaCommandPoolPool dev (graphicsFamIdx queues)
+    cmdPoolPool <- auto $ metaCommandPoolPool dev (graphicsFamIdx queues)
 
     semPool <- auto $ metaSemaphorePool msp
-    cmdCap <- auto $ metaCommandCapability cpp
+    cmdCap <- auto $ metaCommandCapability cmdPoolPool
     memPool <- auto $ metaMemoryPool pdev dev
     descriptorPool <- auto $ createDescriptorPool dev 100 -- TODO make dynamic
     -- TODO create permanently mapped reusable staging buffer
-    let cap = EngineCapability{ pdev, dev, cmdCap, cmdQueue=gfxQueue, semPool, memPool, descriptorPool }
+    let cap = EngineCapability
+          { pdev, dev, cmdCap, cmdQueue=gfxQueue, semPool, memPool, descriptorPool }
 
     logInfo $ "Starting App.."
     appState <- appStart winState cap

@@ -84,6 +84,9 @@ isDone (QueueEvent event) = liftIO $ Event.isSet event
 --   } deriving Eq
 
 
+-- | Thread-safe interface for VkQueue, with staging and notification.
+--
+--   Any of the associated functions can be called from any thread at any time.
 data ManagedQueue = ManagedQueue
   { requestChan         :: Chan QueueRequest
   , submitInfos         :: IORef (DL.DList VkSubmitInfo)
@@ -100,7 +103,6 @@ data QueueRequest = Post VkSubmitInfo
                   | Shutdown
                   deriving Eq
 
--- | Thread-safe interface for VkQueue, with staging and notification
 metaManagedQueue :: VkDevice -> VkQueue -> MasterSemaphorePool -> MetaResource r ManagedQueue
 metaManagedQueue dev queue msp =
   let mFencePool = metaFencePool dev
@@ -122,13 +124,6 @@ metaManagedQueue dev queue msp =
       let mq = ManagedQueue { masterSemaphorePool=msp, .. }
           submit_ :: Program r ()
           submit_ = do
-            -- prevent empty submission
-            sIs <- readIORef submitInfos
-            when (not $ null sIs) (submitNotify_ >> return ())
-
-          -- TODO submitNotify blocks too much, compared to postNotify+submit
-          submitNotify_ :: Program r Event
-          submitNotify_ = do
             fence <- acquireFence fencePool
             fenceResetDone <- asyncProg $ resetFences fencePool
             sIs <- DL.toList <$> readIORef submitInfos
@@ -144,20 +139,29 @@ metaManagedQueue dev queue msp =
               sems <- concat <$> mapM submitInfoGetWaitSemaphores sIs
               mspReleaseSemaphores msp sems
             writeIORef nextEvent =<< liftIO Event.new
+            -- blocking because acquireFence is not allowed while resetFences is running
             waitProg fenceResetDone
-            return event
 
           post_ :: VkSubmitInfo -> Program r ()
           post_ submitInfo = do
             sIs <- readIORef submitInfos
             writeIORef submitInfos (sIs `DL.snoc` submitInfo)
 
+          -- TODO "putMVar eventBox" calls below should soon be possible before post_ and submit_
           queueLoop = do
             request <- readChan requestChan
             case request of
-              Submit -> submit_
+              Submit -> do
+                -- prevent empty submission
+                sIs <- readIORef submitInfos
+                unless (null sIs) submit_
               SubmitNotify eventBox -> do
-                event <- submitNotify_
+                -- submit_ replaces nextEvent, so get it first
+                event <- readIORef nextEvent
+                -- submission has to happen even when empty
+                submit_
+                -- Filling eventBox after submisson ensures that vkQueueSubmit
+                -- is done when submitNotify returns.
                 putMVar eventBox $ QueueEvent event
               Post submitInfo -> post_ submitInfo
               PostNotify submitInfo eventBox -> do
@@ -175,9 +179,9 @@ metaManagedQueue dev queue msp =
   )
 
 
--- | Stage VkSubmitInfo for submission.
+-- | Stage VkSubmitInfo for submission. Can stage many.
 post :: ManagedQueue -> VkSubmitInfo -> Program r ()
-post ManagedQueue{ requestChan } submitInfo = do
+post ManagedQueue{ requestChan } submitInfo =
   writeChan requestChan $ Post submitInfo
 
 -- | Only submits something if there are any staged VkSubmitInfos.
@@ -193,6 +197,9 @@ postNotify ManagedQueue{ requestChan } submitInfo = do
   takeMVar resultBox
 
 -- | Submit with notification. Always submits, even with empty VkSubmitInfos.
+--
+--   This blocks until vkQueueSubmit is done. Relevant for semaphore use.
+-- TODO move blocking submission to separate function or replace by dependencies
 submitNotify :: ManagedQueue -> Program r QueueEvent
 submitNotify ManagedQueue{ requestChan } = do
   resultBox <- newEmptyMVar
@@ -200,6 +207,8 @@ submitNotify ManagedQueue{ requestChan } = do
   takeMVar resultBox
 
 -- | Immediately wait for notification after staging.
+--
+--   This will wait forever if nothing causes eventual submission.
 postWait :: ManagedQueue -> VkSubmitInfo -> Program r ()
 postWait mq submitInfo = do
   event <- postNotify mq submitInfo

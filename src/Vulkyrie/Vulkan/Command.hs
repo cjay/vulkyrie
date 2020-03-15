@@ -70,7 +70,7 @@ metaCommandBuffers :: VkDevice
                    -> VkCommandPool
                    -> Int
                    -> MetaResource r [VkCommandBuffer]
-metaCommandBuffers dev cmdPool buffersCount = do
+metaCommandBuffers dev cmdPool buffersCount =
   metaResource
     (\cmdBufs -> liftIO $ Foreign.withArray cmdBufs $ \cbsPtr ->
       vkFreeCommandBuffers dev cmdPool (fromIntegral buffersCount) cbsPtr)
@@ -107,7 +107,7 @@ postWithAndRetWait :: CommandCapability
                    -> [VkSemaphore]
                    -> (VkCommandBuffer -> Program' a)
                    -> Program r a
-postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action = do
+postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action =
   locally $ do
     managedCmdBuf <- acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
@@ -235,6 +235,12 @@ poolSwapOpportunity CommandCapability{..} = do
   newPool <- acquireCommandPool cmdPoolPool
   writeIORef currentPool newPool
 
+-- TODO export this or not
+resCommandBuffer :: CommandCapability -> Resource r ManagedCommandBuffer
+resCommandBuffer cap = do
+  buf <- onCreate $ acquireCommandBuffer cap
+  onDestroy $ releaseCommandBuffer buf
+  return buf
 
 -- | Acquire a command buffer from the pool, if available. Not thread-safe.
 acquireCommandBuffer :: CommandCapability -> Program r ManagedCommandBuffer
