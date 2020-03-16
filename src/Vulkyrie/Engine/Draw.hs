@@ -73,7 +73,7 @@ drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
     -- TODO "holes" in the queue probably result in having less frames in flight while resizing windows
     oldEvent <- readIORef (queueEvents !! frameIndex)
     when isOnQueue $ do
-      wait oldEvent
+      waitDone oldEvent
       -- TODO It's suboptimal for frametime measurements that the wait and
       -- signal happens here instead of earlier. At least considering the
       -- submitNotify blocking call below, and postWith which seems to block
@@ -111,13 +111,7 @@ drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
       -- descrSetMutator frameDescrSet
       recCmdBuffer cmdBuf framebuffer
 
-    -- Complication because multiple queues are used:
-    -- Using submitNotify instead of submit to block until vkQueueSubmit is
-    -- done, because the renderFinishedSem semaphore needs to be signaled, or have
-    -- an associated semaphore signal operation previously submitted for
-    -- execution, before it is waited on via vkQueuePresentKHR below.
-    -- TODO maybe manage both queues together to avoid blocking here
-    _ <- submitNotify cmdQueue
+    submit cmdQueue
     writeIORef (queueEvents !! frameIndex) nextEvent
     putMVar (frameOnQueueVars !! frameIndex) ()
 
@@ -134,6 +128,8 @@ drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
     -- doing this before vkQueuePresentKHR because that might throw VK_ERROR_OUT_OF_DATE_KHR
     writeIORef frameIndexRef $ (frameIndex + 1) `mod` maxFramesInFlight
 
+    -- TODO this wait and the present operation should be moved to extra threads to avoid blocking here
+    waitSubmitted nextEvent
     withVkPtr presentInfo $
       -- Can throw VK_ERROR_OUT_OF_DATE_KHR
       runVk . vkQueuePresentKHR presentQueue

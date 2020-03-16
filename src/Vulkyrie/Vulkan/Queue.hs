@@ -3,8 +3,10 @@
 module Vulkyrie.Vulkan.Queue
   ( QueueEvent
   , newDoneQueueEvent
-  , wait
-  , waitTimeout
+  , waitSubmitted
+  , waitDone
+  , waitDoneTimeout
+  , isSubmitted
   , isDone
 
   -- , WorkUnit(..)
@@ -14,6 +16,7 @@ module Vulkyrie.Vulkan.Queue
 
   , post
   , submit
+  , submitIfNeeded
   , postNotify
   , submitNotify
   , postWait
@@ -48,34 +51,47 @@ import           Vulkyrie.Vulkan.Sync
 
 
 -- | Offers a way to get notified on any thread when the queue submission has
---   been executed.
+--   been submitted and/or is done executing.
 --
---   QueueEvents can be in the done or not-yet state. Once set to done, they
---   can't be reset. Only ManagedQueue internals can set an event, though you
---   can produce an event that has already been set to done. QueueEvents don't
---   get reused by ManagedQueue.
+--   QueueEvents can be in the submitted, done, or not-yet state. Once set to
+--   done, they can't be reset. Only ManagedQueue internals can set an event,
+--   though you can produce an event that has already been set to done.
+--   QueueEvents don't get reused by ManagedQueue.
 --
 --   Uses Control.Concurrent.Event from concurrent-extra internally.
-newtype QueueEvent = QueueEvent Event
+data QueueEvent
+  = QueueEvent
+  { submitEvent :: Event
+  , doneEvent :: Event
+  }
+
 
 -- | Produces a QueueEvent that has already been set to the done state.
 newDoneQueueEvent :: Program r QueueEvent
-newDoneQueueEvent = QueueEvent <$> liftIO Event.newSet
+newDoneQueueEvent = QueueEvent <$> liftIO Event.newSet <*> liftIO Event.newSet
 
--- | Block until the submission has been executed.
-wait :: QueueEvent -> Program r ()
-wait (QueueEvent event) = liftIO $ Event.wait event
+-- | Block until the submission has been submitted to the queue.
+waitSubmitted :: QueueEvent -> Program r ()
+waitSubmitted QueueEvent { submitEvent } = liftIO $ Event.wait submitEvent
+
+-- | Block until the submission has been executed by the queue.
+waitDone :: QueueEvent -> Program r ()
+waitDone QueueEvent { doneEvent } = liftIO $ Event.wait doneEvent
 
 -- | Like wait, but with a timeout. A return value of False indicates a timeout
 --   occurred.
 --
 --   The timeout is specified in microseconds.
-waitTimeout :: QueueEvent -> Integer -> Program r Bool
-waitTimeout (QueueEvent event) timeout = liftIO $ Event.waitTimeout event timeout
+waitDoneTimeout :: QueueEvent -> Integer -> Program r Bool
+waitDoneTimeout QueueEvent { doneEvent } timeout = liftIO $ Event.waitTimeout doneEvent timeout
+
+-- | Checks if the submission has been submitted.
+isSubmitted :: QueueEvent -> Program r Bool
+isSubmitted QueueEvent { submitEvent } = liftIO $ Event.isSet submitEvent
 
 -- | Checks if the submission has been executed.
 isDone :: QueueEvent -> Program r Bool
-isDone (QueueEvent event) = liftIO $ Event.isSet event
+isDone QueueEvent { doneEvent } = liftIO $ Event.isSet doneEvent
 
 
 -- data WorkUnit = WorkUnit
@@ -90,16 +106,17 @@ isDone (QueueEvent event) = liftIO $ Event.isSet event
 data ManagedQueue = ManagedQueue
   { requestChan         :: Chan QueueRequest
   , submitInfos         :: IORef (DL.DList VkSubmitInfo)
-  , nextEvent           :: IORef Event
+  , nextEvent           :: IORef QueueEvent
   , fencePool           :: FencePool
   , masterSemaphorePool :: MasterSemaphorePool
   , pumpThread          :: MVar (Maybe ThreadId)
   }
 
 data QueueRequest = Post VkSubmitInfo
+                  | SubmitIfNeeded
                   | Submit
-                  | PostNotify VkSubmitInfo (MVar QueueEvent)
                   | SubmitNotify (MVar QueueEvent)
+                  | PostNotify VkSubmitInfo (MVar QueueEvent)
                   | Shutdown
                   deriving Eq
 
@@ -117,7 +134,7 @@ metaManagedQueue dev queue msp =
   (do
       requestChan <- newChan
       submitInfos <- newIORef mempty
-      nextEvent <- liftIO $ Event.new >>= newIORef
+      nextEvent <- QueueEvent <$> liftIO Event.new <*> liftIO Event.new >>= newIORef
       fencePool <- create mFencePool
       pumpThread <- newMVar Nothing
 
@@ -127,18 +144,19 @@ metaManagedQueue dev queue msp =
             fence <- acquireFence fencePool
             fenceResetDone <- asyncProg $ resetFences fencePool
             sIs <- DL.toList <$> readIORef submitInfos
+            writeIORef submitInfos mempty
             runVk $ withArrayLen sIs $ \siLen siArr ->
               liftIO $ vkQueueSubmit queue siLen siArr fence
-            writeIORef submitInfos mempty
-            event <- readIORef nextEvent
+            QueueEvent{ submitEvent, doneEvent } <- readIORef nextEvent
+            liftIO $ Event.set submitEvent
+            writeIORef nextEvent =<< QueueEvent <$> liftIO Event.new <*> liftIO Event.new
             _ <- forkProg $ do
               fencePtr <- newArrayRes [fence]
               runVk $ vkWaitForFences dev 1 fencePtr VK_TRUE (maxBound :: Word64)
-              liftIO $ Event.set event
+              liftIO $ Event.set doneEvent
               releaseFence fencePool fence
               sems <- concat <$> mapM submitInfoGetWaitSemaphores sIs
               mspReleaseSemaphores msp sems
-            writeIORef nextEvent =<< liftIO Event.new
             -- blocking because acquireFence is not allowed while resetFences is running
             waitProg fenceResetDone
 
@@ -147,27 +165,22 @@ metaManagedQueue dev queue msp =
             sIs <- readIORef submitInfos
             writeIORef submitInfos (sIs `DL.snoc` submitInfo)
 
-          -- TODO "putMVar eventBox" calls below should soon be possible before post_ and submit_
           queueLoop = do
             request <- readChan requestChan
             case request of
-              Submit -> do
-                -- prevent empty submission
+              SubmitIfNeeded -> do
                 sIs <- readIORef submitInfos
                 unless (null sIs) submit_
-              SubmitNotify eventBox -> do
-                -- submit_ replaces nextEvent, so get it first
-                event <- readIORef nextEvent
-                -- submission has to happen even when empty
-                submit_
-                -- Filling eventBox after submisson ensures that vkQueueSubmit
-                -- is done when submitNotify returns.
-                putMVar eventBox $ QueueEvent event
+              Submit -> submit_
               Post submitInfo -> post_ submitInfo
-              PostNotify submitInfo eventBox -> do
-                post_ submitInfo
+              SubmitNotify eventBox -> do
                 event <- readIORef nextEvent
-                putMVar eventBox $ QueueEvent event
+                putMVar eventBox event
+                submit_
+              PostNotify submitInfo eventBox -> do
+                event <- readIORef nextEvent
+                putMVar eventBox event
+                post_ submitInfo
               Shutdown -> return ()
             when (request /= Shutdown) queueLoop
 
@@ -185,6 +198,11 @@ post ManagedQueue{ requestChan } submitInfo =
   writeChan requestChan $ Post submitInfo
 
 -- | Only submits something if there are any staged VkSubmitInfos.
+submitIfNeeded :: ManagedQueue -> Program r ()
+submitIfNeeded ManagedQueue{ requestChan } =
+  writeChan requestChan SubmitIfNeeded
+
+-- | Submit with submission-notification.
 submit :: ManagedQueue -> Program r ()
 submit ManagedQueue{ requestChan } =
   writeChan requestChan Submit
@@ -196,10 +214,9 @@ postNotify ManagedQueue{ requestChan } submitInfo = do
   writeChan requestChan $ PostNotify submitInfo resultBox
   takeMVar resultBox
 
--- | Submit with notification. Always submits, even with empty VkSubmitInfos.
+-- | Submit with done-notification. Always submits, even with empty VkSubmitInfos.
 --
---   This blocks until vkQueueSubmit is done. Relevant for semaphore use.
--- TODO move blocking submission to separate function or replace by dependencies
+--   Can be used to ensure that any previous submissions have been executed.
 submitNotify :: ManagedQueue -> Program r QueueEvent
 submitNotify ManagedQueue{ requestChan } = do
   resultBox <- newEmptyMVar
@@ -212,13 +229,13 @@ submitNotify ManagedQueue{ requestChan } = do
 postWait :: ManagedQueue -> VkSubmitInfo -> Program r ()
 postWait mq submitInfo = do
   event <- postNotify mq submitInfo
-  wait event
+  waitDone event
 
 -- | Immediately wait for notification after submitting.
 submitWait :: ManagedQueue -> Program r ()
 submitWait mq = do
   event <- submitNotify mq
-  wait event
+  waitDone event
 
 
 -- | Creates a thread for automatic submission every n microseconds.
