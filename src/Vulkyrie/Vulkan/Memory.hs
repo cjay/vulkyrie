@@ -154,32 +154,36 @@ allocMem MemoryPool{..} (MemTypeIndex memTypeIndex) requestSize alignment = do
 
   chunk <- liftIO $ VUM.read currentChunk vectIndex
 
-  if chunk == 0 then do
-    newChunk <- allocate
-    if size > requestSize then do
-      liftIO $ VUM.write currentChunk vectIndex $ coerce newChunk
-      liftIO $ VUM.write usedSize vectIndex $ coerce requestSize
-    else do
-      liftIO $ VMD.pushBack occupied $ coerce newChunk
-    return $ MemoryLoc newChunk 0
-
-  else do
-    used <- liftIO $ coerce <$> VUM.read usedSize vectIndex
-    let overhang = used `mod` alignment
-        padding = (alignment - overhang) `mod` alignment
-        paddedUsed = used + padding
-        freeSize = memoryChunkSize - paddedUsed
-
-    if requestSize <= freeSize then do
-      liftIO $ VUM.write usedSize vectIndex $ coerce (paddedUsed + requestSize)
-      return $ MemoryLoc (coerce chunk) paddedUsed
-
-    else do
+  if chunk == 0
+    then do
       newChunk <- allocate
-      if size > requestSize then do
-        liftIO $ VMD.pushBack occupied chunk
-        liftIO $ VUM.write currentChunk vectIndex $ coerce newChunk
-        liftIO $ VUM.write usedSize vectIndex $ coerce requestSize
-      else do
-        liftIO $ VMD.pushBack occupied $ coerce newChunk
+      if size > requestSize
+        then do
+          liftIO $ VUM.write currentChunk vectIndex $ coerce newChunk
+          liftIO $ VUM.write usedSize vectIndex $ coerce requestSize
+        else do
+          liftIO $ VMD.pushBack occupied $ coerce newChunk
       return $ MemoryLoc newChunk 0
+
+    else do
+      used <- liftIO $ coerce <$> VUM.read usedSize vectIndex
+      let overhang = used `mod` alignment
+          padding = (alignment - overhang) `mod` alignment
+          paddedUsed = used + padding
+          freeSize = memoryChunkSize - paddedUsed
+
+      if requestSize <= freeSize
+        then do
+          liftIO $ VUM.write usedSize vectIndex $ coerce (paddedUsed + requestSize)
+          return $ MemoryLoc (coerce chunk) paddedUsed
+
+        else do
+          newChunk <- allocate
+          if size > requestSize
+            then do
+              liftIO $ VMD.pushBack occupied chunk
+              liftIO $ VUM.write currentChunk vectIndex $ coerce newChunk
+              liftIO $ VUM.write usedSize vectIndex $ coerce requestSize
+            else do
+              liftIO $ VMD.pushBack occupied $ coerce newChunk
+          return $ MemoryLoc newChunk 0

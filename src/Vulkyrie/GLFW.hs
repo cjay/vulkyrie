@@ -62,10 +62,11 @@ glfwMainLoop w action = go
   where
     go = do
       should <- liftIO $ GLFW.windowShouldClose w
-      if not should then do
-        status <- locally action
-        if status == ContinueLoop then go else return False
-      else return True
+      if not should
+        then do
+          status <- locally action
+          if status == ContinueLoop then go else return False
+        else return True
 
 
 -- | Runs GLFW event handling in the main thread continuously.

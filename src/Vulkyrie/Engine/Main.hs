@@ -171,30 +171,32 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
         seconds <- getTime
         liftIO $ do
           cur <- readIORef currentSec
-          if floor seconds /= cur then do
-            count <- readIORef frameCount
-            when (cur /= 0) $ print count
-            writeIORef currentSec (floor seconds)
-            writeIORef frameCount 0
-          else
-            modifyIORef' frameCount $ \c -> c + 1
+          if floor seconds /= cur
+            then do
+              count <- readIORef frameCount
+              when (cur /= 0) $ print count
+              writeIORef currentSec (floor seconds)
+              writeIORef frameCount 0
+            else
+              modifyIORef' frameCount $ \c -> c + 1
 
         sizeChanged <- readIORef windowSizeChanged
         when sizeChanged $ logInfo "Have got a windowSizeCallback from GLFW"
-        if needRecreation || sizeChanged then do
-          beforeSwapchainCreation
-          logInfo "Recreating swapchain.."
-          swapchain <- takeMVar swapchainSlot
-          -- This query should happen as close to createSwapchain as possible to
-          -- get the latest changes to the window size.
-          newScsd <- querySwapchainSupport pdev vulkanSurface
-          newSwapInfo <- createSwapchain dev newScsd queues vulkanSurface syncMode (Just swapchain)
-          putMVar swapchainSlot swapchain
-          putMVar nextSwapchainSlot (Vulkyrie.Vulkan.Presentation.swapchain newSwapInfo)
-          atomicWriteIORef swapInfoRef newSwapInfo
-          redoWithNewSwapchain
-          return $ AbortLoop ()
-        else return ContinueLoop
+        if needRecreation || sizeChanged
+          then do
+            beforeSwapchainCreation
+            logInfo "Recreating swapchain.."
+            swapchain <- takeMVar swapchainSlot
+            -- This query should happen as close to createSwapchain as possible to
+            -- get the latest changes to the window size.
+            newScsd <- querySwapchainSupport pdev vulkanSurface
+            newSwapInfo <- createSwapchain dev newScsd queues vulkanSurface syncMode (Just swapchain)
+            putMVar swapchainSlot swapchain
+            putMVar nextSwapchainSlot (Vulkyrie.Vulkan.Presentation.swapchain newSwapInfo)
+            atomicWriteIORef swapInfoRef newSwapInfo
+            redoWithNewSwapchain
+            return $ AbortLoop ()
+          else return ContinueLoop
       -- after glfwMainLoop exits, we need to wait for the frame to finish before deallocating things
       waitCheckpoint gfxQueue -- staged stuff in ManagedQueue needs to be submitted
       if shouldExit
