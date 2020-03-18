@@ -1,5 +1,6 @@
 module Vulkyrie.Utils where
 
+import Control.Monad
 import           Numeric.DataFrame
 import Control.Concurrent
 import qualified Control.Monad.ST        as ST
@@ -17,6 +18,51 @@ debugForkIO action = Control.Concurrent.forkFinally (announce >> action) finish 
                              Left ex -> "with an exception: " ++ show ex
     putStrLn $ "Terminated Thread (" ++ show tid ++ ") " ++ resStr
 
+
+
+data NatTokenVarOrder = Take (MVar ()) | Release deriving (Eq)
+
+data NatTokenVar
+  = NatTokenVar
+  { orderChan :: Chan NatTokenVarOrder
+  , waitingChan :: Chan (MVar ())
+  , avail :: MVar Int
+  }
+
+makeNatTokenVar :: Int -> IO NatTokenVar
+makeNatTokenVar num = do
+  orderChan <- newChan
+  waitingChan <- newChan
+  avail <- newMVar num
+
+  void $ forkIO $ forever $ do
+    a <- takeMVar avail
+    order <- readChan orderChan
+    case order of
+      Take answerBox -> do
+        -- putStrLn $ "[NatTokenVar.Take:" <> show a <> "->" <> show (a-1) <> "]"
+        putMVar avail $ a - 1
+        if a > 0
+          then putMVar answerBox ()
+          else writeChan waitingChan answerBox
+      Release -> do
+        -- putStrLn $ "[NatTokenVar.Release:" <> show a <> "->" <> show (a+1) <> "]"
+        putMVar avail $ a + 1
+        when (a < 0) $ do
+          answerBox <- readChan waitingChan
+          putMVar answerBox ()
+
+  return NatTokenVar {..}
+
+acquireToken :: NatTokenVar -> IO ()
+acquireToken NatTokenVar{..} = do
+  answerBox <- newEmptyMVar
+  writeChan orderChan (Take answerBox)
+  takeMVar answerBox
+
+releaseToken :: NatTokenVar -> IO ()
+releaseToken NatTokenVar{..} =
+  writeChan orderChan Release
 
 
 -- copied from easytensor and fixed for Vulkan:

@@ -7,6 +7,7 @@ module Vulkyrie.Vulkan.Presentation
   , createSwapchainSlot
   ) where
 
+import           Data.Maybe
 import           Data.Semigroup
 import qualified Graphics.UI.GLFW                     as GLFW
 import           Graphics.Vulkan
@@ -84,6 +85,7 @@ data SwapchainInfo
   , swapImgs      :: [VkImage]
   , swapImgFormat :: VkFormat
   , swapExtent    :: VkExtent2D
+  , swapMaxAcquired :: Int
   } deriving (Eq, Show)
 
 
@@ -95,12 +97,9 @@ createSwapchain :: VkDevice
                 -> DevQueues
                 -> VkSurfaceKHR
                 -> SyncMode
-                -> MVar VkSwapchainKHR
-                -> Maybe (MVar VkSwapchainKHR)
+                -> Maybe VkSwapchainKHR
                 -> Program r SwapchainInfo
-createSwapchain dev scsd queues surf syncMode slot mayOldSlot = do
-  mayOldSwapchain <- tryTakeMVar slot
-  sequence_ $ putMVar <$> mayOldSlot <*> mayOldSwapchain
+createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
 
   -- TODO not necessary every time I think
   surfFmt <- chooseSwapSurfaceFormat scsd
@@ -111,9 +110,12 @@ createSwapchain dev scsd queues surf syncMode slot mayOldSlot = do
 
   let maxIC = getField @"maxImageCount" $ capabilities scsd
       minIC = getField @"minImageCount" $ capabilities scsd
+      idealIC = minIC + 1
       imageCount = if maxIC <= 0
-                   then minIC + 1
-                   else min maxIC (minIC + 1)
+                   then idealIC
+                   else min maxIC idealIC
+  -- logInfo $ "swapchain minImageCount " ++ show minIC
+  -- logInfo $ "swapchain maxImageCount " ++ show maxIC
 
   -- write VkSwapchainCreateInfoKHR
   let swCreateInfo = createVk @VkSwapchainCreateInfoKHR
@@ -140,11 +142,10 @@ createSwapchain dev scsd queues surf syncMode slot mayOldSlot = do
         &* set @"compositeAlpha" VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
         &* set @"presentMode" spMode
         &* set @"clipped" VK_TRUE
-        &* set @"oldSwapchain" (maybe VK_NULL_HANDLE id mayOldSwapchain)
+        &* set @"oldSwapchain" (fromMaybe VK_NULL_HANDLE mayOldSwapchain)
 
   swapchain <- withVkPtr swCreateInfo $ \swciPtr -> allocaPeek
     $ runVk . vkCreateSwapchainKHR dev swciPtr VK_NULL
-  putMVar slot swapchain
 
   swapImgs <- asListVk
     $ \x -> runVk . vkGetSwapchainImagesKHR dev swapchain x
@@ -154,6 +155,7 @@ createSwapchain dev scsd queues surf syncMode slot mayOldSlot = do
         , swapImgs      = swapImgs
         , swapImgFormat = getField @"format" surfFmt
         , swapExtent    = sExtent
+        , swapMaxAcquired = length swapImgs - fromIntegral minIC + 1
         }
 
 

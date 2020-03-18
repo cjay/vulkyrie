@@ -20,7 +20,7 @@ import qualified Control.Concurrent as C
 
 
 newEmptyMVar  :: MonadIO io => io (C.MVar a)
-newEmptyMVar   = liftIO $ C.newEmptyMVar
+newEmptyMVar   = liftIO C.newEmptyMVar
 
 newMVar       :: MonadIO io => a -> io (C.MVar a)
 newMVar x      = liftIO $ C.newMVar x

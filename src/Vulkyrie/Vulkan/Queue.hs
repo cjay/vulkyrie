@@ -1,7 +1,10 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE Strict     #-}
 module Vulkyrie.Vulkan.Queue
-  ( QueueEvent
+  ( ManagedPresentQueue (..)
+  , present
+
+  , QueueEvent
   , newDoneQueueEvent
   , waitSubmitted
   , waitDone
@@ -9,35 +12,35 @@ module Vulkyrie.Vulkan.Queue
   , isSubmitted
   , isDone
 
-  -- , WorkUnit(..)
-
   , metaManagedQueue
   , ManagedQueue
 
   , post
+  , postSubmitPresent
   , submit
+  , submitPresent
   , submitIfNeeded
   , postNotify
   , submitNotify
+  , postSubmitNotify
   , postWait
   , submitWait
+  , waitCheckpoint
 
   , attachQueuePump
   , removeQueuePump
 
   , makeSubmitInfo
-
-  -- , CommandThread
-  -- , joinCommandThreads
-  -- , newCommandThread
   ) where
 
+import           Control.Applicative
 import           Control.Concurrent.Event       (Event)
 import qualified Control.Concurrent.Event       as Event
 import           Control.Monad
 import qualified Data.DList                     as DL
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
+import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
 
 import           Vulkyrie.MonadIO.Chan
@@ -49,6 +52,31 @@ import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Sync
 
+data ManagedPresentQueue =
+  ManagedPresentQueue
+  { presentQueue :: VkQueue
+  , presentQueueMutex :: MVar ()
+  }
+
+present :: ManagedPresentQueue -> [(MVar VkSwapchainKHR, Word32)] -> [VkSemaphore] -> Program r ()
+present ManagedPresentQueue{..} images waitSems = do
+  let (swapchainVars, imageIndices) = unzip images
+  swapchains <- mapM takeMVar swapchainVars
+  let presentInfo = createVk @VkPresentInfoKHR
+        $  set @"sType" VK_STRUCTURE_TYPE_PRESENT_INFO_KHR
+        &* set @"pNext" VK_NULL
+        &* setListRef @"pImageIndices" imageIndices
+        &* setListCountAndRef @"waitSemaphoreCount" @"pWaitSemaphores" waitSems
+        &* setListCountAndRef @"swapchainCount" @"pSwapchains" swapchains
+  withVkPtr presentInfo (runVk . vkQueuePresentKHR presentQueue)
+    `catchError`
+    ( \err@(VulkanException ecode _) ->
+        case ecode of
+          -- ignoring this here is ok, vkAcquireNextImageKHR or vkGetSwapchainStatusKHR will throw it again later
+          Just VK_ERROR_OUT_OF_DATE_KHR -> return ()
+          _ -> throwError err
+    )
+  sequence_ $ putMVar <$> ZipList swapchainVars <*> ZipList swapchains
 
 -- | Offers a way to get notified on any thread when the queue submission has
 --   been submitted and/or is done executing.
@@ -112,13 +140,15 @@ data ManagedQueue = ManagedQueue
   , pumpThread          :: MVar (Maybe ThreadId)
   }
 
-data QueueRequest = Post VkSubmitInfo
-                  | SubmitIfNeeded
-                  | Submit
-                  | SubmitNotify (MVar QueueEvent)
-                  | PostNotify VkSubmitInfo (MVar QueueEvent)
-                  | Shutdown
-                  deriving Eq
+data QueueRequest = Shutdown
+                  | Transaction [Instruction]
+
+data Instruction = Post VkSubmitInfo
+                 | SubmitIfNeeded
+                 | Submit
+                 | Present ManagedPresentQueue (forall r. Program r ()) (IO ())
+                 | Notify (MVar QueueEvent)
+                 | Checkpoint Event
 
 metaManagedQueue :: VkDevice -> VkQueue -> MasterSemaphorePool -> MetaResource r ManagedQueue
 metaManagedQueue dev queue msp =
@@ -166,23 +196,32 @@ metaManagedQueue dev queue msp =
             writeIORef submitInfos (sIs `DL.snoc` submitInfo)
 
           queueLoop = do
+            -- TODO dependencies on submission in another queue (for semaphores)
+            -- TODO reordering when a dependency blocks
             request <- readChan requestChan
             case request of
-              SubmitIfNeeded -> do
-                sIs <- readIORef submitInfos
-                unless (null sIs) submit_
-              Submit -> submit_
-              Post submitInfo -> post_ submitInfo
-              SubmitNotify eventBox -> do
-                event <- readIORef nextEvent
-                putMVar eventBox event
-                submit_
-              PostNotify submitInfo eventBox -> do
-                event <- readIORef nextEvent
-                putMVar eventBox event
-                post_ submitInfo
+              Transaction instructions -> do
+                forM_ instructions $ \case
+                  SubmitIfNeeded -> do
+                    sIs <- readIORef submitInfos
+                    unless (null sIs) submit_
+                  Submit -> submit_
+                  Post submitInfo -> post_ submitInfo
+                  Notify eventBox -> do
+                    event <- readIORef nextEvent
+                    putMVar eventBox event
+                  Checkpoint event -> liftIO $ Event.set event
+                  Present (ManagedPresentQueue presentQueue mutex) presentAction postPresentAction ->
+                    if presentQueue == queue
+                      then locally presentAction >> liftIO postPresentAction
+                      else void $ forkProg $ do
+                        -- TODO exception masking. Depends on how to handle actual async exceptions within Program
+                        takeMVar mutex
+                        presentAction
+                        putMVar mutex ()
+                        liftIO postPresentAction
+                queueLoop
               Shutdown -> return ()
-            when (request /= Shutdown) queueLoop
 
       -- PERFORMANCE Could write to mutable vector instead of DList to avoid copies,
       -- not sure how pointed-to arrays would be handled.
@@ -195,23 +234,33 @@ metaManagedQueue dev queue msp =
 -- | Stage VkSubmitInfo for submission. Can stage many.
 post :: ManagedQueue -> VkSubmitInfo -> Program r ()
 post ManagedQueue{ requestChan } submitInfo =
-  writeChan requestChan $ Post submitInfo
+  writeChan requestChan $ Transaction [Post submitInfo]
+
+postSubmitPresent :: ManagedQueue -> VkSubmitInfo -> ManagedPresentQueue -> (forall s. Program s ()) -> IO () -> Program r ()
+postSubmitPresent ManagedQueue{ requestChan } submitInfo presentQueue presentAction postPresentAction =
+  writeChan requestChan $ Transaction
+    [Post submitInfo, Submit, Present presentQueue presentAction postPresentAction]
 
 -- | Only submits something if there are any staged VkSubmitInfos.
 submitIfNeeded :: ManagedQueue -> Program r ()
 submitIfNeeded ManagedQueue{ requestChan } =
-  writeChan requestChan SubmitIfNeeded
+  writeChan requestChan $ Transaction [SubmitIfNeeded]
 
 -- | Submit with submission-notification.
 submit :: ManagedQueue -> Program r ()
 submit ManagedQueue{ requestChan } =
-  writeChan requestChan Submit
+  writeChan requestChan $ Transaction [Submit]
+
+submitPresent :: ManagedQueue -> ManagedPresentQueue -> (forall s. Program s ()) -> IO () -> Program r ()
+submitPresent ManagedQueue{ requestChan } presentQueue presentAction postPresentAction =
+  writeChan requestChan $ Transaction
+    [Submit, Present presentQueue presentAction postPresentAction]
 
 -- | Stage VkSubmitInfo for submission and notify when it was done.
 postNotify :: ManagedQueue -> VkSubmitInfo -> Program r QueueEvent
 postNotify ManagedQueue{ requestChan } submitInfo = do
   resultBox <- newEmptyMVar
-  writeChan requestChan $ PostNotify submitInfo resultBox
+  writeChan requestChan $ Transaction [Notify resultBox, Post submitInfo]
   takeMVar resultBox
 
 -- | Submit with done-notification. Always submits, even with empty VkSubmitInfos.
@@ -220,7 +269,14 @@ postNotify ManagedQueue{ requestChan } submitInfo = do
 submitNotify :: ManagedQueue -> Program r QueueEvent
 submitNotify ManagedQueue{ requestChan } = do
   resultBox <- newEmptyMVar
-  writeChan requestChan $ SubmitNotify resultBox
+  writeChan requestChan $ Transaction [Notify resultBox, Submit]
+  takeMVar resultBox
+
+-- | Stage VkSubmitInfo for submission and notify when it was done.
+postSubmitNotify :: ManagedQueue -> VkSubmitInfo -> Program r QueueEvent
+postSubmitNotify ManagedQueue{ requestChan } submitInfo = do
+  resultBox <- newEmptyMVar
+  writeChan requestChan $ Transaction [Notify resultBox, Post submitInfo, Submit]
   takeMVar resultBox
 
 -- | Immediately wait for notification after staging.
@@ -237,6 +293,11 @@ submitWait mq = do
   event <- submitNotify mq
   waitDone event
 
+waitCheckpoint :: ManagedQueue -> Program r ()
+waitCheckpoint ManagedQueue{ requestChan } = do
+  event <- liftIO Event.new
+  writeChan requestChan $ Transaction [Checkpoint event]
+  liftIO $ Event.wait event
 
 -- | Creates a thread for automatic submission every n microseconds.
 --

@@ -15,14 +15,15 @@ import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 
 import           Vulkyrie.Engine.Draw
 import           Vulkyrie.GLFW
+import           Vulkyrie.MonadIO.Chan
 import           Vulkyrie.MonadIO.IORef
 import           Vulkyrie.MonadIO.MVar
 import           Vulkyrie.Program
-import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
+import           Vulkyrie.Utils
 import           Vulkyrie.Vulkan.Command
 import           Vulkyrie.Vulkan.Descriptor
-import           Vulkyrie.Vulkan.Device
+import           Vulkyrie.Vulkan.Device as Device
 import           Vulkyrie.Vulkan.Engine
 import           Vulkyrie.Vulkan.Memory
 import           Vulkyrie.Vulkan.Presentation
@@ -75,6 +76,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     logInfo $ "Createad queues: " ++ show queues
 
     msp <- auto $ metaMasterSemaphorePool dev
+    presentQueue <- ManagedPresentQueue (Device.presentQueue queues) <$> newMVar ()
     gfxQueue <- auto $ metaManagedQueue dev (graphicsQueue queues) msp
     cmdPoolPool <- auto $ metaCommandPoolPool dev (graphicsFamIdx queues)
 
@@ -86,20 +88,15 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     let cap = EngineCapability
           { pdev, dev, cmdCap, cmdQueue=gfxQueue, semPool, memPool, descriptorPool }
 
-    logInfo $ "Starting App.."
+    logInfo "Starting App.."
     appState <- appStart winState cap
 
-    frameIndexRef <- newIORef 0
-    renderFinishedSems <- sequence $ replicate maxFramesInFlight (auto $ metaSemaphore dev)
-    queueEvents <- sequence $ replicate maxFramesInFlight $ newDoneQueueEvent >>= newIORef
-    frameFinishedEvent <- liftIO $ Event.new
-    frameOnQueueVars <- sequence $ replicate maxFramesInFlight $ newEmptyMVar
-
-    -- we need this later, but don't want to realloc every swapchain recreation.
-    imgIndexPtr <- mallocRes
+    renderFinishedSems <- newChan
+    writeList2Chan renderFinishedSems =<< replicateM maxFramesInFlight (auto $ metaSemaphore dev)
+    frameFinishedEvent <- liftIO Event.new
 
     let beforeSwapchainCreation :: Program r ()
-        beforeSwapchainCreation = do
+        beforeSwapchainCreation =
           -- wait as long as window has width=0 and height=0
           -- commented out because this only works in the main thread:
           -- glfwWaitMinimized window
@@ -113,8 +110,17 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     beforeSwapchainCreation
     scsd <- querySwapchainSupport pdev vulkanSurface
 
-    swapchainSlot <- createSwapchainSlot dev
-    swapInfoRef <- createSwapchain dev scsd queues vulkanSurface syncMode swapchainSlot Nothing >>= newIORef
+    nextSwapchainSlot <- createSwapchainSlot dev
+    firstSwapInfo <- createSwapchain dev scsd queues vulkanSurface syncMode Nothing
+    putMVar nextSwapchainSlot (swapchain firstSwapInfo)
+    swapInfoRef <- newIORef firstSwapInfo
+    -- TODO The -1 is a workaround. Without it, validation layer complains. Not sure if bug in validaiton/MoltenVK.
+    -- Application has already previously acquired 2 images from swapchain. Only 2
+    -- are available to be acquired using a timeout of UINT64_MAX (given the
+    -- swapchain has 3, and VkSurfaceCapabilitiesKHR::minImageCount is 2).
+    let numSwapImgTokens = swapMaxAcquired firstSwapInfo - 1
+    swapImgTokens <- liftIO $ makeNatTokenVar numSwapImgTokens
+    logInfo $ "number of swap image tokens is " ++ show numSwapImgTokens
 
     -- Those are only needed if commands need to happen before first draw, I think:
     -- attachQueuePump gfxQueue 16666
@@ -126,8 +132,12 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     asyncRedo $ \redoWithNewSwapchain -> do
       logInfo "New thread: Creating things that depend on the swapchain.."
       -- need this for delayed destruction of the old swapchain if it gets replaced
-      oldSwapchainSlot <- createSwapchainSlot dev
-      swapInfo@SwapchainInfo { swapchain } <- readIORef swapInfoRef
+      swapchainSlot <- createSwapchainSlot dev
+      putMVar swapchainSlot =<< takeMVar nextSwapchainSlot
+      swapInfo@SwapchainInfo { swapMaxAcquired } <- readIORef swapInfoRef
+      -- logInfo $ "number of new swap images is " ++ show swapMaxAcquired
+      -- TODO theoretically we need to adapt swapImgTokens to new swapchain
+      -- length, somehow taking into account already acquired images
 
       (framebuffers, nextAppSems) <- appNewSwapchain appState swapInfo
       sems <- takeMVar nextSems
@@ -139,24 +149,15 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
 
       shouldExit <- glfwMainLoop window $ do
         let rdata = RenderData
-              { swapchain
-              , presentQueue = Vulkyrie.Vulkan.Device.presentQueue queues
-              , imgIndexPtr
-              , frameIndexRef
+              { swapchainVar = swapchainSlot
+              , presentQueue
+              , swapImgTokens
               , renderFinishedSems
               , nextSems
               , frameFinishedEvent
-              , queueEvents
-              , frameOnQueueVars
-              -- , memories           = transObjMems
-              -- , memoryMutator      = \mem -> do
-              --     t <- updateTransObj (swapExtent swapInfo)
-              --     uboUpdate dev transObjSize mem t
-              -- , descrSetMutator    = updateDescrSet dev descrTextureInfos
-              , recCmdBuffer       = appRecordFrame appState
-              -- , frameDescrSets
+              , recCmdBuffer = appRecordFrame appState
               , framebuffers
-              , maxFramesInFlight = maxFramesInFlight
+              , maxFramesInFlight
               }
         needRecreation <- drawFrame cap rdata `catchError` ( \err@(VulkanException ecode _) ->
           case ecode of
@@ -175,7 +176,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
             when (cur /= 0) $ print count
             writeIORef currentSec (floor seconds)
             writeIORef frameCount 0
-          else do
+          else
             modifyIORef' frameCount $ \c -> c + 1
 
         sizeChanged <- readIORef windowSizeChanged
@@ -183,20 +184,27 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
         if needRecreation || sizeChanged then do
           beforeSwapchainCreation
           logInfo "Recreating swapchain.."
+          swapchain <- takeMVar swapchainSlot
+          -- This query should happen as close to createSwapchain as possible to
+          -- get the latest changes to the window size.
           newScsd <- querySwapchainSupport pdev vulkanSurface
-          newSwapInfo <- createSwapchain dev newScsd queues vulkanSurface syncMode swapchainSlot (Just oldSwapchainSlot)
+          newSwapInfo <- createSwapchain dev newScsd queues vulkanSurface syncMode (Just swapchain)
+          putMVar swapchainSlot swapchain
+          putMVar nextSwapchainSlot (Vulkyrie.Vulkan.Presentation.swapchain newSwapInfo)
           atomicWriteIORef swapInfoRef newSwapInfo
           redoWithNewSwapchain
           return $ AbortLoop ()
         else return ContinueLoop
       -- after glfwMainLoop exits, we need to wait for the frame to finish before deallocating things
+      waitCheckpoint gfxQueue -- staged stuff in ManagedQueue needs to be submitted
       if shouldExit
-      then runVk $ vkDeviceWaitIdle dev
-      -- Using Event here properly deals with multiple waiting threads, in
-      -- contrast to using plain MVars. The wait here is to make sure it's safe
-      -- to destroy the old swapchain (via oldSwapchainSlot). It doesn't affect
-      -- rendering, because a new thread has been already started for the new
-      -- swapchain via asyncRedo.
-      else liftIO $ sequence_ $ replicate maxFramesInFlight $ Event.wait frameFinishedEvent
+        then runVk $ vkDeviceWaitIdle dev
+        -- Using Event here properly deals with multiple waiting threads, in
+        -- contrast to using plain MVars. The wait here is to make sure it's safe
+        -- to destroy the old swapchain (via swapchainSlot). It doesn't affect
+        -- rendering, because a new thread has been already started for the new
+        -- swapchain via asyncRedo.
+        else liftIO $ replicateM_ (length $ swapImgs swapInfo) $ Event.wait frameFinishedEvent
+        -- TODO this could wait forever if the swapchain was renewed shortly before exit
       -- logInfo "Finished waiting after main loop termination before deallocating."
   return ()
