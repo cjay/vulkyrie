@@ -56,30 +56,36 @@ data ManagedPresentQueue =
   ManagedPresentQueue
   { presentQueue :: VkQueue
   , presentQueueMutex :: MVar ()
+    -- ^ needed because there is no single management thread for the queue
   }
 
 present :: ManagedPresentQueue -> [(MVar VkSwapchainKHR, Word32)] -> [VkSemaphore] -> Program r ()
 present ManagedPresentQueue{..} images waitSems = do
   let (swapchainVars, imageIndices) = unzip images
-  swapchains <- mapM takeMVar swapchainVars
-  let presentInfo = createVk @VkPresentInfoKHR
-        $  set @"sType" VK_STRUCTURE_TYPE_PRESENT_INFO_KHR
-        &* set @"pNext" VK_NULL
-        &* setListRef @"pImageIndices" imageIndices
-        &* setListCountAndRef @"waitSemaphoreCount" @"pWaitSemaphores" waitSems
-        &* setListCountAndRef @"swapchainCount" @"pSwapchains" swapchains
-  withVkPtr presentInfo (runVk . vkQueuePresentKHR presentQueue)
-    `catchError`
-    ( \err@(VulkanException ecode _) ->
-        case ecode of
-          -- ignoring this here is ok, vkAcquireNextImageKHR or vkGetSwapchainStatusKHR will throw it again later
-          Just VK_ERROR_OUT_OF_DATE_KHR -> return ()
-          _ -> throwError err
+  bracket 
+    (mapM takeMVar swapchainVars)
+    (\swapchains -> sequence_ $ putMVar <$> ZipList swapchainVars <*> ZipList swapchains)
+    (\swapchains -> do
+      let presentInfo = createVk @VkPresentInfoKHR
+            $  set @"sType" VK_STRUCTURE_TYPE_PRESENT_INFO_KHR
+            &* set @"pNext" VK_NULL
+            &* setListRef @"pImageIndices" imageIndices
+            &* setListCountAndRef @"waitSemaphoreCount" @"pWaitSemaphores" waitSems
+            &* setListCountAndRef @"swapchainCount" @"pSwapchains" swapchains
+      withVkPtr presentInfo (runVk . vkQueuePresentKHR presentQueue)
+        `catchError`
+        ( \err@(VulkanException ecode _) ->
+            case ecode of
+              -- Ignoring this here is ok, vkAcquireNextImageKHR or
+              -- vkGetSwapchainStatusKHR will throw it again later.
+              Just VK_ERROR_OUT_OF_DATE_KHR -> return ()
+              _ -> throwError err
+        )
     )
-  sequence_ $ putMVar <$> ZipList swapchainVars <*> ZipList swapchains
+  
 
 -- | Offers a way to get notified on any thread when the queue submission has
---   been submitted and/or is done executing.
+--   been submitted to the actual VkQueue and/or is done executing.
 --
 --   QueueEvents can be in the submitted, done, or not-yet state. Once set to
 --   done, they can't be reset. Only ManagedQueue internals can set an event,
@@ -133,11 +139,18 @@ isDone QueueEvent { doneEvent } = liftIO $ Event.isSet doneEvent
 --   Any of the associated functions can be called from any thread at any time.
 data ManagedQueue = ManagedQueue
   { requestChan         :: Chan QueueRequest
+    -- ^ channel that feeds instructions to the management thread
   , submitInfos         :: IORef (DL.DList VkSubmitInfo)
+    -- ^ submit infos staged for submission via post
   , nextEvent           :: IORef QueueEvent
+    -- ^ QueueEvent for the next submission
   , fencePool           :: FencePool
+    -- ^ used for fences that signal that the VkQueue submission is done
   , masterSemaphorePool :: MasterSemaphorePool
+    -- ^ used to release wait-semaphores of the submit infos
   , pumpThread          :: MVar (Maybe ThreadId)
+    -- ^ handle for a optional thread that regularly causes submission of staged
+    -- submit infos
   }
 
 data QueueRequest = Shutdown

@@ -201,6 +201,9 @@ data ManagedCommandBuffer = ManagedCommandBuffer
 
 
 
+-- | Takes care of providing a thread with fresh command buffers.
+--
+--   touchIORef necessary if reused by another thread!
 data CommandCapability = CommandCapability
   { cmdPoolPool :: CommandPoolPool
   , currentPool :: IORef ManagedCommandPool
@@ -208,9 +211,6 @@ data CommandCapability = CommandCapability
   -- , cmdPools     :: IORef [ManagedCommandPool]
   }
 
--- | create and destroy this per thread
---
---   touchIORef necessary if reused by another thread!
 metaCommandCapability :: CommandPoolPool -> MetaResource r CommandCapability
 metaCommandCapability cpp =
   metaResource
@@ -235,14 +235,14 @@ poolSwapOpportunity CommandCapability{..} = do
   newPool <- acquireCommandPool cmdPoolPool
   writeIORef currentPool newPool
 
--- TODO export this or not
+-- | Resource for automatic acquire and release of command buffers
 resCommandBuffer :: CommandCapability -> Resource r ManagedCommandBuffer
 resCommandBuffer cap = do
   buf <- onCreate $ acquireCommandBuffer cap
   onDestroy $ releaseCommandBuffer buf
   return buf
 
--- | Acquire a command buffer from the pool, if available. Not thread-safe.
+-- | Acquire a command buffer from the capability. Not thread-safe.
 acquireCommandBuffer :: CommandCapability -> Program r ManagedCommandBuffer
 acquireCommandBuffer CommandCapability{..} = do
   pool <- readIORef currentPool
@@ -262,13 +262,22 @@ releaseCommandBuffer ManagedCommandBuffer{..} =
   mcpReleaseCommandBuffer cmdPoolOfBuffer actualCmdBuf
 
 
+data CommandPoolPoolRequest 
+  = Shutdown (MVar ()) 
+    -- ^ The command pool management thread puts the MVar when it has received the Shutdown request.
+    -- Wait on the MVar to make sure the thread has worked through preceding Releases in the channel.
+  | Release ManagedCommandPool
 
+-- | Used to reset released command pools in the background and to keep track of fresh ones.
 data CommandPoolPool = CommandPoolPool
   { mCommandPool :: forall r. MetaResource r ManagedCommandPool
   , freshPools   :: MVar [ManagedCommandPool]
-  , usedPoolChan :: Chan (Either (MVar ()) ManagedCommandPool)
+    -- ^ ready to use command pools (after creation or cmdPool reset)
+  , requestChan :: Chan CommandPoolPoolRequest
+    -- ^ return channel for used command pools
   }
 
+-- | Initial number of command pools in a command pool pool
 initialCmdPoolNum :: Int
 initialCmdPoolNum = 2
 
@@ -278,7 +287,7 @@ metaCommandPoolPool device queueFamIdx =
   (\CommandPoolPool{..} -> do
       -- WARNING destruction doesn't take into account CommandPools that are acquired
       mvar <- newEmptyMVar
-      writeChan usedPoolChan (Left mvar)
+      writeChan requestChan (Shutdown mvar)
       takeMVar mvar
 
       fresh <- takeMVar freshPools
@@ -287,15 +296,15 @@ metaCommandPoolPool device queueFamIdx =
   (do
       let mCommandPool = metaManagedCommandPool device queueFamIdx
       initialCmdPools <- replicateM initialCmdPoolNum (create mCommandPool)
-      usedPoolChan <- newChan
+      requestChan <- newChan
       freshPools <- newMVar initialCmdPools
 
       _ <- forkProg $ loop $
-        readChan usedPoolChan >>= \case
-          Left mvar -> do
+        readChan requestChan >>= \case
+          Shutdown mvar -> do
             putMVar mvar ()
             return $ AbortLoop ()
-          Right used -> do
+          Release used -> do
             -- TODO check if used pool has enough free buffers to be reused without reset
             -- TODO pools that have outstanding buffers can not reset but can potentially still acquire buffers
 
@@ -318,24 +327,30 @@ acquireCommandPool CommandPoolPool{ mCommandPool, freshPools } = do
                 []        -> putMVar freshPools [] >> create mCommandPool
 
 releaseCommandPool :: CommandPoolPool -> ManagedCommandPool -> Program r ()
-releaseCommandPool CommandPoolPool{ usedPoolChan } cmdPool = do
+releaseCommandPool CommandPoolPool{ requestChan } cmdPool = do
   touchCommandPool cmdPool -- make sure changes arrive in next thread that uses the pool
-  writeChan usedPoolChan (Right cmdPool)
+  writeChan requestChan (Release cmdPool)
 
 
--- arbitrary value
+-- | Initial number of cmdBufs in a ManagedCommandPool
 initialCmdBufNum :: Int
 initialCmdBufNum = 1
 
--- | Designed for one thread to get cmdBufs from the pool and many threads to
+-- | Designed for one thread to get cmdBufs from the pool and any thread to
 --   return them to the pool.
 data ManagedCommandPool = ManagedCommandPool
   { cmdPool         :: VkCommandPool
   , acquiredCount   :: IORef Int
-  , usedCmdBufs     :: MVar (Int, [VkCommandBuffer])
+    -- ^ number of acquired command buffers since the last cmdPool reset
+  , releasedCmdBufs :: MVar (Int, [VkCommandBuffer])
+    -- ^ released command buffers since the last cmdPool reset
   , enableNotify    :: IORef Bool
+    -- ^ toggle for notification when the command pool can be reset
   , notifyResetable :: MVar ()
+    -- ^ when enableNotify is true, this MVar will be put when all acquired
+    --   command buffers have been released
   , freshCmdBufs    :: IORef [VkCommandBuffer]
+    -- ^ command buffers from the pool that are ready to use
   , mCmdBufs        :: forall r. Int -> MetaResource r [VkCommandBuffer]
   , dev             :: VkDevice
   }
@@ -353,7 +368,7 @@ metaManagedCommandPool :: VkDevice -> Word32 -> MetaResource r ManagedCommandPoo
 metaManagedCommandPool device queueFamIdx =
   let mCmdPool = metaCommandPool device queueFamIdx (ResetCmdBuf False)
   in metaResource
-  (\ManagedCommandPool{..} -> do
+  (\ManagedCommandPool{..} ->
       -- cmdBufs are freed automatically
       destroy mCmdPool cmdPool
   )
@@ -361,7 +376,7 @@ metaManagedCommandPool device queueFamIdx =
       cmdPool <- create mCmdPool
       acquiredCount <- newIORef 0
       let mCmdBufs = metaCommandBuffers device cmdPool
-      usedCmdBufs <- newMVar (0, [])
+      releasedCmdBufs <- newMVar (0, [])
       enableNotify <- newIORef False
       notifyResetable <- newEmptyMVar
       initialCmdBufs <- alloc (mCmdBufs initialCmdBufNum)
@@ -372,14 +387,14 @@ metaManagedCommandPool device queueFamIdx =
 waitResetableCommandPool :: ManagedCommandPool -> Program r ()
 waitResetableCommandPool ManagedCommandPool{..} = do
   acquiredCnt <- readIORef acquiredCount
-  (usedCount, used) <- takeMVar usedCmdBufs
+  (usedCount, used) <- takeMVar releasedCmdBufs
   if acquiredCnt == usedCount
     then
-      putMVar usedCmdBufs (usedCount, used)
+      putMVar releasedCmdBufs (usedCount, used)
     else do
       void $ tryTakeMVar notifyResetable
       atomicWriteIORef enableNotify True
-      putMVar usedCmdBufs (usedCount, used)
+      putMVar releasedCmdBufs (usedCount, used)
       takeMVar notifyResetable
       atomicWriteIORef enableNotify False
 
@@ -388,9 +403,9 @@ waitResetableCommandPool ManagedCommandPool{..} = do
 --   Make sure that mcpAcquireCommandBuffer can't be called at the same time.
 resetCommandPool :: ManagedCommandPool -> Program r ()
 resetCommandPool ManagedCommandPool{..} = do
-  (_, cmdBufs) <- takeMVar usedCmdBufs
+  (_, cmdBufs) <- takeMVar releasedCmdBufs
   writeIORef acquiredCount 0
-  putMVar usedCmdBufs (0, [])
+  putMVar releasedCmdBufs (0, [])
   runVk $ vkResetCommandPool dev cmdPool VK_ZERO_FLAGS
   -- usually freshCmdBufs should be empty or mostly empty here
   modifyIORef' freshCmdBufs (++ cmdBufs)
@@ -419,7 +434,7 @@ mcpInsistAcquireCommandBuffer ManagedCommandPool{..} = do
 -- | Give a command buffer back to the cmdBuf pool. Thread-safe.
 mcpReleaseCommandBuffer :: ManagedCommandPool -> VkCommandBuffer -> Program r ()
 mcpReleaseCommandBuffer ManagedCommandPool{..} cmdBuf = do
-  (usedCount, ucbs) <- takeMVar usedCmdBufs
+  (usedCount, ucbs) <- takeMVar releasedCmdBufs
   let usedCount' = usedCount + 1
 
   enable <- readIORef enableNotify
@@ -428,4 +443,4 @@ mcpReleaseCommandBuffer ManagedCommandPool{..} cmdBuf = do
     acquiredCnt <- readIORef acquiredCount
     when (acquiredCnt == usedCount') $ void $ tryPutMVar notifyResetable ()
 
-  putMVar usedCmdBufs (usedCount', cmdBuf:ucbs)
+  putMVar releasedCmdBufs (usedCount', cmdBuf:ucbs)
