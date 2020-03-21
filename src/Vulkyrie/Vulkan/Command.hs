@@ -52,6 +52,7 @@ import           Vulkyrie.Vulkan.Queue
 
 
 newtype ResetCmdBufFlag = ResetCmdBuf Bool deriving Eq
+data BufferLevel = Primary | Secondary deriving (Eq, Ord, Show)
 
 
 metaCommandPool :: VkDevice -> Word32 -> ResetCmdBufFlag -> MetaResource r VkCommandPool
@@ -68,9 +69,10 @@ metaCommandPool dev queueFamIdx (ResetCmdBuf resetFlag) =
 
 metaCommandBuffers :: VkDevice
                    -> VkCommandPool
+                   -> BufferLevel
                    -> Int
                    -> MetaResource r [VkCommandBuffer]
-metaCommandBuffers dev cmdPool buffersCount =
+metaCommandBuffers dev cmdPool level buffersCount =
   metaResource
     (\cmdBufs -> liftIO $ Foreign.withArray cmdBufs $ \cbsPtr ->
       vkFreeCommandBuffers dev cmdPool (fromIntegral buffersCount) cbsPtr)
@@ -79,7 +81,10 @@ metaCommandBuffers dev cmdPool buffersCount =
           $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
           &* set @"pNext" VK_NULL
           &* set @"commandPool" cmdPool
-          &* set @"level" VK_COMMAND_BUFFER_LEVEL_PRIMARY
+          &* set @"level" (case level of
+            Primary -> VK_COMMAND_BUFFER_LEVEL_PRIMARY
+            Secondary -> VK_COMMAND_BUFFER_LEVEL_SECONDARY
+          )
           &* set @"commandBufferCount" (fromIntegral buffersCount)
 
     -- allocate a pointer to an array of command buffer handles
@@ -375,7 +380,7 @@ metaManagedCommandPool device queueFamIdx =
   (do
       cmdPool <- create mCmdPool
       acquiredCount <- newIORef 0
-      let mCmdBufs = metaCommandBuffers device cmdPool
+      let mCmdBufs = metaCommandBuffers device cmdPool Primary
       releasedCmdBufs <- newMVar (0, [])
       enableNotify <- newIORef False
       notifyResetable <- newEmptyMVar
