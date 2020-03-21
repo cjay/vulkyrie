@@ -38,7 +38,7 @@ createTextureInfo :: EngineCapability
                   -> Bool
                   -> FilePath
                   -> Resource r (QueueEvent, VkDescriptorImageInfo)
-createTextureInfo cap@EngineCapability{..} magPixelated path = do
+createTextureInfo cap@EngineCapability{ dev } magPixelated path = do
     (finishEvent, textureView, mipLevels) <- createTextureImageView cap path
     textureSampler <- createTextureSampler dev mipLevels magPixelated
     let info = textureImageInfo textureView textureSampler
@@ -48,7 +48,7 @@ createTextureInfo cap@EngineCapability{..} magPixelated path = do
 createTextureImageView :: EngineCapability
                        -> FilePath
                        -> Resource r (QueueEvent, VkImageView, Word32)
-createTextureImageView ecap@EngineCapability{..} path = do
+createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool } path = do
   Image { imageWidth, imageHeight, imageData }
     <- onCreate $ (liftIO $ readImage path) >>= \case
       Left err -> throwVkMsg err
@@ -397,7 +397,7 @@ createImage :: EngineCapability
             -> VkImageUsageFlags
             -> VkMemoryPropertyFlags
             -> Resource r (MemoryLoc, VkImage)
-createImage EngineCapability{..} width height mipLevels samples format tiling usage propFlags = do
+createImage EngineCapability{ dev, memPool } width height mipLevels samples format tiling usage propFlags =
   let ici = createVk @VkImageCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO
         &* set @"pNext" VK_NULL
@@ -504,7 +504,7 @@ createDepthAttImgView :: EngineCapability
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
                       -> Resource r ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
-createDepthAttImgView ecap@EngineCapability{..} extent samples = do
+createDepthAttImgView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool } extent samples = do
   depthFormat <- onCreate $ findDepthFormat pdev
 
   (_, depthImage) <- createImage ecap
@@ -524,7 +524,7 @@ createColorAttImgView :: EngineCapability
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
                       -> Resource r ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
-createColorAttImgView ecap@EngineCapability{..} format extent samples = do
+createColorAttImgView ecap@EngineCapability{ dev, cmdCap, cmdQueue, semPool } format extent samples = do
   (_, colorImage) <- createImage ecap
     (getField @"width" extent) (getField @"height" extent) 1 samples format
     VK_IMAGE_TILING_OPTIMAL

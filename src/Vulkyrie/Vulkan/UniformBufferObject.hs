@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE Strict        #-}
 module Vulkyrie.Vulkan.UniformBufferObject
   ( uboCreateBuffers
@@ -6,6 +5,7 @@ module Vulkyrie.Vulkan.UniformBufferObject
   , uboUpdate
   ) where
 
+import           Control.Monad
 import           Data.Bits                      ((.|.))
 import           Foreign.Ptr                    (castPtr)
 import           Graphics.Vulkan
@@ -27,8 +27,8 @@ uboCreateBuffers
   -> VkDeviceSize -- ^ size of uniform buffer object
   -> Int          -- ^ frames in flight
   -> Resource r [(MemoryLoc, VkBuffer)]
-uboCreateBuffers ecap size n = do
-      sequence $ replicate n $ createBuffer ecap size
+uboCreateBuffers ecap size n =
+      replicateM n $ createBuffer ecap size
          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
          ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 

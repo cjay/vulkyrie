@@ -157,7 +157,7 @@ prepareRender :: EngineCapability
               -> [VkPipelineShaderStageCreateInfo]
               -> VkPipelineLayout
               -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
-prepareRender cap@EngineCapability{..} swapInfo shaderStages pipelineLayout = do
+prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = do
   let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
   msaaSamples <- getMaxUsableSampleCount pdev
   depthFormat <- findDepthFormat pdev

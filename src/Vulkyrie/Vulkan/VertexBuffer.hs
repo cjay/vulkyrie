@@ -25,7 +25,7 @@ createVertexBuffer :: (PrimBytes v)
                    -> DataFrame v '[XN 3]
                       -- ^ A collection of at least three vertices
                    -> Resource r (QueueEvent, VkBuffer)
-createVertexBuffer ecap@EngineCapability{..} (XFrame vertices) = do
+createVertexBuffer ecap@EngineCapability{ dev, cmdCap, cmdQueue } (XFrame vertices) = do
 
     let bSize = bSizeOf vertices
 
@@ -54,7 +54,7 @@ createIndexBuffer :: EngineCapability
                   -> DataFrame Word32 '[XN 3]
                      -- ^ A collection of at least three indices
                   -> Resource r (QueueEvent, VkBuffer)
-createIndexBuffer ecap@EngineCapability{..} (XFrame indices) = do
+createIndexBuffer ecap@EngineCapability{ dev, cmdCap, cmdQueue } (XFrame indices) = do
 
     let bSize = bSizeOf indices
 
