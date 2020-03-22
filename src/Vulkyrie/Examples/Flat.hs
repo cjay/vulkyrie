@@ -1,4 +1,5 @@
 {-# LANGUAGE Strict #-}
+{-# LANGUAGE RankNTypes #-}
 module Vulkyrie.Examples.Flat
   ( runMyVulkanProgram
   ) where
@@ -19,6 +20,7 @@ import           Vulkyrie.MonadIO.MVar
 import           Vulkyrie.Program
 import           Vulkyrie.Resource
 import           Vulkyrie.Utils                (orthogonalVk, scale)
+import           Vulkyrie.Vulkan.Command
 import           Vulkyrie.Vulkan.Default.Pipeline
 import           Vulkyrie.Vulkan.Default.RenderPass
 import           Vulkyrie.Vulkan.Descriptor
@@ -195,8 +197,8 @@ myAppNewSwapchain MyAppState{..} swapInfo = do
   putMVar renderContextVar renderContext
   return (framebuffers, nextSems)
 
-myAppRecordFrame :: MyAppState -> VkCommandBuffer -> VkFramebuffer -> Program r ()
-myAppRecordFrame MyAppState{..} cmdBuf framebuffer = do
+myAppRenderFrame :: MyAppState -> RenderFun
+myAppRenderFrame MyAppState{..} framebuffer waitSemsWithStages signalSems = do
   let WindowState{..} = winState
 
   gs <- readMVar gameState
@@ -204,7 +206,8 @@ myAppRecordFrame MyAppState{..} cmdBuf framebuffer = do
 
   renderContext <- readMVar renderContextVar
   viewProjTransform <- viewProjMatrix (extent renderContext) camPos
-  recordAll renderContext viewProjTransform objs cmdBuf framebuffer
+  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf ->
+    recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 data WindowState
   = WindowState
@@ -236,6 +239,6 @@ runMyVulkanProgram = do
         , appMainThreadHook = myAppMainThreadHook
         , appStart = myAppStart
         , appNewSwapchain = myAppNewSwapchain
-        , appRecordFrame = myAppRecordFrame
+        , appRenderFrame = myAppRenderFrame
         }
   runVulkanProgram app

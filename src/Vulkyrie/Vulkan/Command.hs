@@ -3,6 +3,7 @@
 module Vulkyrie.Vulkan.Command
   ( metaCommandPool
   , metaCommandBuffers
+  , makeCommandBufferBeginInfo
 
   , forkWithCmdCap
   , postWithAndRetWait

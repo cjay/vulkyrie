@@ -2,6 +2,7 @@
 {-# LANGUAGE Strict     #-}
 module Vulkyrie.Engine.Main
   ( App (..)
+  , RenderFun
   , EngineFlag (..)
   , runVulkanProgram
   ) where
@@ -51,8 +52,7 @@ data App s w
     -- ^ makes the shared app state handle
   , appNewSwapchain :: forall r a. s -> SwapchainInfo ->
                        Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
-  , appRecordFrame  :: forall r. s -> VkCommandBuffer -> VkFramebuffer ->
-                       Program r ()
+  , appRenderFrame  :: s -> RenderFun
   }
 
 runVulkanProgram :: App s w -> IO ()
@@ -114,7 +114,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     firstSwapInfo <- createSwapchain dev scsd queues vulkanSurface syncMode Nothing
     putMVar nextSwapchainSlot (swapchain firstSwapInfo)
     swapInfoRef <- newIORef firstSwapInfo
-    -- TODO The -1 is a workaround. Without it, validation layer complains. 
+    -- TODO The -1 is a workaround. Without it, validation layer complains.
     -- Not sure if bug in validaiton/MoltenVK. Complaint:
     -- "Application has already previously acquired 2 images from swapchain. Only 2
     -- are available to be acquired using a timeout of UINT64_MAX (given the
@@ -155,7 +155,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
               , renderFinishedSems
               , nextSems
               , frameFinishedEvent
-              , recCmdBuffer = appRecordFrame appState
+              , renderFun = appRenderFrame appState
               , framebuffers
               }
         needRecreation <- drawFrame cap rdata `catchError` ( \err@(VulkanException ecode _) ->

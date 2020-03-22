@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE Strict #-}
 module Vulkyrie.Examples.FPS
   ( runMyVulkanProgram
@@ -15,6 +16,7 @@ import           Vulkyrie.MonadIO.MVar
 import           Vulkyrie.Program
 import           Vulkyrie.Resource
 import           Vulkyrie.Utils                (perspectiveVk, scale)
+import           Vulkyrie.Vulkan.Command
 import           Vulkyrie.Vulkan.Default.Pipeline
 import           Vulkyrie.Vulkan.Default.RenderPass
 import           Vulkyrie.Vulkan.Descriptor
@@ -297,8 +299,8 @@ myAppNewSwapchain MyAppState{..} swapInfo = do
 clampPitch :: Double -> Double
 clampPitch a = min (max a (-0.5)) 0.5
 
-myAppRecordFrame :: MyAppState -> VkCommandBuffer -> VkFramebuffer -> Program r ()
-myAppRecordFrame appState@MyAppState{..} cmdBuf framebuffer = do
+myAppRenderFrame :: MyAppState -> RenderFun
+myAppRenderFrame appState@MyAppState{..} framebuffer waitSemsWithStages signalSems = do
   let WindowState{..} = winState
   objs <- makeWorld appState
   renderContext <- readMVar renderContextVar
@@ -321,7 +323,8 @@ myAppRecordFrame appState@MyAppState{..} cmdBuf framebuffer = do
   putMVar inputMutex ()
 
   viewProjTransform <- viewProjMatrix (extent renderContext) lookDir
-  recordAll renderContext viewProjTransform objs cmdBuf framebuffer
+  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf ->
+    recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 
 data WindowState
@@ -355,7 +358,7 @@ runMyVulkanProgram = do
         , appMainThreadHook = myAppMainThreadHook
         , appStart = myAppStart
         , appNewSwapchain = myAppNewSwapchain
-        , appRecordFrame = myAppRecordFrame
+        , appRenderFrame = myAppRenderFrame
         }
   runVulkanProgram app
 
