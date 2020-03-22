@@ -2,7 +2,6 @@
 {-# LANGUAGE Strict     #-}
 module Vulkyrie.Vulkan.Command
   ( metaCommandPool
-  , ResetCmdBufFlag (..)
   , metaCommandBuffers
 
   , forkWithCmdCap
@@ -51,25 +50,22 @@ import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Queue
 
 
-newtype ResetCmdBufFlag = ResetCmdBuf Bool deriving Eq
-data BufferLevel = Primary | Secondary deriving (Eq, Ord, Show)
 
-
-metaCommandPool :: VkDevice -> Word32 -> ResetCmdBufFlag -> MetaResource r VkCommandPool
-metaCommandPool dev queueFamIdx (ResetCmdBuf resetFlag) =
+metaCommandPool :: VkDevice -> Word32 -> VkCommandPoolCreateFlags -> MetaResource r VkCommandPool
+metaCommandPool dev queueFamIdx flags =
   metaResource (liftIO . flip (vkDestroyCommandPool dev) VK_NULL) $
     allocaPeek $ \pPtr -> withVkPtr
       ( createVk
         $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO
         &* set @"pNext" VK_NULL
-        &* set @"flags" (if resetFlag then VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT else VK_ZERO_FLAGS)
+        &* set @"flags" flags
         &* set @"queueFamilyIndex" queueFamIdx
       ) $ \ciPtr -> runVk $ vkCreateCommandPool dev ciPtr VK_NULL pPtr
 
 
 metaCommandBuffers :: VkDevice
                    -> VkCommandPool
-                   -> BufferLevel
+                   -> VkCommandBufferLevel
                    -> Int
                    -> MetaResource r [VkCommandBuffer]
 metaCommandBuffers dev cmdPool level buffersCount =
@@ -81,10 +77,7 @@ metaCommandBuffers dev cmdPool level buffersCount =
           $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO
           &* set @"pNext" VK_NULL
           &* set @"commandPool" cmdPool
-          &* set @"level" (case level of
-            Primary -> VK_COMMAND_BUFFER_LEVEL_PRIMARY
-            Secondary -> VK_COMMAND_BUFFER_LEVEL_SECONDARY
-          )
+          &* set @"level" level
           &* set @"commandBufferCount" (fromIntegral buffersCount)
 
     -- allocate a pointer to an array of command buffer handles
@@ -96,14 +89,14 @@ metaCommandBuffers dev cmdPool level buffersCount =
 
 
 
-newtype OneTimeSubmitFlag = OneTimeSubmit Bool deriving Eq
-
-makeCommandBufferBeginInfo :: OneTimeSubmitFlag -> VkCommandBufferBeginInfo
-makeCommandBufferBeginInfo (OneTimeSubmit oneTimeFlag) =
+makeCommandBufferBeginInfo :: VkCommandBufferUsageFlags -> Maybe VkCommandBufferInheritanceInfo -> VkCommandBufferBeginInfo
+makeCommandBufferBeginInfo flags inheritanceInfo =
   createVk @VkCommandBufferBeginInfo
             $  set @"sType" VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO
-            &* set @"flags" (if oneTimeFlag then VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT else VK_ZERO_FLAGS)
+            &* set @"flags" flags
             &* set @"pNext" VK_NULL
+            &* maybe (set @"pInheritanceInfo" VK_NULL) 
+                     (setVkRef @"pInheritanceInfo") inheritanceInfo
 
 
 postWithAndRetWait :: CommandCapability
@@ -116,7 +109,7 @@ postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action =
   locally $ do
     managedCmdBuf <- acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
-    let cmdbBI = makeCommandBufferBeginInfo (OneTimeSubmit True)
+    let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
     withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
     result <- action cmdBuf
     runVk $ vkEndCommandBuffer cmdBuf
@@ -148,7 +141,7 @@ postWithAndRet cmdCap queue waitSemsWithStages signalSems action = do
   run retBox = do
     managedCmdBuf <- acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
-    let cmdbBI = makeCommandBufferBeginInfo (OneTimeSubmit True)
+    let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
     withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
     result <- action cmdBuf
     runVk $ vkEndCommandBuffer cmdBuf
@@ -274,12 +267,13 @@ data CommandPoolPoolRequest
   | Release ManagedCommandPool
 
 -- | Used to reset released command pools in the background and to keep track of fresh ones.
+--   Completely thread-safe.
 data CommandPoolPool = CommandPoolPool
   { mCommandPool :: forall r. MetaResource r ManagedCommandPool
   , freshPools   :: MVar [ManagedCommandPool]
     -- ^ ready to use command pools (after creation or cmdPool reset)
   , requestChan :: Chan CommandPoolPoolRequest
-    -- ^ return channel for used command pools
+    -- ^ return channel for released command pools
   }
 
 -- | Initial number of command pools in a command pool pool
@@ -309,16 +303,16 @@ metaCommandPoolPool device queueFamIdx =
           Shutdown mvar -> do
             putMVar mvar ()
             return $ AbortLoop ()
-          Release used -> do
-            -- TODO check if used pool has enough free buffers to be reused without reset
+          Release released -> do
+            -- TODO check if released pool has enough free buffers to be reused without reset
             -- TODO pools that have outstanding buffers can not reset but can potentially still acquire buffers
 
             -- TODO not in separate thread for now because we would need to keep track of threads for clean shutdown
-            waitResetableCommandPool used
-            resetCommandPool used
-            touchCommandPool used -- make sure changes arrive in next thread that uses the pool
+            waitResetableCommandPool released
+            resetCommandPool released
+            touchCommandPool released -- make sure changes arrive in next thread that uses the pool
             fresh <- takeMVar freshPools
-            putMVar freshPools (used:fresh)
+            putMVar freshPools (released:fresh)
             return ContinueLoop
 
       return CommandPoolPool{..}
@@ -371,7 +365,7 @@ touchCommandPool ManagedCommandPool{..} = do
 
 metaManagedCommandPool :: VkDevice -> Word32 -> MetaResource r ManagedCommandPool
 metaManagedCommandPool device queueFamIdx =
-  let mCmdPool = metaCommandPool device queueFamIdx (ResetCmdBuf False)
+  let mCmdPool = metaCommandPool device queueFamIdx VK_ZERO_FLAGS
   in metaResource
   (\ManagedCommandPool{..} ->
       -- cmdBufs are freed automatically
@@ -380,7 +374,7 @@ metaManagedCommandPool device queueFamIdx =
   (do
       cmdPool <- create mCmdPool
       acquiredCount <- newIORef 0
-      let mCmdBufs = metaCommandBuffers device cmdPool Primary
+      let mCmdBufs = metaCommandBuffers device cmdPool VK_COMMAND_BUFFER_LEVEL_PRIMARY
       releasedCmdBufs <- newMVar (0, [])
       enableNotify <- newIORef False
       notifyResetable <- newEmptyMVar
@@ -392,18 +386,18 @@ metaManagedCommandPool device queueFamIdx =
 waitResetableCommandPool :: ManagedCommandPool -> Program r ()
 waitResetableCommandPool ManagedCommandPool{..} = do
   acquiredCnt <- readIORef acquiredCount
-  (usedCount, used) <- takeMVar releasedCmdBufs
-  if acquiredCnt == usedCount
+  (releasedCount, released) <- takeMVar releasedCmdBufs
+  if acquiredCnt == releasedCount
     then
-      putMVar releasedCmdBufs (usedCount, used)
+      putMVar releasedCmdBufs (releasedCount, released)
     else do
       void $ tryTakeMVar notifyResetable
       atomicWriteIORef enableNotify True
-      putMVar releasedCmdBufs (usedCount, used)
+      putMVar releasedCmdBufs (releasedCount, released)
       takeMVar notifyResetable
       atomicWriteIORef enableNotify False
 
--- | Moves used command buffers to the fresh cmdBufs list. Not thread-safe.
+-- | Moves released command buffers to the fresh cmdBufs list. Not thread-safe.
 --
 --   Make sure that mcpAcquireCommandBuffer can't be called at the same time.
 resetCommandPool :: ManagedCommandPool -> Program r ()
@@ -439,13 +433,13 @@ mcpInsistAcquireCommandBuffer ManagedCommandPool{..} = do
 -- | Give a command buffer back to the managed command pool. Thread-safe.
 mcpReleaseCommandBuffer :: ManagedCommandPool -> VkCommandBuffer -> Program r ()
 mcpReleaseCommandBuffer ManagedCommandPool{..} cmdBuf = do
-  (usedCount, ucbs) <- takeMVar releasedCmdBufs
-  let usedCount' = usedCount + 1
+  (releasedCount, released) <- takeMVar releasedCmdBufs
+  let releasedCount' = releasedCount + 1
 
   enable <- readIORef enableNotify
   when enable $ do
     -- enabled -> acquiredCount can't change
     acquiredCnt <- readIORef acquiredCount
-    when (acquiredCnt == usedCount') $ void $ tryPutMVar notifyResetable ()
+    when (acquiredCnt == releasedCount') $ void $ tryPutMVar notifyResetable ()
 
-  putMVar releasedCmdBufs (usedCount', cmdBuf:ucbs)
+  putMVar releasedCmdBufs (releasedCount', cmdBuf:released)
