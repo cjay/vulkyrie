@@ -19,50 +19,63 @@ debugForkIO action = Control.Concurrent.forkFinally (announce >> action) finish 
     putStrLn $ "Terminated Thread (" ++ show tid ++ ") " ++ resStr
 
 
+-- | A threadsafe token counter variable.
+newtype NatTokenVar = NatTokenVar (MVar NatTokenState)
 
-data NatTokenVarOrder = Take (MVar ()) | Release deriving (Eq)
-
-data NatTokenVar
-  = NatTokenVar
-  { orderChan :: Chan NatTokenVarOrder
-  , waitingChan :: Chan (MVar ())
-  , avail :: MVar Int
+data NatTokenState
+  = NatTokenState
+  { waiting :: [MVar ()]
+  , avail :: Int
+    -- ^ Number of available tokens. Only gets negative when changeNumTokens reduces the amount.
+  , amount :: Int
   }
 
-makeNatTokenVar :: Int -> IO NatTokenVar
-makeNatTokenVar num = do
-  orderChan <- newChan
-  waitingChan <- newChan
-  avail <- newMVar num
+newNatTokenVar :: Int -> IO NatTokenVar
+newNatTokenVar n = do
+  state <- newMVar $ 
+    NatTokenState 
+      { waiting = []
+      , avail = n
+      , amount = n
+      }
+  return $ NatTokenVar state
 
-  void $ forkIO $ forever $ do
-    a <- takeMVar avail
-    order <- readChan orderChan
-    case order of
-      Take answerBox -> do
-        -- putStrLn $ "[NatTokenVar.Take:" <> show a <> "->" <> show (a-1) <> "]"
-        putMVar avail $ a - 1
-        if a > 0
-          then putMVar answerBox ()
-          else writeChan waitingChan answerBox
-      Release -> do
-        -- putStrLn $ "[NatTokenVar.Release:" <> show a <> "->" <> show (a+1) <> "]"
-        putMVar avail $ a + 1
-        when (a < 0) $ do
-          answerBox <- readChan waitingChan
-          putMVar answerBox ()
+-- | If more tokens are already acquried than the new amount, no waiting threads
+-- are woken up until enough tokens have been returned.
+changeNumTokens :: NatTokenVar -> Int -> IO ()
+changeNumTokens (NatTokenVar stateVar) n = do
+  state@NatTokenState{ avail, amount, waiting } <- takeMVar stateVar
+  let delta = n - amount
+      avail' = avail + delta
+      wakeNum = min avail' (length waiting)
+      avail'' = avail' - wakeNum
+      (wake, waiting') = splitAt wakeNum waiting
+  forM_ wake $ \box -> putMVar box ()
+  putMVar stateVar $ state
+    { waiting = waiting'
+    , avail = avail''
+    , amount = n
+    }
 
-  return NatTokenVar {..}
-
+-- | Blocks when all tokens have already been acquired. Unblocking in FIFO order.
 acquireToken :: NatTokenVar -> IO ()
-acquireToken NatTokenVar{..} = do
-  answerBox <- newEmptyMVar
-  writeChan orderChan (Take answerBox)
-  takeMVar answerBox
+acquireToken (NatTokenVar stateVar) = do
+  state@NatTokenState{ waiting, avail } <- takeMVar stateVar
+  if avail > 0
+    then putMVar stateVar $ state { avail = avail - 1 }
+    else do
+      answerBox <- newEmptyMVar
+      putMVar stateVar $ state { waiting = waiting <> pure answerBox }
+      takeMVar answerBox
 
 releaseToken :: NatTokenVar -> IO ()
-releaseToken NatTokenVar{..} =
-  writeChan orderChan Release
+releaseToken (NatTokenVar stateVar) = do
+  state@NatTokenState{ waiting, avail } <- takeMVar stateVar
+  if avail >= 0 && not (null waiting)
+    then let w:ws = waiting in do
+      putMVar w ()
+      putMVar stateVar $ state { waiting = ws }
+    else putMVar stateVar $ state { avail = avail + 1 }
 
 
 -- copied from easytensor and fixed for Vulkan:

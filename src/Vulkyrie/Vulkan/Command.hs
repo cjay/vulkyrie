@@ -436,7 +436,7 @@ mcpInsistAcquireCommandBuffer ManagedCommandPool{..} = do
   modifyIORef' acquiredCount (+1)
   return cmdBuf
 
--- | Give a command buffer back to the cmdBuf pool. Thread-safe.
+-- | Give a command buffer back to the managed command pool. Thread-safe.
 mcpReleaseCommandBuffer :: ManagedCommandPool -> VkCommandBuffer -> Program r ()
 mcpReleaseCommandBuffer ManagedCommandPool{..} cmdBuf = do
   (usedCount, ucbs) <- takeMVar releasedCmdBufs

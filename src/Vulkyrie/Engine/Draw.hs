@@ -41,13 +41,11 @@ data RenderData
   , nextSems                  :: MVar [(VkSemaphore, VkPipelineStageFlags)]
     -- ^ Additional semaphores that the graphics queue submission needs to wait on.
   , frameFinishedEvent        :: Event
-    -- ^ Gets signalled
+    -- ^ Gets signalled every time a frame has finished rendering.
   , recCmdBuffer              :: forall r. VkCommandBuffer -> VkFramebuffer -> Program r ()
     -- ^ record cmdBuf
   , framebuffers              :: [VkFramebuffer]
     -- ^ one per swapchain image
-  , maxFramesInFlight         :: Int
-    -- ^ allowed number of unfinished submitted frames on the graphics queue
   }
 
 
@@ -72,20 +70,18 @@ drawFrame EngineCapability{ dev, semPool, cmdCap, cmdQueue } RenderData{..} = do
       )
     putMVar swapchainVar swapchain
 
-    nextS <- takeMVar nextSems
+    nextSems_ <- takeMVar nextSems
     putMVar nextSems []
 
+    let framebuffer = framebuffers !! fromIntegral imgIndex
     -- The renderFinishedSems channel also serves to limit the frames-in-flight to maxFramesInFlight
     renderFinishedSem <- readChan renderFinishedSems
     -- This intentionally blocks while recording the command buffer.
     -- There can still be multiple frames already submitted.
     nextEvent <- postWith cmdCap cmdQueue
-      ((imageAvailSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextS)
-      [renderFinishedSem] $ \cmdBuf -> do
-      -- let frameDescrSet = frameDescrSets !! frameIndex
-      let framebuffer = framebuffers !! fromIntegral imgIndex
-      -- descrSetMutator frameDescrSet
-      recCmdBuffer cmdBuf framebuffer
+      ((imageAvailSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextSems_)
+      [renderFinishedSem] $ \cmdBuf ->
+        recCmdBuffer cmdBuf framebuffer
 
     -- VK_ERROR_OUT_OF_DATE_KHR is supressed when presenting here
     let presentAction = present presentQueue [(swapchainVar, imgIndex)] [renderFinishedSem]

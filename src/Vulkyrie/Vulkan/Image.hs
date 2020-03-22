@@ -55,8 +55,7 @@ createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPo
       Right dynImg -> pure $ convertRGBA8 dynImg
   let (imageDataForeignPtr, imageDataLen) = Vec.unsafeToForeignPtr0 imageData
       bufSize :: VkDeviceSize = fromIntegral imageDataLen
-      log2 (x::Float) = log x / log 2
-      mipLevels = (floor . log2 . fromIntegral $ max imageWidth imageHeight) + 1
+      mipLevels = (floor . logBase @Float 2 . fromIntegral $ max imageWidth imageHeight) + 1
 
   -- we don't need to access the VkDeviceMemory of the image, copyBufferToImage works with the VkImage
   (_, image) <- createImage ecap

@@ -119,6 +119,7 @@ checkStatus (Left err) = do
   exitFailure
 
 
+-- TODO bug: if parent thread doesn't exist anymore, throwTo does nothing
 forkProg :: Program' () -> Program r ThreadId
 forkProg prog = Program $ \ref c -> do
   parentThreadId <- myThreadId
@@ -423,7 +424,7 @@ asyncRedo prog = myThreadId >>= go where
     control <- newEmptyMVar
     let trigger = do
           success <- tryPutMVar control SigRedo
-          when (not success) $ throwVkMsg "asyncRedo action tried to signal more than once"
+          unless success $ throwVkMsg "asyncRedo action tried to signal more than once"
           liftIO yield
     -- this program launches the redo-thread and continues with result () immediately
     Program $ \ref c -> do

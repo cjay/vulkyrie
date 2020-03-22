@@ -114,13 +114,15 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     firstSwapInfo <- createSwapchain dev scsd queues vulkanSurface syncMode Nothing
     putMVar nextSwapchainSlot (swapchain firstSwapInfo)
     swapInfoRef <- newIORef firstSwapInfo
-    -- TODO The -1 is a workaround. Without it, validation layer complains. Not sure if bug in validaiton/MoltenVK.
-    -- Application has already previously acquired 2 images from swapchain. Only 2
+    -- TODO The -1 is a workaround. Without it, validation layer complains. 
+    -- Not sure if bug in validaiton/MoltenVK. Complaint:
+    -- "Application has already previously acquired 2 images from swapchain. Only 2
     -- are available to be acquired using a timeout of UINT64_MAX (given the
-    -- swapchain has 3, and VkSurfaceCapabilitiesKHR::minImageCount is 2).
-    let numSwapImgTokens = swapMaxAcquired firstSwapInfo - 1
-    swapImgTokens <- liftIO $ makeNatTokenVar numSwapImgTokens
-    logInfo $ "number of swap image tokens is " ++ show numSwapImgTokens
+    -- swapchain has 3, and VkSurfaceCapabilitiesKHR::minImageCount is 2)."
+    let numSwapImgTokens swapInfo = swapMaxAcquired swapInfo - 1
+        ntok = numSwapImgTokens firstSwapInfo
+    swapImgTokens <- liftIO $ newNatTokenVar ntok
+    logInfo $ "number of swap image tokens is " ++ show ntok
 
     -- Those are only needed if commands need to happen before first draw, I think:
     -- attachQueuePump gfxQueue 16666
@@ -134,10 +136,8 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
       -- need this for delayed destruction of the old swapchain if it gets replaced
       swapchainSlot <- createSwapchainSlot dev
       putMVar swapchainSlot =<< takeMVar nextSwapchainSlot
-      swapInfo@SwapchainInfo { swapMaxAcquired } <- readIORef swapInfoRef
-      -- logInfo $ "number of new swap images is " ++ show swapMaxAcquired
-      -- TODO theoretically we need to adapt swapImgTokens to new swapchain
-      -- length, somehow taking into account already acquired images
+      swapInfo <- readIORef swapInfoRef
+      liftIO $ changeNumTokens swapImgTokens (numSwapImgTokens swapInfo)
 
       (framebuffers, nextAppSems) <- appNewSwapchain appState swapInfo
       sems <- takeMVar nextSems
@@ -157,7 +157,6 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
               , frameFinishedEvent
               , recCmdBuffer = appRecordFrame appState
               , framebuffers
-              , maxFramesInFlight
               }
         needRecreation <- drawFrame cap rdata `catchError` ( \err@(VulkanException ecode _) ->
           case ecode of
