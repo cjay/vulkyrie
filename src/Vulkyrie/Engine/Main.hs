@@ -60,7 +60,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
   windowSizeChanged <- newIORef False
   let (windowWidth, windowHeight) = windowSize
   window <- initGLFWWindow windowWidth windowHeight windowName windowSizeChanged
-  let enabledLayers = ["VK_LAYER_LUNARG_standard_validation" | Validation `elem` flags ]
+  let enabledLayers = ["VK_LAYER_KHRONOS_validation" | Validation `elem` flags ]
   vulkanInstance <- auto $ createGLFWVulkanInstance (windowName <> "-instance") enabledLayers
   vulkanSurface <- auto $ createSurface vulkanInstance window
   logInfo $ "Createad surface: " ++ show vulkanSurface
@@ -86,7 +86,8 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     descriptorPool <- auto $ createDescriptorPool dev 100 -- TODO make dynamic
     -- TODO create permanently mapped reusable staging buffer
     let cap = EngineCapability
-          { pdev, dev, cmdCap, cmdQueue=gfxQueue, semPool, memPool, descriptorPool }
+          { pdev, dev, queues, cmdCap, cmdQueue=gfxQueue, queueFam=graphicsFamIdx queues,
+          semPool, memPool, descriptorPool }
 
     logInfo "Starting App.."
     appState <- appStart winState cap

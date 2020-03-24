@@ -6,6 +6,7 @@ import Control.Concurrent
 import qualified Control.Monad.ST        as ST
 import qualified Numeric.DataFrame.ST    as ST
 
+
 -- | Like forkIO, but prints when the thread starts and ends, and tells if it ends with an exception
 debugForkIO :: IO () -> IO ThreadId
 debugForkIO action = Control.Concurrent.forkFinally (announce >> action) finish where
@@ -32,8 +33,8 @@ data NatTokenState
 
 newNatTokenVar :: Int -> IO NatTokenVar
 newNatTokenVar n = do
-  state <- newMVar $ 
-    NatTokenState 
+  state <- newMVar $
+    NatTokenState
       { waiting = []
       , avail = n
       , amount = n
@@ -71,11 +72,11 @@ acquireToken (NatTokenVar stateVar) = do
 releaseToken :: NatTokenVar -> IO ()
 releaseToken (NatTokenVar stateVar) = do
   state@NatTokenState{ waiting, avail } <- takeMVar stateVar
-  if avail >= 0 && not (null waiting)
-    then let w:ws = waiting in do
+  case waiting of
+    w:ws | avail >= 0 -> do
       putMVar w ()
       putMVar stateVar $ state { waiting = ws }
-    else putMVar stateVar $ state { avail = avail + 1 }
+    _ -> putMVar stateVar $ state { avail = avail + 1 }
 
 
 -- copied from easytensor and fixed for Vulkan:

@@ -5,6 +5,7 @@ module Vulkyrie.Vulkan.Engine
 
 import           Graphics.Vulkan
 import           Vulkyrie.Vulkan.Command
+import           Vulkyrie.Vulkan.Device
 import           Vulkyrie.Vulkan.Memory
 import           Vulkyrie.Vulkan.Queue
 import           Vulkyrie.Vulkan.Sync
@@ -12,8 +13,10 @@ import           Vulkyrie.Vulkan.Sync
 data EngineCapability = EngineCapability
   { pdev     :: VkPhysicalDevice
   , dev      :: VkDevice
+  , queues   :: DevQueues
   , cmdCap   :: CommandCapability
   , cmdQueue :: ManagedQueue
+  , queueFam :: Word32
   , semPool  :: SemaphorePool
   , memPool  :: MemoryPool
   , descriptorPool :: VkDescriptorPool
