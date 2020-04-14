@@ -115,15 +115,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     (firstSwapchain, firstSwapInfo) <- createSwapchain dev scsd queues vulkanSurface syncMode Nothing
     putMVar nextSwapchainSlot (Just firstSwapchain)
     swapInfoRef <- newIORef firstSwapInfo
-    -- TODO The -1 is a workaround. Without it, validation layer complains.
-    -- Not sure if bug in validaiton/MoltenVK. Complaint:
-    -- "Application has already previously acquired 2 images from swapchain. Only 2
-    -- are available to be acquired using a timeout of UINT64_MAX (given the
-    -- swapchain has 3, and VkSurfaceCapabilitiesKHR::minImageCount is 2)."
-    let numSwapImgTokens swapInfo = swapMaxAcquired swapInfo - 1
-        ntok = numSwapImgTokens firstSwapInfo
-    swapImgTokens <- liftIO $ newNatTokenVar ntok
-    logInfo $ "number of swap image tokens is " ++ show ntok
+    swapImgTokens <- liftIO . newNatTokenVar $ swapMaxAcquired firstSwapInfo
 
     -- Those are only needed if commands need to happen before first draw, I think:
     -- attachQueuePump gfxQueue 16666
@@ -138,7 +130,8 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
       swapchainSlot <- createSwapchainSlot dev
       putMVar swapchainSlot =<< takeMVar nextSwapchainSlot
       swapInfo <- readIORef swapInfoRef
-      liftIO $ changeNumTokens swapImgTokens (numSwapImgTokens swapInfo)
+      -- TODO waiting for vulkan spec clarification: acquiredness of images after swapchain replacement
+      liftIO $ changeNumTokens swapImgTokens (swapMaxAcquired swapInfo)
 
       (framebuffers, nextAppSems) <- appNewSwapchain appState swapInfo
       sems <- takeMVar nextSems

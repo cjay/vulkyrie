@@ -71,6 +71,8 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
       Nothing -> error "unexpected Nothing in swapchain slot"
     -- Acquiring an image from the swapchain
     -- Can throw VK_ERROR_OUT_OF_DATE_KHR
+    -- TODO: validation layer complaint about too many acquired images is
+    -- probably not justified, waiting for vulkan spec to be clarified
     imgIndex <- allocaPeek $ \imgIndexPtr -> runVk
       ( vkAcquireNextImageKHR
             dev swapchain maxBound
