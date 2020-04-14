@@ -40,6 +40,7 @@ data App s w
   = App
   { windowName      :: String
   , windowSize      :: (Int, Int)
+  , windowFullscreen :: Bool
   , flags           :: [EngineFlag]
   , syncMode        :: SyncMode
   , maxFramesInFlight :: Int
@@ -59,7 +60,7 @@ runVulkanProgram :: App s w -> IO ()
 runVulkanProgram App{ .. } = runProgram checkStatus $ do
   windowSizeChanged <- newIORef False
   let (windowWidth, windowHeight) = windowSize
-  window <- initGLFWWindow windowWidth windowHeight windowName windowSizeChanged
+  window <- initGLFWWindow windowWidth windowHeight windowName windowFullscreen windowSizeChanged
   let enabledLayers = ["VK_LAYER_KHRONOS_validation" | Validation `elem` flags ]
   vulkanInstance <- auto $ createGLFWVulkanInstance (windowName <> "-instance") enabledLayers
   vulkanSurface <- auto $ createSurface vulkanInstance window

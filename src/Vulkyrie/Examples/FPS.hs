@@ -351,6 +351,7 @@ runMyVulkanProgram = do
   let app = App
         { windowName = "vulkan-experiment"
         , windowSize = (800, 600)
+        , windowFullscreen = False
         , flags = [Validation]
         , syncMode = VSync
         , maxFramesInFlight = 2

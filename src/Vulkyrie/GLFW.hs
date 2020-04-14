@@ -7,7 +7,9 @@ module Vulkyrie.GLFW
     , glfwWaitEventsMeanwhile
     ) where
 
+import           Control.Applicative
 import           Control.Monad       (forever, unless, when)
+import           Control.Monad.Trans.Maybe
 import           Graphics.UI.GLFW    (ClientAPI (..), WindowHint (..))
 import qualified Graphics.UI.GLFW    as GLFW
 import           Graphics.Vulkan
@@ -18,19 +20,17 @@ import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Instance
 
 
-initGLFWWindow :: Int -- ^ Window width
-               -> Int -- ^ Window height
+initGLFWWindow :: Int -- ^ Window width. Ignored if fullscreen.
+               -> Int -- ^ Window height. Ignored if fullscreen.
                -> String -- ^ Window name
+               -> Bool -- ^ fullscreen
                -> IORef Bool -- ^ Window size change signalling
                -> Program r GLFW.Window
-initGLFWWindow w h n windowSizeChanged = do
-
+initGLFWWindow winWidth winHeight name fullscreen windowSizeChanged = do
     -- even if something bad happens, we need to terminate GLFW
     allocResource
-      (\() -> liftIO GLFW.terminate >> logInfo "Terminated GLFW.")
-      ( liftIO GLFW.init >>= flip unless
-          (throwVkMsg "Failed to initialize GLFW.")
-      )
+      (const $ liftIO GLFW.terminate >> logInfo "Terminated GLFW.")
+      (liftIO GLFW.init >>= flip unless (throwVkMsg "Failed to initialize GLFW."))
 
     liftIO GLFW.getVersionString >>= mapM_ (logInfo . ("GLFW version: " ++))
 
@@ -44,16 +44,25 @@ initGLFWWindow w h n windowSizeChanged = do
       ( \window -> do
           liftIO (GLFW.destroyWindow window)
           logDebug "Closed GLFW window."
-      ) $ do
-      mw <- liftIO $ GLFW.createWindow w h n Nothing Nothing
-      case mw of
-        Nothing -> throwVkMsg "Failed to initialize GLFW window."
-        Just window  -> do
-          logDebug "Initialized GLFW window."
-          liftIO $ GLFW.setWindowSizeCallback window $
-            Just (\_ _ _ -> atomicWriteIORef windowSizeChanged True)
-          return window
+      )
+      ( do
+          mw <- liftIO . runMaybeT $
+            ( if fullscreen then do
+                mon <- MaybeT GLFW.getPrimaryMonitor
+                mode <- MaybeT $ GLFW.getVideoMode mon
+                let (w, h) = (GLFW.videoModeWidth mode, GLFW.videoModeHeight mode)
+                MaybeT $ GLFW.createWindow w h name (Just mon) Nothing
+              else MaybeT $ return Nothing
+            ) <|> MaybeT (GLFW.createWindow winWidth winHeight name Nothing Nothing)
 
+          case mw of
+            Nothing -> throwVkMsg "Failed to initialize GLFW window."
+            Just window  -> do
+              logDebug "Initialized GLFW window."
+              liftIO $ GLFW.setWindowSizeCallback window $
+                Just (\_ _ _ -> atomicWriteIORef windowSizeChanged True)
+              return window
+      )
 
 -- | Repeats until WindowShouldClose flag is set. Returns true if program should exit.
 --   Local resource scope.
