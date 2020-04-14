@@ -62,7 +62,7 @@ data ManagedPresentQueue =
 present :: ManagedPresentQueue -> [(MVar VkSwapchainKHR, Word32)] -> [VkSemaphore] -> Program r ()
 present ManagedPresentQueue{..} images waitSems = do
   let (swapchainVars, imageIndices) = unzip images
-  bracket 
+  bracket
     (mapM takeMVar swapchainVars)
     (\swapchains -> sequence_ $ putMVar <$> ZipList swapchainVars <*> ZipList swapchains)
     (\swapchains -> do
@@ -82,7 +82,7 @@ present ManagedPresentQueue{..} images waitSems = do
               _ -> throwError err
         )
     )
-  
+
 
 -- | Offers a way to get notified on any thread when the queue submission has
 --   been submitted to the actual VkQueue and/or is done executing.
@@ -349,10 +349,8 @@ makeSubmitInfo waitSemsWithStages signalSems cmdBufs =
 
 
 submitInfoGetWaitSemaphores :: VkSubmitInfo -> Program r [VkSemaphore]
-submitInfoGetWaitSemaphores sI =
-  let ptr = getField @"pWaitSemaphores" sI
-      len = getField @"waitSemaphoreCount" sI
-  in peekArray (fromIntegral len) ptr
+submitInfoGetWaitSemaphores =
+  liftIO . getListCountAndRef @"waitSemaphoreCount" @"pWaitSemaphores"
 
 
 {-

@@ -1,4 +1,6 @@
-{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MagicHash      #-}
 {-# LANGUAGE Strict         #-}
 {-# LANGUAGE UnboxedTuples  #-}
@@ -14,9 +16,13 @@ module Vulkyrie.Program.Foreign
     , asListVk
     , allocaPeek, allocaPeekVk, allocaPeekDF
     , mallocRes, mallocArrayRes, newArrayRes
+    , withUnsafeField
+    , getListCountAndRef
     ) where
 
 import qualified GHC.Base
+import GHC.TypeLits (Symbol)
+import Data.Kind (Type)
 
 import           Control.Monad.IO.Class
 import qualified Foreign.Marshal.Alloc   as Foreign
@@ -160,3 +166,24 @@ mallocRes = Program $ \_ c -> Foreign.alloca (c . Right)
 newArrayRes :: Storable a => [a] -> Program r (Ptr a)
 newArrayRes xs = Program $ \_ c -> Foreign.withArray xs (c . Right)
 {-# INLINE newArrayRes #-}
+
+-- | Keeps the vk struct alive while doing something with a unsafe field (like Ptr).
+--
+--   If the field has pointers to memory that has its lifetime coupled to the
+--   struct, this function can be used to ensure the memory is kept alive.
+withUnsafeField :: forall (fname :: Symbol) (struct :: Type) (a :: Type)
+                . (CanReadField fname struct)
+                => struct -> (FieldType fname struct -> IO a) -> IO a
+withUnsafeField vkStruct fun = do
+  let ptr = getField @fname vkStruct
+  ret <- fun ptr
+  touch vkStruct
+  return ret
+
+getListCountAndRef :: forall (countFname :: Symbol) (arrayFname :: Symbol) (struct :: Type) (a :: Type)
+                   . (CanReadField countFname struct, CanReadField arrayFname struct, Storable a,
+                      FieldType arrayFname struct ~ Ptr a,
+                      FieldType countFname struct ~ Word32)
+                   => struct -> IO [a]
+getListCountAndRef vkStruct =
+  withUnsafeField @arrayFname vkStruct (Foreign.peekArray (fromIntegral (getField @countFname vkStruct)))
