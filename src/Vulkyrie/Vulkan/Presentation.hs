@@ -21,6 +21,7 @@ import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Device
+import           Control.Monad                  ( join )
 
 data SyncMode = VSyncTriple | VSync | NoSync deriving (Eq, Ord, Show)
 
@@ -81,8 +82,7 @@ chooseSwapExtent SwapchainSupportDetails {..}
 
 data SwapchainInfo
   = SwapchainInfo
-  { swapchain     :: VkSwapchainKHR
-  , swapImgs      :: [VkImage]
+  { swapImgs      :: [VkImage]
   , swapImgFormat :: VkFormat
   , swapExtent    :: VkExtent2D
   , swapMaxAcquired :: Int
@@ -98,7 +98,7 @@ createSwapchain :: VkDevice
                 -> VkSurfaceKHR
                 -> SyncMode
                 -> Maybe VkSwapchainKHR
-                -> Program r SwapchainInfo
+                -> Program r (VkSwapchainKHR, SwapchainInfo)
 createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
 
   -- TODO not necessary every time I think
@@ -150,24 +150,25 @@ createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
   swapImgs <- asListVk
     $ \x -> runVk . vkGetSwapchainImagesKHR dev swapchain x
 
-  return SwapchainInfo
-        { swapchain     = swapchain
-        , swapImgs      = swapImgs
+  let info = SwapchainInfo
+        { swapImgs      = swapImgs
         , swapImgFormat = getField @"format" surfFmt
         , swapExtent    = sExtent
         , swapMaxAcquired = length swapImgs - fromIntegral minIC + 1
         }
+  return (swapchain, info)
 
 
 destroySwapchainIfNecessary :: VkDevice
-                            -> MVar VkSwapchainKHR
+                            -> MVar (Maybe VkSwapchainKHR)
                             -> Program r ()
 destroySwapchainIfNecessary dev slot = do
-  maySwapchain <- tryTakeMVar slot
+  maySwapchain <- takeMVar slot
   liftIO $ sequence_ $ flip (vkDestroySwapchainKHR dev) VK_NULL <$> maySwapchain
 
 
-createSwapchainSlot :: VkDevice -> Program r (MVar VkSwapchainKHR)
+-- TODO: this is a leaky abstraction. Improve after reworking resource management.
+createSwapchainSlot :: VkDevice -> Program r (MVar (Maybe VkSwapchainKHR))
 createSwapchainSlot dev =
   allocResource
     (destroySwapchainIfNecessary dev)

@@ -112,8 +112,8 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     scsd <- querySwapchainSupport pdev vulkanSurface
 
     nextSwapchainSlot <- createSwapchainSlot dev
-    firstSwapInfo <- createSwapchain dev scsd queues vulkanSurface syncMode Nothing
-    putMVar nextSwapchainSlot (swapchain firstSwapInfo)
+    (firstSwapchain, firstSwapInfo) <- createSwapchain dev scsd queues vulkanSurface syncMode Nothing
+    putMVar nextSwapchainSlot (Just firstSwapchain)
     swapInfoRef <- newIORef firstSwapInfo
     -- TODO The -1 is a workaround. Without it, validation layer complains.
     -- Not sure if bug in validaiton/MoltenVK. Complaint:
@@ -190,9 +190,9 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
             -- This query should happen as close to createSwapchain as possible to
             -- get the latest changes to the window size.
             newScsd <- querySwapchainSupport pdev vulkanSurface
-            newSwapInfo <- createSwapchain dev newScsd queues vulkanSurface syncMode (Just swapchain)
+            (newSwapchain, newSwapInfo) <- createSwapchain dev newScsd queues vulkanSurface syncMode swapchain
             putMVar swapchainSlot swapchain
-            putMVar nextSwapchainSlot (Vulkyrie.Vulkan.Presentation.swapchain newSwapInfo)
+            putMVar nextSwapchainSlot (Just newSwapchain)
             atomicWriteIORef swapInfoRef newSwapInfo
             redoWithNewSwapchain
             return $ AbortLoop ()

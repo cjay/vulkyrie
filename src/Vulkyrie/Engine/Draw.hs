@@ -24,6 +24,9 @@ import           Vulkyrie.Vulkan.Engine
 import           Vulkyrie.Vulkan.Queue
 import           Vulkyrie.Vulkan.Sync
 
+-- | Callback type for rendering into swapchain framebuffers.
+--
+--   Returned QueueEvent signals when the framebuffer has been written.
 type RenderFun = forall r.
      VkFramebuffer
   -- ^ framebuffer to render to
@@ -36,7 +39,7 @@ type RenderFun = forall r.
 
 data RenderData
   = RenderData
-  { swapchainVar              :: MVar VkSwapchainKHR
+  { swapchainVar              :: MVar (Maybe VkSwapchainKHR)
     -- ^ Swapchain in MVar to synchronize host access for vkAcquireNextImageKHR
   , presentQueue              :: ManagedPresentQueue
     -- ^ Presentation queue. Not necessarily the same as the graphics queue(s).
@@ -63,7 +66,9 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
     imageAvailSem <- head <$> acquireSemaphores semPool 1
 
     liftIO $ acquireToken swapImgTokens
-    swapchain <- takeMVar swapchainVar
+    swapchain <- takeMVar swapchainVar >>= \case
+      Just sc -> return sc
+      Nothing -> error "unexpected Nothing in swapchain slot"
     -- Acquiring an image from the swapchain
     -- Can throw VK_ERROR_OUT_OF_DATE_KHR
     imgIndex <- allocaPeek $ \imgIndexPtr -> runVk
@@ -73,11 +78,11 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
       ) `catchError`
       ( \err -> do
           releaseSemaphores semPool [imageAvailSem]
-          putMVar swapchainVar swapchain
+          putMVar swapchainVar (Just swapchain)
           liftIO $ releaseToken swapImgTokens
           throwError err
       )
-    putMVar swapchainVar swapchain
+    putMVar swapchainVar (Just swapchain)
 
     nextSems_ <- takeMVar nextSems
     putMVar nextSems []
@@ -91,7 +96,7 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
       ((imageAvailSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextSems_)
       [renderFinishedSem]
 
-    -- VK_ERROR_OUT_OF_DATE_KHR is supressed when presenting here
+    -- VK_ERROR_OUT_OF_DATE_KHR is supressed when presenting here, because ManagedQueue can't do anything with that
     let presentAction = present presentQueue [(swapchainVar, imgIndex)] [renderFinishedSem]
     submitPresent cmdQueue presentQueue presentAction (liftIO $ releaseToken swapImgTokens)
 
