@@ -5,6 +5,7 @@ module Vulkyrie.GLFW
     , glfwMainLoop
     , glfwWaitMinimized
     , glfwWaitEventsMeanwhile
+    , getTime
     ) where
 
 import           Control.Applicative
@@ -105,3 +106,8 @@ createGLFWVulkanInstance progName layers = do
       "My perfect Haskell engine"
       glfwReqExts
       layers
+
+getTime :: IO Double
+getTime = liftIO $ GLFW.getTime >>= \case
+      Just time -> return time
+      Nothing -> error "GLFW.getTime failed"

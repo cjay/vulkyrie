@@ -12,6 +12,7 @@ import           Numeric.DataFrame
 
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
+import           Vulkyrie.GLFW (getTime)
 
 
 data TransformationObject = TransformationObject
@@ -30,7 +31,7 @@ rotation seconds =
 
 updateTransObj :: VkExtent2D -> Program r TransformationObject
 updateTransObj extent = do
-  seconds <- getTime
+  seconds <- liftIO getTime
   let width = getField @"width" extent
   let height = getField @"height" extent
   let aspectRatio = fromIntegral width / fromIntegral height

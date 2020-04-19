@@ -31,7 +31,6 @@ module Vulkyrie.Program
       -- * Vulkan marshal utilies
     , liftIOWith
       -- * Other
-    , getTime
     , LoopControl (..)
     , loop
     , asyncRedo
@@ -52,10 +51,8 @@ import qualified Control.Monad.Logger           as Logger
 import qualified Control.Monad.Logger.CallStack as LoggerCS
 import           Control.Monad.State.Class
 import           Data.String                    (fromString)
-import           Data.Time.Clock.System
 import           Data.Tuple                     (swap)
 import           GHC.Stack
-import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           System.Exit
 
@@ -74,19 +71,15 @@ data ProgramState
                   -> Logger.LogLevel
                   -> Logger.LogStr -> IO ()
     -- ^ Enable monad-logger.
-  , startTime :: SystemTime
-    -- ^ Time for animations and physics
   }
 
 iProgState :: IO ProgramState
 iProgState = do
   -- get logger function from Control.Monad.Logger transformer
   logFun <- Logger.runStdoutLoggingT $ Logger.LoggingT pure
-  time <- getSystemTime
   return ProgramState
     { currentStatus = VK_SUCCESS
     , loggingFunc   = logFun
-    , startTime     = time
     }
 
 -- | For joining program states of different threads or work units
@@ -389,17 +382,17 @@ liftIOWith iof pf = Program $ \ref c ->
 
 
 -- | Low latency time in seconds since the start
-getTime :: Program r Double
-getTime = do
-    now <- liftIO getSystemTime
-    start <- startTime <$> get
-    let deltaSeconds = systemSeconds now - systemSeconds start
-        -- Have to nanoseconds convert from Word64 before subtraction to allow negative delta.
-        deltaNanoseconds :: Int64 = fromIntegral (systemNanoseconds now) - fromIntegral (systemNanoseconds start)
-        -- Seconds in Double keep at least microsecond-precision for 285 years.
-        -- Float is not good enough even for millisecond-precision over more than a few hours.
-        seconds :: Double = fromIntegral deltaSeconds + fromIntegral deltaNanoseconds / 1e9
-    return seconds
+-- getTime :: Program r Double
+-- getTime = do
+--     now <- liftIO getSystemTime
+--     start <- startTime <$> get
+--     let deltaSeconds = systemSeconds now - systemSeconds start
+--         -- Have to nanoseconds convert from Word64 before subtraction to allow negative delta.
+--         deltaNanoseconds :: Int64 = fromIntegral (systemNanoseconds now) - fromIntegral (systemNanoseconds start)
+--         -- Seconds in Double keep at least microsecond-precision for 285 years.
+--         -- Float is not good enough even for millisecond-precision over more than a few hours.
+--         seconds :: Double = fromIntegral deltaSeconds + fromIntegral deltaNanoseconds / 1e9
+--     return seconds
 
 
 data LoopControl a = ContinueLoop | AbortLoop a deriving Eq

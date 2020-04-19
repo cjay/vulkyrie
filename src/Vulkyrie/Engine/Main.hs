@@ -162,7 +162,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
           )
 
         -- part of dumb fps counter
-        seconds <- getTime
+        seconds <- liftIO getTime
         liftIO $ do
           cur <- readIORef currentSec
           if floor seconds /= cur

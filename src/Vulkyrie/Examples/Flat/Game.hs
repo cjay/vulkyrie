@@ -21,6 +21,7 @@ import           Control.Monad
 import           Graphics.UI.GLFW   (Key, KeyState)
 import qualified Graphics.UI.GLFW   as GLFW
 import           Numeric.DataFrame
+import           Vulkyrie.GLFW (getTime)
 
 
 newtype Position = Position Vec2i deriving Show
@@ -74,9 +75,7 @@ runGame gsVar eventChan = do
   w <- initWorld
   _ <- forkIO $ forever $ do
     threadDelay 16667
-    t <- GLFW.getTime >>= \case
-      Just time -> return time
-      Nothing -> error "GLFW.getTime failed"
+    t <- getTime
     writeChan eventChan (Tick t)
   runWith w $ do
     initialize
