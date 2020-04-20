@@ -50,6 +50,7 @@ import           Data.Typeable
 import           Data.Either                    ( lefts )
 import           GHC.Stack
 import           Graphics.Vulkan.Core_1_0
+import           System.Exit
 import           UnliftIO.Async
 import           UnliftIO.Concurrent
 import           UnliftIO.Exception
@@ -216,8 +217,11 @@ occupyThreadAndFork :: Program () -- ^ the program to run in the main thread
                     -> Program () -- ^ the program to run in a separate thread
                     -> Program ()
 occupyThreadAndFork mainProg deputyProg = do
-  -- mainThreadId <- myThreadId
-  void $ forkProg deputyProg
+  mainThreadId <- myThreadId
+  -- TODO proper thread management. at least wrap in some AsyncException.
+  void $ forkFinally deputyProg $ \case
+    Left exception -> throwTo mainThreadId exception
+    Right ()       -> throwTo mainThreadId ExitSuccess
   mainProg
 
 
