@@ -152,6 +152,7 @@ onCreate :: Program a -> Resource a
 onCreate prog = Resource prog (prog >>= \a -> return (return (), a))
 {-# INLINE onCreate #-}
 
+-- TODO onDestroy users need to mask, or need better solution
 -- | Runs given program when destroying the resource. Destruction order is bottom to top.
 onDestroy :: Program () -> Resource ()
 onDestroy prog = Resource (later prog) (return (prog, ()))

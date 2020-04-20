@@ -77,9 +77,7 @@ touch x = GHC.Base.IO $ \s -> case GHC.Base.touch# x s of s' -> (# s', () #)
 alloca :: Storable a
        => (Ptr a -> Program b)
        -> Program b
-alloca f = do
-  u <- askUnliftIO
-  liftIO $ Foreign.alloca (unliftIO u . f)
+alloca = Foreign.alloca
 {-# INLINE alloca #-}
 
 allocaPeekDF :: forall a (ns :: [Nat])
@@ -99,9 +97,7 @@ allocaArray :: Storable a
             => Int
             -> (Ptr a -> Program b)
             -> Program b
-allocaArray n f = do
-  u <- askUnliftIO
-  liftIO $ Foreign.allocaArray n (unliftIO u . f)
+allocaArray = Foreign.allocaArray
 {-# INLINE allocaArray #-}
 
 
@@ -113,7 +109,7 @@ allocaPeek f = alloca $ \ptr -> f ptr >> liftIO (Storable.peek ptr)
 
 
 peekArray :: Storable a => Int -> Ptr a -> Program [a]
-peekArray n = liftIO . Foreign.peekArray n
+peekArray = Foreign.peekArray
 {-# INLINE peekArray #-}
 
 peek :: Storable a => Ptr a -> Program a
@@ -141,21 +137,24 @@ asListVk action = alloca $ \counterPtr -> do
   then pure []
   else allocaArray counter $ \valPtr -> do
     action counterPtr valPtr
-    liftIO $ Foreign.peekArray counter valPtr
+    Foreign.peekArray counter valPtr
 
--- TODO free
 mallocArrayRes :: Storable a => Int -> Program (Ptr a)
-mallocArrayRes n = liftIO $ Foreign.mallocArray n
+mallocArrayRes n =
+  allocResource
+    Foreign.free
+    (Foreign.mallocArray n)
 {-# INLINE mallocArrayRes #-}
 
--- TODO free
 mallocRes :: Storable a => Program (Ptr a)
-mallocRes = liftIO $ Foreign.malloc
+mallocRes = allocResource Foreign.free Foreign.malloc
 {-# INLINE mallocRes #-}
 
--- TODO free
 newArrayRes :: Storable a => [a] -> Program (Ptr a)
-newArrayRes xs = liftIO $ Foreign.newArray xs
+newArrayRes xs =
+  allocResource
+    Foreign.free
+    (Foreign.newArray xs)
 {-# INLINE newArrayRes #-}
 
 -- | Keeps the vk struct alive while doing something with a unsafe field (like Ptr).

@@ -234,10 +234,10 @@ poolSwapOpportunity CommandCapability{..} = do
 
 -- | Resource for automatic acquire and release of command buffers
 resCommandBuffer :: CommandCapability -> Resource ManagedCommandBuffer
-resCommandBuffer cap = do
-  buf <- onCreate $ acquireCommandBuffer cap
-  onDestroy $ releaseCommandBuffer buf
-  return buf
+resCommandBuffer cap =
+  resource $ metaResource
+    releaseCommandBuffer
+    (acquireCommandBuffer cap)
 
 -- | Acquire a command buffer from the capability. Not thread-safe.
 acquireCommandBuffer :: CommandCapability -> Program ManagedCommandBuffer
