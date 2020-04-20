@@ -20,7 +20,7 @@ createBuffer :: EngineCapability
              -> VkDeviceSize
              -> VkBufferUsageFlags
              -> VkMemoryPropertyFlags
-             -> Resource r (MemoryLoc, VkBuffer)
+             -> Resource (MemoryLoc, VkBuffer)
 createBuffer EngineCapability{dev, memPool} bSize bUsage bMemPropFlags =
     let bufferInfo = createVk @VkBufferCreateInfo
           $  set @"sType" VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO
@@ -44,7 +44,7 @@ createBuffer EngineCapability{dev, memPool} bSize bUsage bMemPropFlags =
       return (memLoc, buf)
 
 
-copyBuffer :: VkCommandBuffer -> VkBuffer -> VkBuffer -> VkDeviceSize -> Program r ()
+copyBuffer :: VkCommandBuffer -> VkBuffer -> VkBuffer -> VkDeviceSize -> Program ()
 copyBuffer cmdBuf srcBuffer dstBuffer bSize = do
   let copyRegion = createVk @VkBufferCopy
         $  set @"srcOffset" 0

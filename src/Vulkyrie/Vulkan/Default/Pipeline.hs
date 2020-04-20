@@ -24,7 +24,7 @@ createGraphicsPipeline :: VkDevice
                        -> VkPipelineLayout
                        -> VkSampleCountFlagBits
                        -> Bool
-                       -> Resource r VkPipeline
+                       -> Resource VkPipeline
 createGraphicsPipeline
     dev swapExtent bindDescs attrDescs shaderDescs renderPass pipelineLayout msaaSamples enableAlpha =
   let -- vertex input

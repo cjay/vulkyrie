@@ -48,7 +48,7 @@ data Object = Object
   }
 
 
-bindDescrSet :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> DescrBindInfo -> Program r ()
+bindDescrSet :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> DescrBindInfo -> Program ()
 bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = locally $ do
   descrSetPtr <- newArrayRes [descrSet]
   let descrSetCnt = 1
@@ -59,20 +59,20 @@ bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = locally $ do
 
 
 -- | Update push constants: transformation matrix
-pushTransform :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Program r ()
+pushTransform :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Program ()
 pushTransform cmdBuf pipelineLayout df =
   liftIO $ thawPinDataFrame df >>= flip withDataFramePtr
     (vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_VERTEX_BIT 0 64 . castPtr)
 
 {-      not in use
 -- | Update push constants: texture index
-pushTexIndex :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> Program r ()
+pushTexIndex :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> Program ()
 pushTexIndex cmdBuf pipelineLayout texIndex = alloca $ \ptr -> do
     poke ptr texIndex
     liftIO $ vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_FRAGMENT_BIT 64 4 (castPtr ptr)
 -}
 
-recordObject :: VkPipelineLayout -> VkCommandBuffer -> Mat44f -> Object -> Program r ()
+recordObject :: VkPipelineLayout -> VkCommandBuffer -> Mat44f -> Object -> Program ()
 recordObject pipelineLayout cmdBuf transform Object{..} = do
   -- not yet:
   -- liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
@@ -98,7 +98,7 @@ recordAll :: RenderContext
           -> [Object]
           -> VkCommandBuffer
           -> VkFramebuffer
-          -> Program r ()
+          -> Program ()
 recordAll
     RenderContext{..} viewProjTransform objects cmdBuf framebuffer = do
 

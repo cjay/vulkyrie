@@ -26,21 +26,21 @@ uboCreateBuffers
   :: EngineCapability
   -> VkDeviceSize -- ^ size of uniform buffer object
   -> Int          -- ^ frames in flight
-  -> Resource r [(MemoryLoc, VkBuffer)]
+  -> Resource [(MemoryLoc, VkBuffer)]
 uboCreateBuffers ecap size n =
       replicateM n $ createBuffer ecap size
          VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
          ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
 
-uboBufferInfo :: VkDeviceSize -> VkBuffer -> Program r VkDescriptorBufferInfo
+uboBufferInfo :: VkDeviceSize -> VkBuffer -> Program VkDescriptorBufferInfo
 uboBufferInfo size uniformBuffer = return $ createVk @VkDescriptorBufferInfo
         $  set @"buffer" uniformBuffer
         &* set @"offset" 0
         &* set @"range" size
 
 
-uboUpdate :: PrimBytes o => VkDevice -> VkDeviceSize -> VkDeviceMemory -> o -> Program r ()
+uboUpdate :: PrimBytes o => VkDevice -> VkDeviceSize -> VkDeviceMemory -> o -> Program ()
 uboUpdate device size mem ubo = do
       uboPtr <- allocaPeek $
         runVk . vkMapMemory device mem 0 size VK_ZERO_FLAGS

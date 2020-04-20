@@ -22,6 +22,7 @@ import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
 import           Graphics.Vulkan.Marshal.Create.DataFrame
 import           Numeric.DataFrame
+import           UnliftIO.Exception
 
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
@@ -41,11 +42,11 @@ findMemoryType :: VkPhysicalDeviceMemoryProperties
                -> Word32 -- ^ type filter bitfield
                -> VkMemoryPropertyFlags
                   -- ^ desired memory properties
-               -> Program r MemTypeIndex
+               -> Program MemTypeIndex
 findMemoryType memProps typeFilter properties = do
   let mtCount = getField @"memoryTypeCount" memProps
       memTypes = getVec @"memoryTypes" memProps
-      go i | i == mtCount = throwVkMsg "Failed to find suitable memory type!"
+      go i | i == mtCount = throwString "Failed to find suitable memory type!"
            | otherwise = tryType i
       tryType i =
         if testBit typeFilter (fromIntegral i)
@@ -59,7 +60,7 @@ findMemoryType memProps typeFilter properties = do
 
 
 -- TODO unify with allocBindBufferMem
-allocBindImageMem :: MemoryPool -> VkMemoryPropertyFlags -> VkImage -> Program r MemoryLoc
+allocBindImageMem :: MemoryPool -> VkMemoryPropertyFlags -> VkImage -> Program MemoryLoc
 allocBindImageMem memPool@MemoryPool{dev, memProps} propFlags image = do
   memRequirements <- allocaPeek $ \reqsPtr ->
     liftIO $ vkGetImageMemoryRequirements dev image reqsPtr
@@ -74,7 +75,7 @@ allocBindImageMem memPool@MemoryPool{dev, memProps} propFlags image = do
   return loc
 
 
-allocBindBufferMem :: MemoryPool -> VkMemoryPropertyFlags -> VkBuffer -> Program r MemoryLoc
+allocBindBufferMem :: MemoryPool -> VkMemoryPropertyFlags -> VkBuffer -> Program MemoryLoc
 allocBindBufferMem memPool@MemoryPool{dev, memProps} propFlags buffer = do
   memRequirements <- allocaPeek $ \reqsPtr ->
     liftIO $ vkGetBufferMemoryRequirements dev buffer reqsPtr
@@ -116,7 +117,7 @@ data MemoryPool = MemoryPool
 
 metaMemoryPool :: VkPhysicalDevice
                -> VkDevice
-               -> MetaResource r MemoryPool
+               -> MetaResource MemoryPool
 metaMemoryPool pdev dev =
   metaResource
   (\MemoryPool{ currentChunk, occupied } -> do
@@ -139,7 +140,7 @@ allocMem :: MemoryPool
          -> MemTypeIndex
          -> VkDeviceSize -- ^ requested size in bytes
          -> VkDeviceSize -- ^ requested alignment
-         -> Program r MemoryLoc
+         -> Program MemoryLoc
 allocMem MemoryPool{..} (MemTypeIndex memTypeIndex) requestSize alignment = do
   let vectIndex = fromIntegral memTypeIndex :: Int
       size = max requestSize memoryChunkSize

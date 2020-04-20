@@ -15,17 +15,17 @@ import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_surface
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
+import           UnliftIO.Exception
+import           UnliftIO.MVar
 
-import           Vulkyrie.MonadIO.MVar
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Device
-import           Control.Monad                  ( join )
 
 data SyncMode = VSyncTriple | VSync | NoSync deriving (Eq, Ord, Show)
 
-createSurface :: VkInstance -> GLFW.Window -> Resource r VkSurfaceKHR
+createSurface :: VkInstance -> GLFW.Window -> Resource VkSurfaceKHR
 createSurface vkInstance window = resource $
   metaResource (\s -> liftIO $ vkDestroySurfaceKHR vkInstance s VK_NULL) $
     allocaPeek $
@@ -33,9 +33,9 @@ createSurface vkInstance window = resource $
 
 
 chooseSwapSurfaceFormat :: SwapchainSupportDetails
-                        -> Program r VkSurfaceFormatKHR
+                        -> Program VkSurfaceFormatKHR
 chooseSwapSurfaceFormat SwapchainSupportDetails {..}
-    = maybe (throwVkMsg "No available surface formats!")
+    = maybe (throwString "No available surface formats!")
             (pure . argVal . getMin)
     $ foldMap (Just . Min . fmtCost) formats
   where
@@ -98,7 +98,7 @@ createSwapchain :: VkDevice
                 -> VkSurfaceKHR
                 -> SyncMode
                 -> Maybe VkSwapchainKHR
-                -> Program r (VkSwapchainKHR, SwapchainInfo)
+                -> Program (VkSwapchainKHR, SwapchainInfo)
 createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
 
   -- TODO not necessary every time I think
@@ -161,14 +161,14 @@ createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
 
 destroySwapchainIfNecessary :: VkDevice
                             -> MVar (Maybe VkSwapchainKHR)
-                            -> Program r ()
+                            -> Program ()
 destroySwapchainIfNecessary dev slot = do
   maySwapchain <- takeMVar slot
   liftIO $ sequence_ $ flip (vkDestroySwapchainKHR dev) VK_NULL <$> maySwapchain
 
 
 -- TODO: this is a leaky abstraction. Improve after reworking resource management.
-createSwapchainSlot :: VkDevice -> Program r (MVar (Maybe VkSwapchainKHR))
+createSwapchainSlot :: VkDevice -> Program (MVar (Maybe VkSwapchainKHR))
 createSwapchainSlot dev =
   allocResource
     (destroySwapchainIfNecessary dev)

@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 module Vulkyrie.Resource
   ( GenericResource
@@ -28,16 +27,16 @@ import           Vulkyrie.Program
 
 class GenericResource res a where
   -- | Makes use of the continuation based resource management built into Program
-  auto :: res r a -> Program r a
+  auto :: res a -> Program a
   -- | Creates a destructor action along with the resource.
-  manual :: res r a -> Program r (Program' (), a)
+  manual :: res a -> Program (Program (), a)
 
 -- TODO not sure if carrying auto is worth it. Could replace it with manual and
 -- Program.later. The fields and constructor of Resource should stay
 -- implementation details for that reason.
-data Resource r a = Resource
-  { auto_ :: Program r a
-  , manual_ :: Program r (Program' (), a)
+data Resource a = Resource
+  { auto_ :: Program a
+  , manual_ :: Program (Program (), a)
   }
 
 instance GenericResource Resource a where
@@ -53,24 +52,24 @@ instance GenericResource Resource a where
 --   creation parameters, like the appropriate VkDevice. Thereby it gives the
 --   freedom of not (necessarily) carrying around all information needed for
 --   destruction along with the resource value.
-data MetaResource r a = MetaResource
-  { destroy :: a -> Program' ()
-  , create :: Program r a
+data MetaResource a = MetaResource
+  { destroy :: a -> Program ()
+  , create :: Program a
   }
 
 -- | Creates a MetaResource. Drop in replacement for Vulkyrie.Program.allocResource.
-metaResource :: (a -> Program' ()) -- ^ destroy resource
-             -> Program r a        -- ^ create resource
-             -> MetaResource r a
+metaResource :: (a -> Program ()) -- ^ destroy resource
+             -> Program a        -- ^ create resource
+             -> MetaResource a
 metaResource destroy create = MetaResource {..}
 {-# INLINE metaResource #-}
 
 instance GenericResource MetaResource a where
-  -- auto :: MetaResource r a -> Program r a
+  -- auto :: MetaResource a -> Program a
   auto MetaResource{..} = Vulkyrie.Program.allocResource destroy create
   {-# INLINE auto #-}
 
-  -- manual :: MetaResource r a -> Program r (a, Program' ())
+  -- manual :: MetaResource a -> Program (a, Program ())
   manual MetaResource{..} = do
     x <- create
     return (destroy x, x)
@@ -84,12 +83,12 @@ instance GenericResource MetaResource a where
 --   original Vulkan types that have a vkAlloc.. and vkFree.. function.
 class AllocFree a where
   -- | Synonym for destroy
-  free :: MetaResource r a -> (a -> Program' ())
+  free :: MetaResource a -> (a -> Program ())
   free = destroy
   {-# INLINE free #-}
 
   -- | Synonym for create
-  alloc :: MetaResource r a -> Program r a
+  alloc :: MetaResource a -> Program a
   alloc = create
   {-# INLINE alloc #-}
 
@@ -106,19 +105,19 @@ instance (AllocFree a) => AllocFree [a]
 type BasicResource = MetaResource
 
 -- | Creates a BasicResource. Drop in replacement for Vulkyrie.Program.allocResource.
-basicResource :: (a -> Program' ()) -- ^ destroy resource
-              -> Program r a        -- ^ create resource
-              -> BasicResource r a
+basicResource :: (a -> Program ()) -- ^ destroy resource
+              -> Program a        -- ^ create resource
+              -> BasicResource a
 basicResource = metaResource
 
 
 -- | Need this to use MetaResources in the Resource monad
-resource :: MetaResource r a -> Resource r a
+resource :: MetaResource a -> Resource a
 resource ma = Resource (auto ma) (manual ma)
 {-# INLINE resource #-}
 
 -- | A bit more polymorphic than (>>=) of Resource
-composeResource :: (GenericResource res1 a, GenericResource res2 b) => res1 r a -> (a -> res2 r b) -> Resource r b
+composeResource :: (GenericResource res1 a, GenericResource res2 b) => res1 a -> (a -> res2 b) -> Resource b
 composeResource ma fmb = Resource
   (auto ma >>= auto . fmb)
   (do
@@ -128,11 +127,11 @@ composeResource ma fmb = Resource
   )
 {-# INLINE composeResource #-}
 
-instance Functor (Resource r) where
+instance Functor Resource where
   fmap g fa = Resource (fmap g $ auto fa) (fmap g <$> manual fa)
   {-# INLINE fmap #-}
 
-instance Applicative (Resource r) where
+instance Applicative Resource where
   pure a = Resource (return a) (return (return (), a))
   {-# INLINE pure #-}
   fab <*> fa = Resource
@@ -144,22 +143,22 @@ instance Applicative (Resource r) where
     )
   {-# INLINE (<*>) #-}
 
-instance Monad (Resource r) where
+instance Monad Resource where
   (>>=) = composeResource
   {-# INLINE (>>=) #-}
 
 -- | Runs given program when creating the resource. Creation order is top to bottom.
-onCreate :: Program r a -> Resource r a
+onCreate :: Program a -> Resource a
 onCreate prog = Resource prog (prog >>= \a -> return (return (), a))
 {-# INLINE onCreate #-}
 
 -- | Runs given program when destroying the resource. Destruction order is bottom to top.
-onDestroy :: Program' () -> Resource r ()
+onDestroy :: Program () -> Resource ()
 onDestroy prog = Resource (later prog) (return (prog, ()))
 {-# INLINE onDestroy #-}
 
 {- probably too rare, not really needed now
-asymmetricResource :: GenericResource res a => res r a -> Resource r (Resource r (), a)
+asymmetricResource :: GenericResource res a => res r a -> Resource (Resource (), a)
 asymmetricResource res = do
   (destr, a) <- onCreate $ manual res
   return (onDestroy destr, a)

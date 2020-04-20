@@ -22,7 +22,7 @@ import           Vulkyrie.Resource
 
 -- | Copies file to new Word32 buffer with padding zeroes if necessary.
 --   Size is in bytes.
-metaFileContent :: FilePath -> MetaResource r (CSize, Ptr Word32)
+metaFileContent :: FilePath -> MetaResource (CSize, Ptr Word32)
 metaFileContent fpath = metaResource
   (\(_, ptr) -> do
       liftIO $ Foreign.Marshal.Alloc.free ptr
@@ -42,7 +42,7 @@ metaFileContent fpath = metaResource
 createShaderStage :: VkShaderModule
                   -> VkShaderStageFlagBits
                   -> Maybe VkSpecializationInfo
-                  -> Program r VkPipelineShaderStageCreateInfo
+                  -> Program VkPipelineShaderStageCreateInfo
 createShaderStage shaderModule stageBit maySpecInfo = do
     let specInfo = maybe (specializationInfo [] 0 VK_NULL) id maySpecInfo
     return $ createVk @VkPipelineShaderStageCreateInfo
@@ -56,7 +56,7 @@ createShaderStage shaderModule stageBit maySpecInfo = do
 
 metaShaderModule :: VkDevice
                  -> (CSize, Ptr Word32)
-                 -> MetaResource r VkShaderModule
+                 -> MetaResource VkShaderModule
 metaShaderModule dev (codeSize, codePtr) =
     metaResource
       (\sm -> liftIO $ vkDestroyShaderModule dev sm VK_NULL) $
@@ -71,7 +71,7 @@ metaShaderModule dev (codeSize, codePtr) =
       &* set @"flags"    VK_ZERO_FLAGS
 
 
-shaderModuleFile :: VkDevice -> FilePath -> Resource r VkShaderModule
+shaderModuleFile :: VkDevice -> FilePath -> Resource VkShaderModule
 shaderModuleFile dev fpath = do
   content <- resource $ metaFileContent fpath
   resource $ metaShaderModule dev content
@@ -85,7 +85,7 @@ specializationInfo mapEntries dataSize pData = createVk
 
 {-
 -- example spec info
-fooSpecInfo :: Word32 -> Program r VkSpecializationInfo
+fooSpecInfo :: Word32 -> Program VkSpecializationInfo
 fooSpecInfo foo = do
   -- TODO restrict lifetime
   ptr <- mallocRes

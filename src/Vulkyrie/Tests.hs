@@ -3,11 +3,11 @@ module Vulkyrie.Tests where
 import Vulkyrie.Program
 import Vulkyrie.Resource
 
-tests :: Program r ()
+tests :: Program ()
 tests = do
   resourceTest
 
-resourceTest :: Program r ()
+resourceTest :: Program ()
 resourceTest = do
   locally $ do
     let ra = res "A" 1
@@ -41,7 +41,7 @@ resourceTest = do
   return ()
 
 -- | simple resource
-res :: String -> Int -> MetaResource r Int
+res :: String -> Int -> MetaResource Int
 res name val = metaResource
   (const $ do
       liftIO $ putStrLn $ "destroying " ++ name

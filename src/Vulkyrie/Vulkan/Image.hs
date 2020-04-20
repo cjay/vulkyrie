@@ -22,6 +22,7 @@ import           Foreign.Ptr                    (castPtr)
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
+import           UnliftIO.Exception
 
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
@@ -37,7 +38,7 @@ import           Vulkyrie.Vulkan.Sync
 createTextureInfo :: EngineCapability
                   -> Bool
                   -> FilePath
-                  -> Resource r (QueueEvent, VkDescriptorImageInfo)
+                  -> Resource (QueueEvent, VkDescriptorImageInfo)
 createTextureInfo cap@EngineCapability{ dev } magPixelated path = do
     (finishEvent, textureView, mipLevels) <- createTextureImageView cap path
     textureSampler <- createTextureSampler dev mipLevels magPixelated
@@ -47,11 +48,11 @@ createTextureInfo cap@EngineCapability{ dev } magPixelated path = do
 
 createTextureImageView :: EngineCapability
                        -> FilePath
-                       -> Resource r (QueueEvent, VkImageView, Word32)
+                       -> Resource (QueueEvent, VkImageView, Word32)
 createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool } path = do
   Image { imageWidth, imageHeight, imageData }
     <- onCreate $ (liftIO $ readImage path) >>= \case
-      Left err -> throwVkMsg err
+      Left err -> throwString err
       Right dynImg -> pure $ convertRGBA8 dynImg
   let (imageDataForeignPtr, imageDataLen) = Vec.unsafeToForeignPtr0 imageData
       bufSize :: VkDeviceSize = fromIntegral imageDataLen
@@ -105,14 +106,14 @@ generateMipmaps :: VkPhysicalDevice
                 -> Word32
                 -> Word32
                 -> VkCommandBuffer
-                -> Program r ()
+                -> Program ()
 generateMipmaps pdev image format width height mipLevels cmdBuf = do
   formatProps <- allocaPeek $ \propsPtr ->
     liftIO $ vkGetPhysicalDeviceFormatProperties pdev format propsPtr
   let supported = getField @"optimalTilingFeatures" formatProps
                   .&. VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT
    in when (supported == VK_ZERO_FLAGS) $
-      throwVkMsg "texture image format does not support linear blitting!"
+      throwString "texture image format does not support linear blitting!"
   mapM_ createLvl
     (zip3
      [1 .. mipLevels-1]
@@ -226,7 +227,7 @@ generateMipmaps pdev image format width height mipLevels cmdBuf = do
 createTextureSampler :: VkDevice
                      -> Word32
                      -> Bool
-                     -> Resource r VkSampler
+                     -> Resource VkSampler
 createTextureSampler dev mipLevels magPixelated =
   let samplerCreateInfo = createVk @VkSamplerCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO
@@ -265,7 +266,7 @@ createImageView :: VkDevice
                 -> VkFormat
                 -> VkImageAspectFlags
                 -> Word32
-                -> Resource r VkImageView
+                -> Resource VkImageView
 createImageView dev image format aspectFlags mipLevels =
     let cmapping = createVk
           $  set @"r" VK_COMPONENT_SWIZZLE_IDENTITY
@@ -349,7 +350,7 @@ transitionImageLayout :: VkImage
                       -> ImageLayoutTransition
                       -> Word32
                       -> VkCommandBuffer
-                      -> Program r ()
+                      -> Program ()
 transitionImageLayout image format transition mipLevels cmdBuf =
   do
     let TransitionDependent {..} = dependents transition
@@ -395,7 +396,7 @@ createImage :: EngineCapability
             -> VkImageTiling
             -> VkImageUsageFlags
             -> VkMemoryPropertyFlags
-            -> Resource r (MemoryLoc, VkImage)
+            -> Resource (MemoryLoc, VkImage)
 createImage EngineCapability{ dev, memPool } width height mipLevels samples format tiling usage propFlags =
   let ici = createVk @VkImageCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO
@@ -437,7 +438,7 @@ copyBufferToImage :: VkCommandBuffer
                   -> VkImage
                   -> Word32
                   -> Word32
-                  -> Program r ()
+                  -> Program ()
 copyBufferToImage cmdBuf buffer image width height = do
   let region = createVk @VkBufferImageCopy
         $  set @"bufferOffset" 0
@@ -468,7 +469,7 @@ findSupportedFormat :: VkPhysicalDevice
                     -> [VkFormat]
                     -> VkImageTiling
                     -> VkFormatFeatureFlags
-                    -> Program r VkFormat
+                    -> Program VkFormat
 findSupportedFormat pdev candidates tiling features = do
   goodCands <- flip filterM candidates $ \format -> do
     props <- allocaPeek $ \propsPtr ->
@@ -481,11 +482,11 @@ findSupportedFormat pdev candidates tiling features = do
       _ -> False
   case goodCands of
     x:_ -> return x
-    []  -> throwVkMsg "failed to find supported format"
+    []  -> throwString "failed to find supported format"
 
 
 findDepthFormat :: VkPhysicalDevice
-                -> Program r VkFormat
+                -> Program VkFormat
 findDepthFormat pdev =
   findSupportedFormat pdev
     [VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT]
@@ -502,7 +503,7 @@ hasStencilComponent format = format `elem`
 createDepthAttImgView :: EngineCapability
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
-                      -> Resource r ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
+                      -> Resource ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
 createDepthAttImgView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool } extent samples = do
   depthFormat <- onCreate $ findDepthFormat pdev
 
@@ -522,7 +523,7 @@ createColorAttImgView :: EngineCapability
                       -> VkFormat
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
-                      -> Resource r ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
+                      -> Resource ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
 createColorAttImgView ecap@EngineCapability{ dev, cmdCap, cmdQueue, semPool } format extent samples = do
   (_, colorImage) <- createImage ecap
     (getField @"width" extent) (getField @"height" extent) 1 samples format

@@ -13,12 +13,13 @@ import           Control.Monad
 import qualified Graphics.UI.GLFW                     as GLFW
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
+import           UnliftIO.Chan
+import           UnliftIO.Exception
+import           UnliftIO.IORef
+import           UnliftIO.MVar
 
 import           Vulkyrie.Engine.Draw
 import           Vulkyrie.GLFW
-import           Vulkyrie.MonadIO.Chan
-import           Vulkyrie.MonadIO.IORef
-import           Vulkyrie.MonadIO.MVar
 import           Vulkyrie.Program
 import           Vulkyrie.Resource
 import           Vulkyrie.Utils
@@ -45,19 +46,19 @@ data App s w
   , syncMode        :: SyncMode
   , maxFramesInFlight :: Int
     -- ^ allowed number of unfinished submitted frames on the graphics queue
-  , appNewWindow    :: forall r. GLFW.Window -> Program r w
+  , appNewWindow    :: GLFW.Window -> Program w
     -- ^ this runs once in the main thread, after GLFW initalization
   , appMainThreadHook :: w -> IO ()
     -- ^ this runs between calls to GLFW.waitEventsTimeout in the main thread
-  , appStart        :: forall r. w -> EngineCapability -> Program r s
+  , appStart        :: w -> EngineCapability -> Program s
     -- ^ makes the shared app state handle
-  , appNewSwapchain :: forall r a. s -> SwapchainInfo ->
-                       Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
+  , appNewSwapchain :: forall a. s -> SwapchainInfo ->
+                       Program ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
   , appRenderFrame  :: s -> RenderFun
   }
 
 runVulkanProgram :: App s w -> IO ()
-runVulkanProgram App{ .. } = runProgram checkStatus $ do
+runVulkanProgram App{ .. } = runProgram $ do
   windowSizeChanged <- newIORef False
   let (windowWidth, windowHeight) = windowSize
   window <- initGLFWWindow windowWidth windowHeight windowName windowFullscreen windowSizeChanged
@@ -97,7 +98,7 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
     writeList2Chan renderFinishedSems =<< replicateM maxFramesInFlight (auto $ metaSemaphore dev)
     frameFinishedEvent <- liftIO Event.new
 
-    let beforeSwapchainCreation :: Program r ()
+    let beforeSwapchainCreation :: Program ()
         beforeSwapchainCreation =
           -- wait as long as window has width=0 and height=0
           -- commented out because this only works in the main thread:
@@ -153,16 +154,16 @@ runVulkanProgram App{ .. } = runProgram checkStatus $ do
               , renderFun = appRenderFrame appState
               , framebuffers
               }
-        needRecreation <- drawFrame cap rdata `catchError` ( \err@(VulkanException ecode _) ->
+        needRecreation <- drawFrame cap rdata `catch` ( \err@(VulkanException ecode) ->
           case ecode of
-            Just VK_ERROR_OUT_OF_DATE_KHR -> do
+            VK_ERROR_OUT_OF_DATE_KHR -> do
               logInfo "Have got a VK_ERROR_OUT_OF_DATE_KHR error"
               return True
-            _ -> throwError err
+            _ -> throwIO err
           )
 
         -- part of dumb fps counter
-        seconds <- liftIO getTime
+        seconds <- getTime
         liftIO $ do
           cur <- readIORef currentSec
           if floor seconds /= cur

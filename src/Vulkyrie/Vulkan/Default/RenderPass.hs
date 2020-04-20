@@ -29,7 +29,7 @@ createPrivateAttachments :: EngineCapability
                          -> VkExtent2D
                          -> VkFormat
                          -> VkSampleCountFlagBits
-                         -> Resource r ([(VkSemaphore, VkPipelineStageBitmask a)], [VkImageView])
+                         -> Resource ([(VkSemaphore, VkPipelineStageBitmask a)], [VkImageView])
 createPrivateAttachments cap extent imgFormat samples = do
   let msaaOn = samples /= VK_SAMPLE_COUNT_1_BIT
   fmap unzip . sequence $
@@ -42,7 +42,7 @@ createRenderPass :: VkDevice
                  -> VkFormat
                  -> VkSampleCountFlagBits
                  -> VkImageLayout
-                 -> Resource r VkRenderPass
+                 -> Resource VkRenderPass
 createRenderPass dev colorFormat depthFormat samples colorOutFinalLayout =
   let msaaOn = samples /= VK_SAMPLE_COUNT_1_BIT
       finalColorLayout =

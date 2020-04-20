@@ -13,10 +13,9 @@ import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Ext.VK_KHR_shared_presentable_image
+import           UnliftIO.Concurrent
+import           UnliftIO.Exception
 
-import           Vulkyrie.MonadIO.Chan
-import           Vulkyrie.MonadIO.MVar
-import           Vulkyrie.MonadIO.Thread
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Utils
@@ -27,14 +26,14 @@ import           Vulkyrie.Vulkan.Sync
 -- | Callback type for rendering into swapchain framebuffers.
 --
 --   Returned QueueEvent signals when the framebuffer has been written.
-type RenderFun = forall r.
+type RenderFun =
      VkFramebuffer
   -- ^ framebuffer to render to
   -> [(VkSemaphore, VkPipelineStageFlags)]
   -- ^ semaphores with stages to wait on
   -> [VkSemaphore]
   -- ^ semaphores to signal
-  -> Program r QueueEvent
+  -> Program QueueEvent
 
 
 data RenderData
@@ -61,7 +60,7 @@ data RenderData
   }
 
 
-drawFrame :: EngineCapability -> RenderData -> Program r Bool
+drawFrame :: EngineCapability -> RenderData -> Program Bool
 drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
     imageAvailSem <- head <$> acquireSemaphores semPool 1
 
@@ -73,16 +72,16 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
     -- Can throw VK_ERROR_OUT_OF_DATE_KHR
     -- TODO: validation layer complaint about too many acquired images is
     -- probably not justified, waiting for vulkan spec to be clarified
-    imgIndex <- allocaPeek $ \imgIndexPtr -> runVk
+    imgIndex <- allocaPeek $ \imgIndexPtr -> runAndCatchVk
       ( vkAcquireNextImageKHR
             dev swapchain maxBound
             imageAvailSem VK_NULL_HANDLE imgIndexPtr
-      ) `catchError`
-      ( \err -> do
+      )
+      ( \(err :: VulkanException) -> do
           releaseSemaphores semPool [imageAvailSem]
           putMVar swapchainVar (Just swapchain)
           liftIO $ releaseToken swapImgTokens
-          throwError err
+          throwIO err
       )
     putMVar swapchainVar (Just swapchain)
 
@@ -108,5 +107,6 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
       liftIO $ Event.signal frameFinishedEvent
 
     -- TODO vkGetSwapchainStatusKHR not found, bug in vulkan-api?
-    -- runVk $ vkGetSwapchainStatusKHR dev swapchain
-    (== VK_SUBOPTIMAL_KHR) . currentStatus <$> get
+    -- result <- runVkResult $ vkGetSwapchainStatusKHR dev swapchain
+    -- return (result == VK_SUBOPTIMAL_KHR)
+    return False

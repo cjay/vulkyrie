@@ -11,12 +11,12 @@ import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Numeric.DataFrame
+import           UnliftIO.Chan
+import           UnliftIO.MVar
 
 import           Vulkyrie.Examples.Flat.Game
 import           Vulkyrie.Engine.Main
 import           Vulkyrie.Engine.Simple2D
-import           Vulkyrie.MonadIO.Chan
-import           Vulkyrie.MonadIO.MVar
 import           Vulkyrie.Program
 import           Vulkyrie.Resource
 import           Vulkyrie.Utils                (orthogonalVk, scale)
@@ -38,7 +38,7 @@ import           Vulkyrie.Vulkan.Shader
 
 
 -- | cam pos using (x, y), ortho projection from z 0.1 to 10 excluding boundaries.
-viewProjMatrix :: VkExtent2D -> Vec2f -> Program r Mat44f
+viewProjMatrix :: VkExtent2D -> Vec2f -> Program Mat44f
 viewProjMatrix extent (Vec2 x y) = do
   let width :: Float = fromIntegral $ getField @"width" extent
       height :: Float = fromIntegral $ getField @"height" extent
@@ -49,7 +49,7 @@ viewProjMatrix extent (Vec2 x y) = do
   return $ view %* proj
 
 
-loadShaders :: EngineCapability -> Program r [VkPipelineShaderStageCreateInfo]
+loadShaders :: EngineCapability -> Program [VkPipelineShaderStageCreateInfo]
 loadShaders EngineCapability{ dev } = do
     vertSM <- auto $ shaderModuleFile dev "shaders/sprites.vert.spv"
     fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
@@ -70,7 +70,7 @@ loadShaders EngineCapability{ dev } = do
     return [shaderVert, shaderFrag]
 
 
-makePipelineLayouts :: VkDevice -> Program r (VkDescriptorSetLayout, VkPipelineLayout)
+makePipelineLayouts :: VkDevice -> Program (VkDescriptorSetLayout, VkPipelineLayout)
 makePipelineLayouts dev = do
   frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
   -- TODO automate bind ids
@@ -94,7 +94,7 @@ makePipelineLayouts dev = do
 
 
 
-loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Program r Assets
+loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Program Assets
 loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
   let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg", "sprite.png"]
   (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
@@ -120,7 +120,7 @@ prepareRender :: EngineCapability
               -> SwapchainInfo
               -> [VkPipelineShaderStageCreateInfo]
               -> VkPipelineLayout
-              -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
+              -> Program ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
 prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = do
   let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
   msaaSamples <- getMaxUsableSampleCount pdev
@@ -149,7 +149,7 @@ prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLa
 
 
 
-makeWorld :: GameState -> Assets -> Program r (Vec2f, [Object])
+makeWorld :: GameState -> Assets -> Program (Vec2f, [Object])
 makeWorld GameState {..} Assets {..} = do
 
   let objs = flip map walls $
@@ -167,7 +167,7 @@ makeWorld GameState {..} Assets {..} = do
 
   return (camPos, if allDone then objs else [])
 
-myAppNewWindow :: GLFW.Window -> Program r WindowState
+myAppNewWindow :: GLFW.Window -> Program WindowState
 myAppNewWindow window = do
   keyEvents <- newChan
   let keyCallback _ key _ keyState _ = do
@@ -179,7 +179,7 @@ myAppMainThreadHook :: WindowState -> IO ()
 myAppMainThreadHook WindowState {..} = do
   return ()
 
-myAppStart :: WindowState -> EngineCapability -> Program r MyAppState
+myAppStart :: WindowState -> EngineCapability -> Program MyAppState
 myAppStart winState@WindowState{ keyEvents } cap@EngineCapability{ dev } = do
   shaderStages <- loadShaders cap
   (materialDSL, pipelineLayout) <- makePipelineLayouts dev
@@ -190,7 +190,7 @@ myAppStart winState@WindowState{ keyEvents } cap@EngineCapability{ dev } = do
   _ <- liftIO $ forkIO $ runGame gameState keyEvents
   return $ MyAppState{..}
 
-myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
+myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Program ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
 myAppNewSwapchain MyAppState{..} swapInfo = do
   _ <- tryTakeMVar renderContextVar
   (framebuffers, nextSems, renderContext) <- prepareRender cap swapInfo shaderStages pipelineLayout

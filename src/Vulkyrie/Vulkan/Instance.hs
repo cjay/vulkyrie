@@ -1,7 +1,6 @@
 {-# LANGUAGE Strict #-}
 module Vulkyrie.Vulkan.Instance
     ( createVulkanInstance
-    , defaultLayers
     ) where
 
 import           Foreign.C.String               (peekCString)
@@ -23,8 +22,8 @@ createVulkanInstance :: String -- ^ application name
                         --   or from GLFW
                      -> [String]
                         -- ^ required layer names
-                     -> Resource r VkInstance
-createVulkanInstance progName engineName extensions layers' =
+                     -> Resource VkInstance
+createVulkanInstance progName engineName extensions layers =
   resource $ metaResource destroyVulkanInstance $ do
 
     extStrings <- liftIO $ mapM peekCString extensions
@@ -37,7 +36,6 @@ createVulkanInstance progName engineName extensions layers' =
     withVkPtr iCreateInfo $ \iciPtr ->
       allocaPeek $ runVk . vkCreateInstance iciPtr VK_NULL
   where
-    layers = layers' ++ defaultLayers
     appInfo = createVk @VkApplicationInfo
       $  set       @"sType" VK_STRUCTURE_TYPE_APPLICATION_INFO
       &* set       @"pNext" VK_NULL
@@ -56,14 +54,6 @@ createVulkanInstance progName engineName extensions layers' =
       &* set           @"enabledExtensionCount" (fromIntegral $ length extensions)
       &* setListRef    @"ppEnabledExtensionNames" extensions
 
-destroyVulkanInstance :: VkInstance -> Program r ()
+destroyVulkanInstance :: VkInstance -> Program ()
 destroyVulkanInstance vkInstance
-  = liftIO (vkDestroyInstance vkInstance VK_NULL)
-  >> inDev (logDebug "Destroyed vkInstance.")
-
-
-defaultLayers :: [String]
-defaultLayers
-  = []
-  -- = ["VK_LAYER_LUNARG_standard_validation" | isDev]
-   --  ++ ["VK_LAYER_LUNARG_monitor" | isDev] -- dosen't exist on macOS
+  = liftIO (vkDestroyInstance vkInstance VK_NULL) >> (logDebug "Destroyed vkInstance.")

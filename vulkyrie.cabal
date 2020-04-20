@@ -22,7 +22,8 @@ flag dev
 
 library
     hs-source-dirs:     src
-    exposed-modules:    Vulkyrie.Examples.FPS
+    exposed-modules:    Vulkyrie.BuildFlags
+                        Vulkyrie.Examples.FPS
                         Vulkyrie.Examples.Flat
                         Vulkyrie.Examples.Flat.Game
                         Vulkyrie.Examples.TransformationObject
@@ -33,10 +34,6 @@ library
                         Vulkyrie.Engine.Simple2D
                         Vulkyrie.Engine.Config
                         Vulkyrie.GLFW
-                        Vulkyrie.MonadIO.Chan
-                        Vulkyrie.MonadIO.IORef
-                        Vulkyrie.MonadIO.MVar
-                        Vulkyrie.MonadIO.Thread
                         Vulkyrie.Program
                         Vulkyrie.Program.Foreign
                         Vulkyrie.Resource
@@ -79,9 +76,12 @@ library
                       , mtl
                       , primitive
                       , process
+                      , resourcet
                       , template-haskell
                       , time
                       , transformers
+                      , unliftio
+                      , unliftio-core
                       , vector
                       , vulkan-api >= 1.1.4.0
                       , wavefront

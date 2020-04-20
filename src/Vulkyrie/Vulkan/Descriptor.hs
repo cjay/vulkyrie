@@ -58,7 +58,7 @@ data DynamicDescriptorPool = DynamicDescriptorPool
 
 
 -- TODO make pool size dynamic
-createDescriptorPool :: VkDevice -> Int -> Resource r VkDescriptorPool
+createDescriptorPool :: VkDevice -> Int -> Resource VkDescriptorPool
 createDescriptorPool dev n =
   resource $ metaResource
     (liftIO . flip (vkDestroyDescriptorPool dev) VK_NULL) $
@@ -101,7 +101,7 @@ samplerBinding bindId =
 
 createDescriptorSetLayout :: VkDevice
                           -> [VkDescriptorSetLayoutBinding]
-                          -> Resource r VkDescriptorSetLayout
+                          -> Resource VkDescriptorSetLayout
 createDescriptorSetLayout dev bindings =
   let dslCreateInfo = createVk @VkDescriptorSetLayoutCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
@@ -117,7 +117,7 @@ createDescriptorSetLayout dev bindings =
 allocateDescriptorSet :: VkDevice
                       -> VkDescriptorPool
                       -> VkDescriptorSetLayout
-                      -> Program r VkDescriptorSet
+                      -> Program VkDescriptorSet
 allocateDescriptorSet dev descriptorPool layout =
   head <$> allocateDescriptorSets dev descriptorPool [layout]
 
@@ -126,7 +126,7 @@ allocateDescriptorSetsForLayout :: VkDevice
                                 -> VkDescriptorPool
                                 -> Int
                                 -> VkDescriptorSetLayout
-                                -> Program r [VkDescriptorSet]
+                                -> Program [VkDescriptorSet]
 allocateDescriptorSetsForLayout dev descriptorPool n layout =
   allocateDescriptorSets dev descriptorPool (replicate n layout)
 
@@ -135,7 +135,7 @@ allocateDescriptorSetsForLayout dev descriptorPool n layout =
 allocateDescriptorSets :: VkDevice
                        -> VkDescriptorPool
                        -> [VkDescriptorSetLayout]
-                       -> Program r [VkDescriptorSet]
+                       -> Program [VkDescriptorSet]
 allocateDescriptorSets dev descriptorPool layouts = do
   let len = length layouts
   let dsai = createVk @VkDescriptorSetAllocateInfo
@@ -153,7 +153,7 @@ updateDescriptorSet :: VkDevice
                     -> Word32
                     -> [VkDescriptorBufferInfo]
                     -> [VkDescriptorImageInfo]
-                    -> Program r ()
+                    -> Program ()
 updateDescriptorSet dev descriptorSet firstBinding uniformBufferInfos imageInfos =
   let uniformWrite bufferInfo binding =
         createVk @VkWriteDescriptorSet

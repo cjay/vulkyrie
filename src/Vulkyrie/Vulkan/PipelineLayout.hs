@@ -28,7 +28,7 @@ pushConstantRange stageFlags offset size = createVk
 createPipelineLayout :: VkDevice
                      -> [VkDescriptorSetLayout]
                      -> [VkPushConstantRange]
-                     -> Resource r VkPipelineLayout
+                     -> Resource VkPipelineLayout
 createPipelineLayout dev descrSetLayouts pushConstRanges = do
   let plCreateInfo = createVk @VkPipelineLayoutCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO

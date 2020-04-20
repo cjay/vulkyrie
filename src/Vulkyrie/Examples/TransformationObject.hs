@@ -29,9 +29,9 @@ rotation seconds =
       (_::Int, phaseTau) = properFraction $ seconds * rate
   in rotate (vec3 0 0 1) (realToFrac phaseTau * 2 * pi)
 
-updateTransObj :: VkExtent2D -> Program r TransformationObject
+updateTransObj :: VkExtent2D -> Program TransformationObject
 updateTransObj extent = do
-  seconds <- liftIO getTime
+  seconds <- getTime
   let width = getField @"width" extent
   let height = getField @"height" extent
   let aspectRatio = fromIntegral width / fromIntegral height

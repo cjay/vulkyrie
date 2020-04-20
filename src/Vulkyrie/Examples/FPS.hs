@@ -9,10 +9,11 @@ import qualified Graphics.UI.GLFW         as GLFW
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Numeric.DataFrame
+import           UnliftIO.MVar
 
 import           Vulkyrie.Engine.Main
 import           Vulkyrie.Engine.Simple3D
-import           Vulkyrie.MonadIO.MVar
+import           Vulkyrie.GLFW
 import           Vulkyrie.Program
 import           Vulkyrie.Resource
 import           Vulkyrie.Utils                (perspectiveVk, scale)
@@ -57,14 +58,12 @@ rotation seconds =
   in rotate (vec3 0 0 1) (realToFrac phaseTau * 2 * pi)
 
 
-objMatrixOverTime :: Program r Mat44f
-objMatrixOverTime = do
-  seconds <- getTime
-  return $ rotation seconds
+objMatrixOverTime :: Program Mat44f
+objMatrixOverTime = rotation <$> getTime
 
 
 -- | cam rotation using (yaw, pitch)
-viewProjMatrix :: VkExtent2D -> (Double, Double) -> Program r Mat44f
+viewProjMatrix :: VkExtent2D -> (Double, Double) -> Program Mat44f
 viewProjMatrix extent (yaw, pitch) = do
   let width = getField @"width" extent
       height = getField @"height" extent
@@ -76,7 +75,7 @@ viewProjMatrix extent (yaw, pitch) = do
   return $ view %* proj
 
 
-loadShaders :: EngineCapability -> Program r [VkPipelineShaderStageCreateInfo]
+loadShaders :: EngineCapability -> Program [VkPipelineShaderStageCreateInfo]
 loadShaders EngineCapability{ dev } = do
     vertSM <- auto $ shaderModuleFile dev "shaders/triangle.vert.spv"
     fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
@@ -97,7 +96,7 @@ loadShaders EngineCapability{ dev } = do
     return [shaderVert, shaderFrag]
 
 
-makePipelineLayouts :: VkDevice -> Program r (VkDescriptorSetLayout, VkPipelineLayout)
+makePipelineLayouts :: VkDevice -> Program (VkDescriptorSetLayout, VkPipelineLayout)
 makePipelineLayouts dev = do
   frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
   -- TODO automate bind ids
@@ -121,7 +120,7 @@ makePipelineLayouts dev = do
 
 
 
-loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Program r Assets
+loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Program Assets
 loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
   let vertices = rectVertices
       indices = rectIndices
@@ -158,7 +157,7 @@ prepareRender :: EngineCapability
               -> SwapchainInfo
               -> [VkPipelineShaderStageCreateInfo]
               -> VkPipelineLayout
-              -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
+              -> Program ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
 prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = do
   let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
   msaaSamples <- getMaxUsableSampleCount pdev
@@ -184,7 +183,7 @@ prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLa
 
 
 
-makeWorld :: MyAppState -> Program r [Object]
+makeWorld :: MyAppState -> Program [Object]
 makeWorld MyAppState{ assets } = do
   let Assets{..} = assets
   -- objTransformsRef <- newIORef [translate3 $ vec3 0 1 1, translate3 $ vec3 0 0 0]
@@ -250,7 +249,7 @@ makeWorld MyAppState{ assets } = do
 
   if allDone then return objs else return []
 
-myAppNewWindow :: GLFW.Window -> Program r WindowState
+myAppNewWindow :: GLFW.Window -> Program WindowState
 myAppNewWindow window = do
   liftIO $ GLFW.setCursorInputMode window GLFW.CursorInputMode'Disabled
   rawSupported <- liftIO $ GLFW.rawMouseMotionSupported
@@ -278,7 +277,7 @@ myAppMainThreadHook WindowState {..} = do
   -- putStrLn "."
   return ()
 
-myAppStart :: WindowState -> EngineCapability -> Program r MyAppState
+myAppStart :: WindowState -> EngineCapability -> Program MyAppState
 myAppStart winState cap@EngineCapability{ dev } = do
   shaderStages <- loadShaders cap
   (materialDSL, pipelineLayout) <- makePipelineLayouts dev
@@ -288,7 +287,7 @@ myAppStart winState cap@EngineCapability{ dev } = do
   inputMutex <- newMVar ()
   return $ MyAppState{..}
 
-myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Program r ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
+myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Program ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
 myAppNewSwapchain MyAppState{..} swapInfo = do
   _ <- tryTakeMVar renderContextVar
   (framebuffers, nextSems, renderContext) <- prepareRender cap swapInfo shaderStages pipelineLayout
@@ -369,7 +368,7 @@ runMyVulkanProgram = do
 updateDescrSet :: VkDevice
                -> [VkDescriptorImageInfo]
                -> VkDescriptorSet
-               -> Program r ()
+               -> Program ()
 updateDescrSet dev texInfos descrSet = do
   -- seconds <- getTime
   -- let texIx = floor seconds `mod` 2

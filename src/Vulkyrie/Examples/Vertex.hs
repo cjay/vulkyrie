@@ -20,6 +20,7 @@ import           Graphics.Vulkan.Marshal.Create
 import           Graphics.Vulkan.Marshal.Create.DataFrame ()
 import           Numeric.DataFrame
 import           Numeric.Dimensions
+import           UnliftIO.Exception
 
 import           Vulkyrie.Program
 
@@ -94,10 +95,10 @@ faceToTriangles (Face a b c is) = pairwise (Tri a) (b:c:is)
   where pairwise f xs = zipWith f xs (tail xs)
 
 loadModel :: FilePath
-          -> Program r (DataFrame Vertex '[XN 3], DataFrame Word32 '[XN 3])
+          -> Program (DataFrame Vertex '[XN 3], DataFrame Word32 '[XN 3])
 loadModel file = do
   logInfo "Loading model.."
-  obj <- either throwVkMsg pure =<< Codec.Wavefront.fromFile file
+  obj <- either throwString pure =<< Codec.Wavefront.fromFile file
   obj `seq` logInfo "Processing geometry.."
   let r = objVertices obj
   r `seq` logInfo "Geometry done."

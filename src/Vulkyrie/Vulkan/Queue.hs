@@ -42,11 +42,13 @@ import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
+import           UnliftIO.Async
+import           UnliftIO.Chan
+import           UnliftIO.Exception
+import           UnliftIO.IORef
+import           UnliftIO.MVar
+import           UnliftIO.Concurrent
 
-import           Vulkyrie.MonadIO.Chan
-import           Vulkyrie.MonadIO.IORef
-import           Vulkyrie.MonadIO.MVar
-import           Vulkyrie.MonadIO.Thread
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
@@ -59,7 +61,7 @@ data ManagedPresentQueue =
     -- ^ needed because there is no single management thread for the queue
   }
 
-present :: ManagedPresentQueue -> [(MVar (Maybe VkSwapchainKHR), Word32)] -> [VkSemaphore] -> Program r ()
+present :: ManagedPresentQueue -> [(MVar (Maybe VkSwapchainKHR), Word32)] -> [VkSemaphore] -> Program ()
 present ManagedPresentQueue{..} images waitSems = do
   let (swapchainVars, imageIndices) = unzip images
   bracket
@@ -75,14 +77,14 @@ present ManagedPresentQueue{..} images waitSems = do
             &* setListRef @"pImageIndices" imageIndices
             &* setListCountAndRef @"waitSemaphoreCount" @"pWaitSemaphores" waitSems
             &* setListCountAndRef @"swapchainCount" @"pSwapchains" actualSwapchains
-      withVkPtr presentInfo (runVk . vkQueuePresentKHR presentQueue)
-        `catchError`
-        ( \err@(VulkanException ecode _) ->
+      withVkPtr presentInfo $ \ptr -> runAndCatchVk
+        (vkQueuePresentKHR presentQueue ptr)
+        ( \exception@(VulkanException ecode) ->
             case ecode of
               -- Ignoring this here is ok, vkAcquireNextImageKHR or
               -- vkGetSwapchainStatusKHR will throw it again later.
-              Just VK_ERROR_OUT_OF_DATE_KHR -> return ()
-              _ -> throwError err
+              VK_ERROR_OUT_OF_DATE_KHR -> return ()
+              _ -> throwIO exception
         )
     )
 
@@ -104,30 +106,30 @@ data QueueEvent
 
 
 -- | Produces a QueueEvent that has already been set to the done state.
-newDoneQueueEvent :: Program r QueueEvent
+newDoneQueueEvent :: Program QueueEvent
 newDoneQueueEvent = QueueEvent <$> liftIO Event.newSet <*> liftIO Event.newSet
 
 -- | Block until the submission has been submitted to the queue.
-waitSubmitted :: QueueEvent -> Program r ()
+waitSubmitted :: QueueEvent -> Program ()
 waitSubmitted QueueEvent { submitEvent } = liftIO $ Event.wait submitEvent
 
 -- | Block until the submission has been executed by the queue.
-waitDone :: QueueEvent -> Program r ()
+waitDone :: QueueEvent -> Program ()
 waitDone QueueEvent { doneEvent } = liftIO $ Event.wait doneEvent
 
 -- | Like wait, but with a timeout. A return value of False indicates a timeout
 --   occurred.
 --
 --   The timeout is specified in microseconds.
-waitDoneTimeout :: QueueEvent -> Integer -> Program r Bool
+waitDoneTimeout :: QueueEvent -> Integer -> Program Bool
 waitDoneTimeout QueueEvent { doneEvent } timeout = liftIO $ Event.waitTimeout doneEvent timeout
 
 -- | Checks if the submission has been submitted.
-isSubmitted :: QueueEvent -> Program r Bool
+isSubmitted :: QueueEvent -> Program Bool
 isSubmitted QueueEvent { submitEvent } = liftIO $ Event.isSet submitEvent
 
 -- | Checks if the submission has been executed.
-isDone :: QueueEvent -> Program r Bool
+isDone :: QueueEvent -> Program Bool
 isDone QueueEvent { doneEvent } = liftIO $ Event.isSet doneEvent
 
 
@@ -162,11 +164,11 @@ data QueueRequest = Shutdown
 data Instruction = Post VkSubmitInfo
                  | SubmitIfNeeded
                  | Submit
-                 | Present ManagedPresentQueue (forall r. Program r ()) (IO ())
+                 | Present ManagedPresentQueue (Program ()) (IO ())
                  | Notify (MVar QueueEvent)
                  | Checkpoint Event
 
-metaManagedQueue :: VkDevice -> VkQueue -> MasterSemaphorePool -> MetaResource r ManagedQueue
+metaManagedQueue :: VkDevice -> VkQueue -> MasterSemaphorePool -> MetaResource ManagedQueue
 metaManagedQueue dev queue msp =
   let mFencePool = metaFencePool dev
   in metaResource
@@ -185,10 +187,10 @@ metaManagedQueue dev queue msp =
       pumpThread <- newMVar Nothing
 
       let mq = ManagedQueue { masterSemaphorePool=msp, .. }
-          submit_ :: Program r ()
+          submit_ :: Program ()
           submit_ = do
             fence <- acquireFence fencePool
-            fenceResetDone <- asyncProg $ resetFences fencePool
+            fenceResetDone <- async $ resetFences fencePool
             sIs <- DL.toList <$> readIORef submitInfos
             writeIORef submitInfos mempty
             runVk $ withArrayLen sIs $ \siLen siArr ->
@@ -204,9 +206,9 @@ metaManagedQueue dev queue msp =
               sems <- concat <$> mapM submitInfoGetWaitSemaphores sIs
               mspReleaseSemaphores msp sems
             -- blocking because acquireFence is not allowed while resetFences is running
-            waitProg fenceResetDone
+            wait fenceResetDone
 
-          post_ :: VkSubmitInfo -> Program r ()
+          post_ :: VkSubmitInfo -> Program ()
           post_ submitInfo = do
             sIs <- readIORef submitInfos
             writeIORef submitInfos (sIs `DL.snoc` submitInfo)
@@ -248,32 +250,32 @@ metaManagedQueue dev queue msp =
 
 
 -- | Stage VkSubmitInfo for submission. Can stage many.
-post :: ManagedQueue -> VkSubmitInfo -> Program r ()
+post :: ManagedQueue -> VkSubmitInfo -> Program ()
 post ManagedQueue{ requestChan } submitInfo =
   writeChan requestChan $ Transaction [Post submitInfo]
 
-postSubmitPresent :: ManagedQueue -> VkSubmitInfo -> ManagedPresentQueue -> (forall s. Program s ()) -> IO () -> Program r ()
+postSubmitPresent :: ManagedQueue -> VkSubmitInfo -> ManagedPresentQueue -> (Program ()) -> IO () -> Program ()
 postSubmitPresent ManagedQueue{ requestChan } submitInfo presentQueue presentAction postPresentAction =
   writeChan requestChan $ Transaction
     [Post submitInfo, Submit, Present presentQueue presentAction postPresentAction]
 
 -- | Only submits something if there are any staged VkSubmitInfos.
-submitIfNeeded :: ManagedQueue -> Program r ()
+submitIfNeeded :: ManagedQueue -> Program ()
 submitIfNeeded ManagedQueue{ requestChan } =
   writeChan requestChan $ Transaction [SubmitIfNeeded]
 
 -- | Submit with submission-notification.
-submit :: ManagedQueue -> Program r ()
+submit :: ManagedQueue -> Program ()
 submit ManagedQueue{ requestChan } =
   writeChan requestChan $ Transaction [Submit]
 
-submitPresent :: ManagedQueue -> ManagedPresentQueue -> (forall s. Program s ()) -> IO () -> Program r ()
+submitPresent :: ManagedQueue -> ManagedPresentQueue -> (Program ()) -> IO () -> Program ()
 submitPresent ManagedQueue{ requestChan } presentQueue presentAction postPresentAction =
   writeChan requestChan $ Transaction
     [Submit, Present presentQueue presentAction postPresentAction]
 
 -- | Stage VkSubmitInfo for submission and notify when it was done.
-postNotify :: ManagedQueue -> VkSubmitInfo -> Program r QueueEvent
+postNotify :: ManagedQueue -> VkSubmitInfo -> Program QueueEvent
 postNotify ManagedQueue{ requestChan } submitInfo = do
   resultBox <- newEmptyMVar
   writeChan requestChan $ Transaction [Notify resultBox, Post submitInfo]
@@ -282,14 +284,14 @@ postNotify ManagedQueue{ requestChan } submitInfo = do
 -- | Submit with done-notification. Always submits, even with empty VkSubmitInfos.
 --
 --   Can be used to ensure that any previous submissions have been executed.
-submitNotify :: ManagedQueue -> Program r QueueEvent
+submitNotify :: ManagedQueue -> Program QueueEvent
 submitNotify ManagedQueue{ requestChan } = do
   resultBox <- newEmptyMVar
   writeChan requestChan $ Transaction [Notify resultBox, Submit]
   takeMVar resultBox
 
 -- | Stage VkSubmitInfo for submission and notify when it was done.
-postSubmitNotify :: ManagedQueue -> VkSubmitInfo -> Program r QueueEvent
+postSubmitNotify :: ManagedQueue -> VkSubmitInfo -> Program QueueEvent
 postSubmitNotify ManagedQueue{ requestChan } submitInfo = do
   resultBox <- newEmptyMVar
   writeChan requestChan $ Transaction [Notify resultBox, Post submitInfo, Submit]
@@ -298,18 +300,18 @@ postSubmitNotify ManagedQueue{ requestChan } submitInfo = do
 -- | Immediately wait for notification after staging.
 --
 --   This will wait forever if nothing causes eventual submission.
-postWait :: ManagedQueue -> VkSubmitInfo -> Program r ()
+postWait :: ManagedQueue -> VkSubmitInfo -> Program ()
 postWait mq submitInfo = do
   event <- postNotify mq submitInfo
   waitDone event
 
 -- | Immediately wait for notification after submitting.
-submitWait :: ManagedQueue -> Program r ()
+submitWait :: ManagedQueue -> Program ()
 submitWait mq = do
   event <- submitNotify mq
   waitDone event
 
-waitCheckpoint :: ManagedQueue -> Program r ()
+waitCheckpoint :: ManagedQueue -> Program ()
 waitCheckpoint ManagedQueue{ requestChan } = do
   event <- liftIO Event.new
   writeChan requestChan $ Transaction [Checkpoint event]
@@ -318,7 +320,7 @@ waitCheckpoint ManagedQueue{ requestChan } = do
 -- | Creates a thread for automatic submission every n microseconds.
 --
 --   Kills previous pump thread if it exists.
-attachQueuePump :: ManagedQueue -> Int -> Program r ()
+attachQueuePump :: ManagedQueue -> Int -> Program ()
 attachQueuePump mq@ManagedQueue{ pumpThread } microSecs = do
   takeMVar pumpThread >>= mapM_ killThread
   tId <- forkProg $ forever $ do
@@ -327,7 +329,7 @@ attachQueuePump mq@ManagedQueue{ pumpThread } microSecs = do
   putMVar pumpThread (Just tId)
 
 -- | Kills queue pump thread if it exists.
-removeQueuePump :: ManagedQueue -> Program r ()
+removeQueuePump :: ManagedQueue -> Program ()
 removeQueuePump ManagedQueue{ pumpThread } =
   do
     takeMVar pumpThread >>= mapM_ killThread
@@ -351,7 +353,7 @@ makeSubmitInfo waitSemsWithStages signalSems cmdBufs =
           &* setListCountAndRef @"signalSemaphoreCount" @"pSignalSemaphores" signalSems
 
 
-submitInfoGetWaitSemaphores :: VkSubmitInfo -> Program r [VkSemaphore]
+submitInfoGetWaitSemaphores :: VkSubmitInfo -> Program [VkSemaphore]
 submitInfoGetWaitSemaphores =
   liftIO . getListCountAndRef @"waitSemaphoreCount" @"pWaitSemaphores"
 
@@ -362,7 +364,7 @@ data CommandThread = CommandThread
   { waitSems   :: IORef [(VkSemaphore, VkPipelineStageFlags)]
   }
 
-joinCommandThreads :: [CommandThread] -> Program r CommandThread
+joinCommandThreads :: [CommandThread] -> Program CommandThread
 joinCommandThreads threads = do
   let refs = map waitSems threads
   allSems <- concat <$> mapM (readIORef) refs
@@ -370,7 +372,7 @@ joinCommandThreads threads = do
   newRef <- newIORef allSems
   return $ CommandThread newRef
 
-newCommandThread :: Program r CommandThread
+newCommandThread :: Program CommandThread
 newCommandThread = do
   ref <- newIORef []
   return $ CommandThread ref
