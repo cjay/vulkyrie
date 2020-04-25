@@ -1,12 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StrictData            #-}
--- | Provide a `Program` monad to execute vulkan actions, carry state,
---   manage allocated resources, and process exceptions.
---
---   Note the strictness: we don't want to pile up unevaluated thunks in
---   the program state, but @Strict@ pragma would ruin continuation monad;
---   thus, we have to keep a careful balance between strict and lazy functions.
+
 module Vulkyrie.Program
     ( Program (..)
     , runProgram
@@ -19,6 +14,8 @@ module Vulkyrie.Program
     , later
     , allocResource
     , locally
+    , manually
+    , cleanup
       -- * Exception handling
     , VulkanException (..)
     , runVk
@@ -43,11 +40,12 @@ import           Control.Monad.IO.Class
 import           Control.Monad.IO.Unlift
 import           Control.Monad.Logger.CallStack hiding (logDebug, logInfo, logWarn, logError)
 import qualified Control.Monad.Logger.CallStack as Logger
-import           Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import           Control.Monad.Reader.Class
+import           Control.Monad.Trans.Reader (ReaderT, runReaderT)
+import           Data.Either                    (lefts)
+import           Data.List.NonEmpty
 import           Data.String                    (fromString)
 import           Data.Typeable
-import           Data.Either                    ( lefts )
 import           GHC.Stack
 import           Graphics.Vulkan.Core_1_0
 import           System.Exit
@@ -58,7 +56,10 @@ import           UnliftIO.IORef
 
 import           Vulkyrie.BuildFlags
 
-data ProgramContext = ProgramContext { destructorsVar :: IORef [IO ()]}
+data ProgramContext
+  = ProgramContext
+  { destructorsVar :: IORef [IO ()]
+  }
 
 newtype Program a = Program (ReaderT ProgramContext (LoggingT IO) a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadReader ProgramContext, MonadUnliftIO, MonadLogger)
@@ -66,39 +67,49 @@ newtype Program a = Program (ReaderT ProgramContext (LoggingT IO) a)
 makeProgramContext :: IO ProgramContext
 makeProgramContext = do
   destructorsVar <- newIORef []
-  return ProgramContext {..}
+  return ProgramContext{..}
 
 runProgram :: Program a -> IO a
 runProgram prog = makeProgramContext >>= flip run prog
 
 run :: ProgramContext -> Program a -> IO a
 run ctx (Program p) = do
-  let ProgramContext { destructorsVar } = ctx
+  let ProgramContext{ destructorsVar } = ctx
   mask $ \restore -> do
     a <- restore (runStdoutLoggingT $ runReaderT p ctx)
-      `catch` (\e -> cleanup destructorsVar (Just e) >> throwIO e)
-    cleanup destructorsVar Nothing
+      `catch` (\e -> readIORef destructorsVar >>= cleanup (Just e) >> throwIO e)
+    readIORef destructorsVar >>= cleanup Nothing
     return a
 
 locally :: Program a -> Program a
 locally prog = do
   ctx <- ask
   destructorsVar <- newIORef []
-  liftIO $ run ctx{destructorsVar} prog
+  liftIO $ run ctx{ destructorsVar } prog
+
+-- | Has to be called within a masked scope. Pass the restore. Returns
+-- destructor list along with result.
+manually :: (IO a -> IO a) -> Program a -> Program ([IO ()], a)
+manually restore (Program p) = do
+  ctx <- ask
+  destructorsVar <- newIORef []
+  a <- liftIO $
+    restore (runStdoutLoggingT $ runReaderT p ctx{ destructorsVar })
+      `catch` (\e -> readIORef destructorsVar >>= cleanup (Just e) >> throwIO e)
+  destructors <- readIORef destructorsVar
+  return (destructors, a)
 
 data CleanupException = CleanupException
-  { originalException :: Maybe SomeException
-  , firstCleanupException :: SomeException
-  , otherCleanupExceptions :: [SomeException]
+  { exceptionCausingCleanup :: Maybe SomeException
+  , exceptionsDuringCleanup :: NonEmpty SomeException
   }
   deriving (Show, Typeable)
 instance Exception CleanupException
 
-cleanup :: IORef [IO ()] -> Maybe SomeException -> IO ()
-cleanup destructorsVar origException = do
-  destructors <- readIORef destructorsVar
-  lefts <$> mapM (try . liftIO) destructors >>= \case
-    e : es -> throwIO (CleanupException origException e es)
+cleanup :: Maybe SomeException -> [IO ()] -> IO ()
+cleanup origException destructors =
+  lefts <$> mapM try destructors >>= \case
+    e : es -> throwIO (CleanupException origException (e :| es))
     [] -> return ()
 
 -- TODO thread management
@@ -116,10 +127,11 @@ later :: Program ()
       -> Program ()
 later prog = do
   u <- askUnliftIO
-  ProgramContext { destructorsVar } <- ask
+  ProgramContext{ destructorsVar } <- ask
   atomicModifyIORef' destructorsVar $ \ds -> (unliftIO u prog : ds, ())
 {-# INLINE later #-}
 
+-- TODO maybe masking during allocation should be default. bracket does it etc
 -- | Exception-safe. Allows async exceptions during allocation, so it's fine if
 -- the allocation is a complex Program.
 allocResource :: (a -> Program ()) -- ^ free resource
