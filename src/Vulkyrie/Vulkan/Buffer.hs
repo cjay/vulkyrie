@@ -8,12 +8,14 @@ module Vulkyrie.Vulkan.Buffer
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
+import           UnliftIO.Exception
 
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Engine
 import           Vulkyrie.Vulkan.Memory
+import           Control.Monad.IO.Unlift
 
 
 createBuffer :: EngineCapability
@@ -35,13 +37,16 @@ createBuffer EngineCapability{dev, memPool} bSize bUsage bMemPropFlags =
             withVkPtr bufferInfo $ \biPtr -> allocaPeek $
               runVk . vkCreateBuffer dev biPtr VK_NULL
     in do
-      (destroyBuf, buf) <- onCreate $ manual metaBuffer
-      -- TODO resource instead of creation, with actual Resource
-      memLoc <- onCreate $ allocBindBufferMem memPool bMemPropFlags buf
-      -- The buf will be released before the memory
-      onDestroy destroyBuf
+      -- TODO ugly kludge
+      u <- askUnliftIO
+      liftIO $ mask $ \restore -> unliftIO u $ do
+        (destroyBuf, buf) <- onCreate $ manual restore metaBuffer
+        -- TODO resource instead of creation, with actual Resource
+        memLoc <- onCreate $ allocBindBufferMem memPool bMemPropFlags buf
+        -- The buf will be released before the memory
+        onDestroy $ liftIO $ cleanup Nothing destroyBuf
 
-      return (memLoc, buf)
+        return (memLoc, buf)
 
 
 copyBuffer :: VkCommandBuffer -> VkBuffer -> VkBuffer -> VkDeviceSize -> Program ()

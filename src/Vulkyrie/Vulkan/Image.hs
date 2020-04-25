@@ -15,6 +15,7 @@ module Vulkyrie.Vulkan.Image
 
 import           Codec.Picture
 import           Control.Monad
+import           Control.Monad.IO.Unlift
 import           Data.Bits
 import qualified Data.Vector.Storable           as Vec
 import           Foreign.Marshal.Array          (copyArray)
@@ -424,13 +425,16 @@ createImage EngineCapability{ dev, memPool } width height mipLevels samples form
             runVk $ vkCreateImage dev iciPtr VK_NULL imgPtr
 
     in do
-      (freeImageLater, image) <- onCreate . manual $ metaImage
-      -- TODO resource instead of creation, with actual Resource
-      memLoc <- onCreate $ allocBindImageMem memPool propFlags image
-      -- release the image before releasing the memory that is bound to it
-      onDestroy freeImageLater
+      -- TODO ugly kludge
+      u <- askUnliftIO
+      liftIO $ mask $ \restore -> unliftIO u $ do
+        (freeImageLater, image) <- onCreate $ manual restore metaImage
+        -- TODO resource instead of creation, with actual Resource
+        memLoc <- onCreate $ allocBindImageMem memPool propFlags image
+        -- release the image before releasing the memory that is bound to it
+        onDestroy $ liftIO $ cleanup Nothing freeImageLater
 
-      return (memLoc, image)
+        return (memLoc, image)
 
 
 copyBufferToImage :: VkCommandBuffer

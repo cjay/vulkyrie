@@ -1,5 +1,7 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+
 module Vulkyrie.Resource
   ( GenericResource
   , auto
@@ -22,6 +24,7 @@ module Vulkyrie.Resource
   , onDestroy
   ) where
 
+import           Control.Monad.IO.Unlift
 import           Graphics.Vulkan.Core_1_0
 import           Vulkyrie.Program
 
@@ -29,20 +32,15 @@ class GenericResource res a where
   -- | Makes use of the continuation based resource management built into Program
   auto :: res a -> Program a
   -- | Creates a destructor action along with the resource.
-  manual :: res a -> Program (Program (), a)
+  manual :: (IO a -> IO a) -> res a -> Program ([IO ()], a)
 
--- TODO not sure if carrying auto is worth it. Could replace it with manual and
--- Program.later. The fields and constructor of Resource should stay
--- implementation details for that reason.
-data Resource a = Resource
-  { auto_ :: Program a
-  , manual_ :: Program (Program (), a)
-  }
+newtype Resource a = Resource (Program a)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadUnliftIO)
 
 instance GenericResource Resource a where
-  auto = auto_
+  auto (Resource prog) = prog
   {-# INLINE auto #-}
-  manual = manual_
+  manual restore (Resource prog) = manually restore prog
   {-# INLINE manual #-}
 
 -- | A MetaResource is only meant to correctly destroy resources that it created itself.
@@ -65,14 +63,10 @@ metaResource destroy create = MetaResource {..}
 {-# INLINE metaResource #-}
 
 instance GenericResource MetaResource a where
-  -- auto :: MetaResource a -> Program a
-  auto MetaResource{..} = Vulkyrie.Program.allocResource destroy create
+  auto MetaResource{..} = allocResource destroy create
   {-# INLINE auto #-}
 
-  -- manual :: MetaResource a -> Program (a, Program ())
-  manual MetaResource{..} = do
-    x <- create
-    return (destroy x, x)
+  manual restore MetaResource{..} = manually restore (allocResource destroy create)
   {-# INLINE manual #-}
 
 
@@ -113,49 +107,23 @@ basicResource = metaResource
 
 -- | Need this to use MetaResources in the Resource monad
 resource :: MetaResource a -> Resource a
-resource ma = Resource (auto ma) (manual ma)
+resource ma = Resource (allocResource (destroy ma) (create ma))
 {-# INLINE resource #-}
 
 -- | A bit more polymorphic than (>>=) of Resource
 composeResource :: (GenericResource res1 a, GenericResource res2 b) => res1 a -> (a -> res2 b) -> Resource b
-composeResource ma fmb = Resource
-  (auto ma >>= auto . fmb)
-  (do
-    (destroyA, a) <- manual $ ma
-    (destroyB, b) <- manual $ fmb a
-    return (destroyB >> destroyA, b)
-  )
+composeResource ma fmb = Resource (auto ma >>= auto . fmb)
 {-# INLINE composeResource #-}
-
-instance Functor Resource where
-  fmap g fa = Resource (fmap g $ auto fa) (fmap g <$> manual fa)
-  {-# INLINE fmap #-}
-
-instance Applicative Resource where
-  pure a = Resource (return a) (return (return (), a))
-  {-# INLINE pure #-}
-  fab <*> fa = Resource
-    (auto fab <*> auto fa)
-    (do
-        (destroyAB, ab) <- manual fab
-        (destroyA, a) <- manual fa
-        return (destroyA >> destroyAB, ab a)
-    )
-  {-# INLINE (<*>) #-}
-
-instance Monad Resource where
-  (>>=) = composeResource
-  {-# INLINE (>>=) #-}
 
 -- | Runs given program when creating the resource. Creation order is top to bottom.
 onCreate :: Program a -> Resource a
-onCreate prog = Resource prog (prog >>= \a -> return (return (), a))
+onCreate = Resource
 {-# INLINE onCreate #-}
 
 -- TODO onDestroy users need to mask, or need better solution
 -- | Runs given program when destroying the resource. Destruction order is bottom to top.
 onDestroy :: Program () -> Resource ()
-onDestroy prog = Resource (later prog) (return (prog, ()))
+onDestroy = Resource . later
 {-# INLINE onDestroy #-}
 
 {- probably too rare, not really needed now
