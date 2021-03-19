@@ -8,3 +8,5 @@ This is still in an early alpha stage, but should already be a useful starting p
 just draw a triangle with Vulkan in Haskell.
 
 For a non-trivial example project see [some-roguelike](https://github.com/cjay/some-roguelike).
+
+If you want to try, as of right now you should use GHC 8.8, as I'm waiting for multiple dependencies to accept my pull requests for 8.10.
