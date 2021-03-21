@@ -25,6 +25,7 @@ import           UnliftIO.Exception
 
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
+import           Vulkyrie.Resource
 
 data SwapchainSupportDetails
   = SwapchainSupportDetails

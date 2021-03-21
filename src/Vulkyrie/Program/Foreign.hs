@@ -36,6 +36,7 @@ import           Numeric.Dimensions
 import           UnliftIO
 import qualified UnliftIO.Foreign as Foreign
 import           Vulkyrie.Program
+import           Vulkyrie.Resource
 
 withVkPtr :: VulkanMarshal a
           => a

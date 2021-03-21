@@ -20,6 +20,7 @@ import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
+import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Default.RenderPass
 
 
