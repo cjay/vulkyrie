@@ -52,7 +52,7 @@ createTextureImageView :: EngineCapability
                        -> Resource (QueueEvent, VkImageView, Word32)
 createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool } path = do
   Image { imageWidth, imageHeight, imageData }
-    <- onCreate $ (liftIO $ readImage path) >>= \case
+    <- liftIO (readImage path) >>= \case
       Left err -> throwString err
       Right dynImg -> pure $ convertRGBA8 dynImg
   let (imageDataForeignPtr, imageDataLen) = Vec.unsafeToForeignPtr0 imageData
@@ -66,10 +66,10 @@ createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPo
     (VK_IMAGE_USAGE_TRANSFER_SRC_BIT .|. VK_IMAGE_USAGE_TRANSFER_DST_BIT .|. VK_IMAGE_USAGE_SAMPLED_BIT)
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
-  sems <- onCreate $ acquireSemaphores semPool 2
+  sems <- liftProg $ acquireSemaphores semPool 2
   let [sem0, sem1] = sems
 
-  finishEvent <- onCreate $ do
+  finishEvent <- liftProg $ do
     postWith_ cmdCap cmdQueue [] [sem0] $
       liftProg . transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM Undef_TransDst mipLevels
 
@@ -427,7 +427,7 @@ createImage EngineCapability{ dev, memPool } width height mipLevels samples form
     -- releasing the image before releasing the memory that is bound to it
     in inverseDestruction $ do
       image <- resource metaImage
-      memLoc <- onCreate $ allocBindImageMem memPool propFlags image
+      memLoc <- liftProg $ allocBindImageMem memPool propFlags image
       return (memLoc, image)
 
 
@@ -503,14 +503,14 @@ createDepthAttImgView :: EngineCapability
                       -> VkSampleCountFlagBits
                       -> Resource ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
 createDepthAttImgView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool } extent samples = do
-  depthFormat <- onCreate $ findDepthFormat pdev
+  depthFormat <- liftProg $ findDepthFormat pdev
 
   (_, depthImage) <- createImage ecap
     (getField @"width" extent) (getField @"height" extent) 1 samples depthFormat
     VK_IMAGE_TILING_OPTIMAL VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
   depthImageView <- createImageView dev depthImage depthFormat VK_IMAGE_ASPECT_DEPTH_BIT 1
-  onCreate $ do
+  liftProg $ do
     sem <- head <$> acquireSemaphores semPool 1
     postWith_ cmdCap cmdQueue [] [sem] $
       liftProg . transitionImageLayout depthImage depthFormat Undef_DepthStencilAtt 1
@@ -530,7 +530,7 @@ createColorAttImgView ecap@EngineCapability{ dev, cmdCap, cmdQueue, semPool } fo
     (VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT .|. VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
   colorImageView <- createImageView dev colorImage format VK_IMAGE_ASPECT_COLOR_BIT 1
-  onCreate $ do
+  liftProg $ do
     sem <- head <$> acquireSemaphores semPool 1
     postWith_ cmdCap cmdQueue [] [sem] $
       liftProg . transitionImageLayout colorImage format Undef_ColorAtt 1

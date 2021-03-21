@@ -101,7 +101,7 @@ glfwWaitMinimized win = liftIO go where
 createGLFWVulkanInstance :: String -> [String] -> Resource VkInstance
 createGLFWVulkanInstance progName layers = do
     -- get required extension names from GLFW
-    glfwReqExts <- onCreate $ liftIO GLFW.getRequiredInstanceExtensions
+    glfwReqExts <- liftIO GLFW.getRequiredInstanceExtensions
     createVulkanInstance
       progName
       "My perfect Haskell engine"

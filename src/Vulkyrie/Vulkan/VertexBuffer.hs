@@ -34,21 +34,20 @@ createVertexBuffer ecap@EngineCapability{ dev, cmdCap, cmdQueue } (XFrame vertic
         ( VK_BUFFER_USAGE_TRANSFER_DST_BIT .|. VK_BUFFER_USAGE_VERTEX_BUFFER_BIT )
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
-    onCreate $ do
-      finishedEvent <- postWith cmdCap cmdQueue [] [] $ \cmdBuf -> do
-        (stagingMem, stagingBuf) <-
-          auto $ createBuffer ecap bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
-            ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
+    finishedEvent <- liftProg $ postWith cmdCap cmdQueue [] [] $ \cmdBuf -> do
+      (stagingMem, stagingBuf) <-
+        auto $ createBuffer ecap bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+          ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
-        -- copy data
-        liftProg $ do
-          stagingDataPtr <- allocaPeek $
-            runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bSize VK_ZERO_FLAGS
-          poke (castPtr stagingDataPtr) vertices
-          liftIO $ vkUnmapMemory dev (memory stagingMem)
-          copyBuffer cmdBuf stagingBuf vertexBuf bSize
+      -- copy data
+      liftProg $ do
+        stagingDataPtr <- allocaPeek $
+          runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bSize VK_ZERO_FLAGS
+        poke (castPtr stagingDataPtr) vertices
+        liftIO $ vkUnmapMemory dev (memory stagingMem)
+        copyBuffer cmdBuf stagingBuf vertexBuf bSize
 
-      return (finishedEvent, vertexBuf)
+    return (finishedEvent, vertexBuf)
 
 
 createIndexBuffer :: EngineCapability
@@ -64,18 +63,17 @@ createIndexBuffer ecap@EngineCapability{ dev, cmdCap, cmdQueue } (XFrame indices
         ( VK_BUFFER_USAGE_TRANSFER_DST_BIT .|. VK_BUFFER_USAGE_INDEX_BUFFER_BIT )
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
-    onCreate $ do
-      finishedEvent <- postWith cmdCap cmdQueue [] [] $ \cmdBuf -> do
-        (stagingMem, stagingBuf) <-
-          auto $ createBuffer ecap bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
-            ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
+    finishedEvent <- liftProg $ postWith cmdCap cmdQueue [] [] $ \cmdBuf -> do
+      (stagingMem, stagingBuf) <-
+        auto $ createBuffer ecap bSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
+          ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
-        -- copy data
-        liftProg $ do
-          stagingDataPtr <- allocaPeek $
-            runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bSize VK_ZERO_FLAGS
-          poke (castPtr stagingDataPtr) indices
-          liftIO $ vkUnmapMemory dev (memory stagingMem)
-          copyBuffer cmdBuf stagingBuf vertexBuf bSize
+      -- copy data
+      liftProg $ do
+        stagingDataPtr <- allocaPeek $
+          runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bSize VK_ZERO_FLAGS
+        poke (castPtr stagingDataPtr) indices
+        liftIO $ vkUnmapMemory dev (memory stagingMem)
+        copyBuffer cmdBuf stagingBuf vertexBuf bSize
 
-      return (finishedEvent, vertexBuf)
+    return (finishedEvent, vertexBuf)

@@ -13,7 +13,7 @@ module Vulkyrie.Program
     , Resource
     , askRegion
     , runResource
-    , later
+    , onDestroy
     , liftProg
     , allocResource
     , locally
@@ -160,7 +160,7 @@ asym ra rb =
 -}
 
 -- | Has to be called within a masked scope. Pass the restore. Returns
--- destructor list along with result.
+-- destructor action along with result.
 manually :: (forall a. Program a -> Program a) -> Resource b -> Program (Program (), b)
 manually restore (Resource res) = do
   ctx <- makeResourceContext
@@ -170,11 +170,14 @@ manually restore (Resource res) = do
       `catch` (\e -> readIORef destructorsVar >>= cleanup (Just e) >> throwIO e)
   return (readIORef destructorsVar >>= cleanup Nothing, a)
 
-later :: Program () -> Resource ()
-later prog = do
+-- | Runs given program when destroying the resource. Destruction order is bottom to top.
+--
+--   Never use this to deallocate, that way you get no exception masking! Use allocResource!
+onDestroy :: Program () -> Resource ()
+onDestroy prog = do
   ResourceContext{ destructorsVar } <- askResourceContext
   modifyIORef' destructorsVar (prog :)
-{-# INLINE later #-}
+{-# INLINE onDestroy #-}
 
 liftProg :: Program a -> Resource a
 liftProg prog = Resource $ lift prog

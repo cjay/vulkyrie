@@ -20,8 +20,6 @@ module Vulkyrie.Resource
 
   , resource
   , composeResource
-  , onCreate
-  , onDestroy
   ) where
 
 import           Graphics.Vulkan.Core_1_0
@@ -114,22 +112,3 @@ resource ma = allocResource (destroy ma) (create ma)
 composeResource :: (GenericResource res1 a, GenericResource res2 b) => res1 a -> (a -> res2 b) -> Resource b
 composeResource ma fmb = auto ma >>= auto . fmb
 {-# INLINE composeResource #-}
-
--- | Runs given program when creating the resource. Creation order is top to bottom.
-onCreate :: Program a -> Resource a
-onCreate = liftProg
-{-# INLINE onCreate #-}
-
--- TODO onDestroy users need to mask, or need better solution
--- | Runs given program when destroying the resource. Destruction order is bottom to top.
-onDestroy :: Program () -> Resource ()
-onDestroy = later
-{-# INLINE onDestroy #-}
-
-{- probably too rare, not really needed now
-asymmetricResource :: GenericResource res a => res r a -> Resource (Resource (), a)
-asymmetricResource res = do
-  (destr, a) <- onCreate $ manual res
-  return (onDestroy destr, a)
-{-# INLINE asymmetricResource #-}
--}

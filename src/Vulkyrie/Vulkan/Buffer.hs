@@ -38,7 +38,7 @@ createBuffer EngineCapability{dev, memPool} bSize bUsage bMemPropFlags =
     -- releasing the buffer before releasing the memory that is bound to it
     in inverseDestruction $ do
       buf <- resource metaBuffer
-      memLoc <- onCreate $ allocBindBufferMem memPool bMemPropFlags buf
+      memLoc <- liftProg $ allocBindBufferMem memPool bMemPropFlags buf
       return (memLoc, buf)
 
 copyBuffer :: VkCommandBuffer -> VkBuffer -> VkBuffer -> VkDeviceSize -> Program ()
