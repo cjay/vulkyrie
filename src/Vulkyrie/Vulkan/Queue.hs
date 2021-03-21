@@ -45,6 +45,7 @@ import           Graphics.Vulkan.Marshal.Create
 import           UnliftIO.Async
 import           UnliftIO.Chan
 import           UnliftIO.Exception
+import qualified UnliftIO.Foreign as Foreign
 import           UnliftIO.IORef
 import           UnliftIO.MVar
 import           UnliftIO.Concurrent
@@ -198,9 +199,9 @@ metaManagedQueue dev queue msp =
             QueueEvent{ submitEvent, doneEvent } <- readIORef nextEvent
             liftIO $ Event.set submitEvent
             writeIORef nextEvent =<< QueueEvent <$> liftIO Event.new <*> liftIO Event.new
-            _ <- forkProg $ do
-              fencePtr <- newArrayRes [fence]
-              runVk $ vkWaitForFences dev 1 fencePtr VK_TRUE (maxBound :: Word64)
+            void $ forkIO $ do
+              runVk $ Foreign.withArrayLen [fence] $ \len fencePtr ->
+                vkWaitForFences dev (fromIntegral len) fencePtr VK_TRUE (maxBound :: Word64)
               liftIO $ Event.set doneEvent
               releaseFence fencePool fence
               sems <- concat <$> mapM submitInfoGetWaitSemaphores sIs
@@ -231,8 +232,8 @@ metaManagedQueue dev queue msp =
                   Checkpoint event -> liftIO $ Event.set event
                   Present (ManagedPresentQueue presentQueue mutex) presentAction postPresentAction ->
                     if presentQueue == queue
-                      then locally presentAction >> liftIO postPresentAction
-                      else void $ forkProg $ do
+                      then presentAction >> liftIO postPresentAction
+                      else void $ forkIO $ do
                         -- TODO exception masking. Depends on how to handle actual async exceptions within Program
                         takeMVar mutex
                         presentAction
@@ -244,7 +245,7 @@ metaManagedQueue dev queue msp =
       -- PERFORMANCE Could write to mutable vector instead of DList to avoid copies,
       -- not sure how pointed-to arrays would be handled.
       -- Also, could keep track of the length instead of using withArrayLen.
-      _ <- forkProg queueLoop
+      void $ forkIO queueLoop
       return mq
   )
 
@@ -323,7 +324,7 @@ waitCheckpoint ManagedQueue{ requestChan } = do
 attachQueuePump :: ManagedQueue -> Int -> Program ()
 attachQueuePump mq@ManagedQueue{ pumpThread } microSecs = do
   takeMVar pumpThread >>= mapM_ killThread
-  tId <- forkProg $ forever $ do
+  tId <- forkIO $ forever $ do
     threadDelay microSecs
     submit mq
   putMVar pumpThread (Just tId)

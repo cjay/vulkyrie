@@ -54,7 +54,6 @@ library
                         Vulkyrie.Vulkan.PipelineLayout
                         Vulkyrie.Vulkan.Presentation
                         Vulkyrie.Vulkan.Shader
-                        Vulkyrie.Vulkan.Shader.TH
                         Vulkyrie.Vulkan.Sync
                         Vulkyrie.Vulkan.UniformBufferObject
                         Vulkyrie.Vulkan.VertexBuffer
@@ -78,6 +77,7 @@ library
                       , process
                       , resourcet
                       , template-haskell
+                      , text
                       , time
                       , transformers
                       , unliftio
@@ -90,6 +90,7 @@ library
     default-extensions:  DataKinds
                        , LambdaCase
                        , NamedFieldPuns
+                       , OverloadedStrings
                        , RecordWildCards
                        , ScopedTypeVariables
                        , TypeApplications

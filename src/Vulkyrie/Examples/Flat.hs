@@ -49,28 +49,29 @@ viewProjMatrix extent (Vec2 x y) = do
   return $ view %* proj
 
 
-loadShaders :: EngineCapability -> Program [VkPipelineShaderStageCreateInfo]
+loadShaders :: EngineCapability -> Resource [VkPipelineShaderStageCreateInfo]
 loadShaders EngineCapability{ dev } = do
     vertSM <- auto $ shaderModuleFile dev "shaders/sprites.vert.spv"
     fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
 
-    shaderVert
-      <- createShaderStage vertSM
-            VK_SHADER_STAGE_VERTEX_BIT
-            Nothing
+    liftProg $ do
+      shaderVert
+        <- createShaderStage vertSM
+              VK_SHADER_STAGE_VERTEX_BIT
+              Nothing
 
-    shaderFrag
-      <- createShaderStage fragSM
-            VK_SHADER_STAGE_FRAGMENT_BIT
-            Nothing
+      shaderFrag
+        <- createShaderStage fragSM
+              VK_SHADER_STAGE_FRAGMENT_BIT
+              Nothing
 
-    logInfo $ "Createad vertex shader module: " ++ show shaderVert
-    logInfo $ "Createad fragment shader module: " ++ show shaderFrag
+      logInfo $ "Createad vertex shader module: " ++ show shaderVert
+      logInfo $ "Createad fragment shader module: " ++ show shaderFrag
 
-    return [shaderVert, shaderFrag]
+      return [shaderVert, shaderFrag]
 
 
-makePipelineLayouts :: VkDevice -> Program (VkDescriptorSetLayout, VkPipelineLayout)
+makePipelineLayouts :: VkDevice -> Resource (VkDescriptorSetLayout, VkPipelineLayout)
 makePipelineLayouts dev = do
   frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
   -- TODO automate bind ids
@@ -94,20 +95,21 @@ makePipelineLayouts dev = do
 
 
 
-loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Program Assets
+loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Resource Assets
 loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
   let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg", "sprite.png"]
   (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
     (createTextureInfo cap True) texturePaths
 
-  loadEvents <- newMVar $ textureReadyEvents
+  liftProg $ do
+    loadEvents <- newMVar $ textureReadyEvents
 
-  materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
+    materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
 
-  forM_ (zip descrTextureInfos materialDescrSets) $
-    \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
+    forM_ (zip descrTextureInfos materialDescrSets) $
+      \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
 
-  return $ Assets {..}
+    return $ Assets {..}
 
 data Assets
   = Assets
@@ -120,13 +122,13 @@ prepareRender :: EngineCapability
               -> SwapchainInfo
               -> [VkPipelineShaderStageCreateInfo]
               -> VkPipelineLayout
-              -> Program ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
+              -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
 prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = do
   let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
-  msaaSamples <- getMaxUsableSampleCount pdev
+  msaaSamples <- liftProg $ getMaxUsableSampleCount pdev
   -- to turn off msaa:
   -- let msaaSamples = VK_SAMPLE_COUNT_1_BIT
-  depthFormat <- findDepthFormat pdev
+  depthFormat <- liftProg $ findDepthFormat pdev
 
   swapImgViews <- auto $
     mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
@@ -167,7 +169,7 @@ makeWorld GameState {..} Assets {..} = do
 
   return (camPos, if allDone then objs else [])
 
-myAppNewWindow :: GLFW.Window -> Program WindowState
+myAppNewWindow :: GLFW.Window -> Resource WindowState
 myAppNewWindow window = do
   keyEvents <- newChan
   let keyCallback _ key _ keyState _ = do
@@ -179,7 +181,7 @@ myAppMainThreadHook :: WindowState -> IO ()
 myAppMainThreadHook WindowState {..} = do
   return ()
 
-myAppStart :: WindowState -> EngineCapability -> Program MyAppState
+myAppStart :: WindowState -> EngineCapability -> Resource MyAppState
 myAppStart winState@WindowState{ keyEvents } cap@EngineCapability{ dev } = do
   shaderStages <- loadShaders cap
   (materialDSL, pipelineLayout) <- makePipelineLayouts dev
@@ -190,7 +192,7 @@ myAppStart winState@WindowState{ keyEvents } cap@EngineCapability{ dev } = do
   _ <- liftIO $ forkIO $ runGame gameState keyEvents
   return $ MyAppState{..}
 
-myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Program ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
+myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
 myAppNewSwapchain MyAppState{..} swapInfo = do
   _ <- tryTakeMVar renderContextVar
   (framebuffers, nextSems, renderContext) <- prepareRender cap swapInfo shaderStages pipelineLayout
@@ -207,7 +209,7 @@ myAppRenderFrame MyAppState{..} framebuffer waitSemsWithStages signalSems = do
   renderContext <- readMVar renderContextVar
   viewProjTransform <- viewProjMatrix (extent renderContext) camPos
   postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf ->
-    recordAll renderContext viewProjTransform objs cmdBuf framebuffer
+    liftProg $ recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 data WindowState
   = WindowState

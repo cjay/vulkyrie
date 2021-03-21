@@ -27,14 +27,14 @@ initGLFWWindow :: Int -- ^ Window width. Ignored if fullscreen.
                -> String -- ^ Window name
                -> Bool -- ^ fullscreen
                -> IORef Bool -- ^ Window size change signalling
-               -> Program GLFW.Window
+               -> Resource GLFW.Window
 initGLFWWindow winWidth winHeight name fullscreen windowSizeChanged = do
     -- even if something bad happens, we need to terminate GLFW
     allocResource
       (const $ liftIO GLFW.terminate >> logInfo "Terminated GLFW.")
       (liftIO GLFW.init >>= flip unless (throwString "Failed to initialize GLFW."))
 
-    liftIO GLFW.getVersionString >>= mapM_ (logInfo . ("GLFW version: " ++))
+    liftIO GLFW.getVersionString >>= mapM_ (logInfo . ("GLFW version: " <>))
 
     liftIO GLFW.vulkanSupported >>= flip unless
       (throwString "GLFW reports that vulkan is not supported!")
@@ -75,7 +75,7 @@ glfwMainLoop w action = go
       should <- liftIO $ GLFW.windowShouldClose w
       if not should
         then do
-          status <- locally action
+          status <- action
           if status == ContinueLoop then go else return False
         else return True
 
@@ -86,9 +86,9 @@ glfwMainLoop w action = go
 --   without events happening. If waiting without timeout, the waitEvents
 --   function would need to be marked interruptible in the GLFW binding.
 glfwWaitEventsMeanwhile :: IO () -> Program () -> Program ()
-glfwWaitEventsMeanwhile mainThreadHook action =
+glfwWaitEventsMeanwhile mainThreadHook =
   occupyThreadAndFork
-    (liftIO $ forever $ GLFW.waitEventsTimeout 1 >> mainThreadHook) action
+    (liftIO $ forever $ GLFW.waitEventsTimeout 1 >> mainThreadHook)
 
 
 glfwWaitMinimized :: GLFW.Window -> Program ()

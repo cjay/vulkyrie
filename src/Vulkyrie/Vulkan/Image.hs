@@ -71,7 +71,7 @@ createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPo
 
   finishEvent <- onCreate $ do
     postWith_ cmdCap cmdQueue [] [sem0] $
-      transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM Undef_TransDst mipLevels
+      liftProg . transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM Undef_TransDst mipLevels
 
     -- the local continuation context of postWith_ destroys the temporary staging
     -- buffer after data copy is complete
@@ -81,19 +81,19 @@ createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPo
           ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
       -- copy data
-      stagingDataPtr <- allocaPeek $
+      stagingDataPtr <- liftProg . allocaPeek $
         runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bufSize VK_ZERO_FLAGS
       liftIO $ withForeignPtr imageDataForeignPtr $ \imageDataPtr ->
         copyArray (castPtr stagingDataPtr) imageDataPtr imageDataLen
       liftIO $ vkUnmapMemory dev (memory stagingMem)
 
-      copyBufferToImage cmdBuf stagingBuf image
+      liftProg $ copyBufferToImage cmdBuf stagingBuf image
         (fromIntegral imageWidth) (fromIntegral imageHeight)
 
     postWith cmdCap cmdQueue [(sem1, VK_PIPELINE_STAGE_TRANSFER_BIT)] [] $
       -- generateMipmaps does this as a side effect:
       -- transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM TransDst_ShaderRO mipLevels
-      generateMipmaps pdev image VK_FORMAT_R8G8B8A8_UNORM (fromIntegral imageWidth) (fromIntegral imageHeight) mipLevels
+      liftProg . generateMipmaps pdev image VK_FORMAT_R8G8B8A8_UNORM (fromIntegral imageWidth) (fromIntegral imageHeight) mipLevels
 
   imageView <- createImageView dev image VK_FORMAT_R8G8B8A8_UNORM VK_IMAGE_ASPECT_COLOR_BIT mipLevels
 
@@ -424,17 +424,11 @@ createImage EngineCapability{ dev, memPool } width height mipLevels samples form
           withVkPtr ici $ \iciPtr -> allocaPeek $ \imgPtr ->
             runVk $ vkCreateImage dev iciPtr VK_NULL imgPtr
 
-    in do
-      -- TODO ugly kludge
-      u <- askUnliftIO
-      liftIO $ mask $ \restore -> unliftIO u $ do
-        (freeImageLater, image) <- onCreate $ manual restore metaImage
-        -- TODO resource instead of creation, with actual Resource
-        memLoc <- onCreate $ allocBindImageMem memPool propFlags image
-        -- release the image before releasing the memory that is bound to it
-        onDestroy $ liftIO $ cleanup Nothing freeImageLater
-
-        return (memLoc, image)
+    -- releasing the image before releasing the memory that is bound to it
+    in inverseDestruction $ do
+      image <- resource metaImage
+      memLoc <- onCreate $ allocBindImageMem memPool propFlags image
+      return (memLoc, image)
 
 
 copyBufferToImage :: VkCommandBuffer
@@ -519,7 +513,7 @@ createDepthAttImgView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPoo
   onCreate $ do
     sem <- head <$> acquireSemaphores semPool 1
     postWith_ cmdCap cmdQueue [] [sem] $
-      transitionImageLayout depthImage depthFormat Undef_DepthStencilAtt 1
+      liftProg . transitionImageLayout depthImage depthFormat Undef_DepthStencilAtt 1
     return ((sem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT), depthImageView)
 
 
@@ -539,5 +533,5 @@ createColorAttImgView ecap@EngineCapability{ dev, cmdCap, cmdQueue, semPool } fo
   onCreate $ do
     sem <- head <$> acquireSemaphores semPool 1
     postWith_ cmdCap cmdQueue [] [sem] $
-      transitionImageLayout colorImage format Undef_ColorAtt 1
+      liftProg . transitionImageLayout colorImage format Undef_ColorAtt 1
     return ((sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT), colorImageView)

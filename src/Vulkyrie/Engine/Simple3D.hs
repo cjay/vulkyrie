@@ -62,7 +62,7 @@ data Object = Object
 
 
 bindDescrSet :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> DescrBindInfo -> Program ()
-bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = locally $ do
+bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = runResource $ do
   descrSetPtr <- newArrayRes [descrSet]
   let descrSetCnt = 1
   let dynOffCnt = fromIntegral $ length dynamicOffsets
@@ -89,7 +89,7 @@ recordObject :: VkPipelineLayout -> VkCommandBuffer -> Mat44f -> Object -> Progr
 recordObject pipelineLayout cmdBuf transform Object{..} = do
   -- not yet:
   -- liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
-  locally $ do
+  runResource $ do
     let BufferLoc{..} = vertexBufferLoc
     vertexBufArr <- newArrayRes [buffer]
     vertexOffArr <- newArrayRes [bufferOffset]
@@ -97,7 +97,7 @@ recordObject pipelineLayout cmdBuf transform Object{..} = do
       0 1 -- first binding, binding count
       vertexBufArr vertexOffArr
 
-  locally $ do
+  runResource $ do
     let BufferLoc{..} = indexBufferLoc
     liftIO $ vkCmdBindIndexBuffer cmdBuf buffer bufferOffset VK_INDEX_TYPE_UINT32
 
@@ -133,7 +133,7 @@ recordAll
   -- basic drawing commands
   liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
 
-  -- locally $ do
+  -- runResource $ do
   --   frameDsPtr <- newArrayRes [frameDescrSet]
   --   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
   --     -- first set, set count, sets, dyn offset count, dyn offsets

@@ -184,16 +184,16 @@ data DevQueues
 
 createGraphicsDevice :: VkPhysicalDevice
                      -> VkSurfaceKHR
-                     -> Program (VkDevice, DevQueues)
+                     -> Resource (VkDevice, DevQueues)
 createGraphicsDevice pdev surf
   | extensions <- [VK_KHR_SWAPCHAIN_EXTENSION_NAME] = do
   -- check physical device extensions
 
   -- find an appropriate queue family
-  qfams <- getQueueFamilies pdev
+  qfams <- liftProg $ getQueueFamilies pdev
   let gfxFams = map fst $ filter isGraphicsFam qfams
   when (null gfxFams) $ throwString "No graphics queue family found."
-  presFams <- map fst <$> filterM (isPresentationFam pdev surf) qfams
+  presFams <- liftProg $ map fst <$> filterM (isPresentationFam pdev surf) qfams
   when (null presFams) $ throwString "No presentation queue family found for the surface."
   -- It's best for performance if presentation can happen in the graphics queue
   let bestFams = gfxFams `intersect` presFams
@@ -235,7 +235,7 @@ createGraphicsDevice pdev surf
       allocaPeek $ runVk . vkCreateDevice pdev dciPtr VK_NULL
 
   -- get the queues
-  gQueues <- flip Map.traverseWithKey qcInfoMap $ \qFamIdx _ ->
+  gQueues <- liftProg $ flip Map.traverseWithKey qcInfoMap $ \qFamIdx _ ->
              allocaPeek $ liftIO . vkGetDeviceQueue dev qFamIdx 0
 
   mdevQueues <- maybe (throwString "Some queues lost!") pure

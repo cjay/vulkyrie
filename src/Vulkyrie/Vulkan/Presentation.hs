@@ -168,7 +168,7 @@ destroySwapchainIfNecessary dev slot = do
 
 
 -- TODO: this is a leaky abstraction. Improve after reworking resource management.
-createSwapchainSlot :: VkDevice -> Program (MVar (Maybe VkSwapchainKHR))
+createSwapchainSlot :: VkDevice -> Resource (MVar (Maybe VkSwapchainKHR))
 createSwapchainSlot dev =
   allocResource
     (destroySwapchainIfNecessary dev)

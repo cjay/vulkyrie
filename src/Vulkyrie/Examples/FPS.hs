@@ -75,28 +75,29 @@ viewProjMatrix extent (yaw, pitch) = do
   return $ view %* proj
 
 
-loadShaders :: EngineCapability -> Program [VkPipelineShaderStageCreateInfo]
+loadShaders :: EngineCapability -> Resource [VkPipelineShaderStageCreateInfo]
 loadShaders EngineCapability{ dev } = do
     vertSM <- auto $ shaderModuleFile dev "shaders/triangle.vert.spv"
     fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
 
-    shaderVert
-      <- createShaderStage vertSM
-            VK_SHADER_STAGE_VERTEX_BIT
-            Nothing
+    liftProg $ do
+      shaderVert
+        <- createShaderStage vertSM
+              VK_SHADER_STAGE_VERTEX_BIT
+              Nothing
 
-    shaderFrag
-      <- createShaderStage fragSM
-            VK_SHADER_STAGE_FRAGMENT_BIT
-            Nothing
+      shaderFrag
+        <- createShaderStage fragSM
+              VK_SHADER_STAGE_FRAGMENT_BIT
+              Nothing
 
-    logInfo $ "Createad vertex shader module: " ++ show shaderVert
-    logInfo $ "Createad fragment shader module: " ++ show shaderFrag
+      logInfo $ "Createad vertex shader module: " ++ show shaderVert
+      logInfo $ "Createad fragment shader module: " ++ show shaderFrag
 
-    return [shaderVert, shaderFrag]
+      return [shaderVert, shaderFrag]
 
 
-makePipelineLayouts :: VkDevice -> Program (VkDescriptorSetLayout, VkPipelineLayout)
+makePipelineLayouts :: VkDevice -> Resource (VkDescriptorSetLayout, VkPipelineLayout)
 makePipelineLayouts dev = do
   frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
   -- TODO automate bind ids
@@ -120,7 +121,7 @@ makePipelineLayouts dev = do
 
 
 
-loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Program Assets
+loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Resource Assets
 loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
   let vertices = rectVertices
       indices = rectIndices
@@ -134,14 +135,15 @@ loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
   (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
     (createTextureInfo cap False) texturePaths
 
-  loadEvents <- newMVar $ textureReadyEvents <> [vertexBufReady, indexBufReady]
+  liftProg $ do
+    loadEvents <- newMVar $ textureReadyEvents <> [vertexBufReady, indexBufReady]
 
-  materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
+    materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
 
-  forM_ (zip descrTextureInfos materialDescrSets) $
-    \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
+    forM_ (zip descrTextureInfos materialDescrSets) $
+      \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
 
-  return $ Assets {..}
+    return $ Assets {..}
 
 data Assets
   = Assets
@@ -157,11 +159,11 @@ prepareRender :: EngineCapability
               -> SwapchainInfo
               -> [VkPipelineShaderStageCreateInfo]
               -> VkPipelineLayout
-              -> Program ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
+              -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
 prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = do
   let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
-  msaaSamples <- getMaxUsableSampleCount pdev
-  depthFormat <- findDepthFormat pdev
+  msaaSamples <- liftProg $ getMaxUsableSampleCount pdev
+  depthFormat <- liftProg $ findDepthFormat pdev
 
   swapImgViews <- auto $
     mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
@@ -249,7 +251,7 @@ makeWorld MyAppState{ assets } = do
 
   if allDone then return objs else return []
 
-myAppNewWindow :: GLFW.Window -> Program WindowState
+myAppNewWindow :: GLFW.Window -> Resource WindowState
 myAppNewWindow window = do
   liftIO $ GLFW.setCursorInputMode window GLFW.CursorInputMode'Disabled
   rawSupported <- liftIO $ GLFW.rawMouseMotionSupported
@@ -277,7 +279,7 @@ myAppMainThreadHook WindowState {..} = do
   -- putStrLn "."
   return ()
 
-myAppStart :: WindowState -> EngineCapability -> Program MyAppState
+myAppStart :: WindowState -> EngineCapability -> Resource MyAppState
 myAppStart winState cap@EngineCapability{ dev } = do
   shaderStages <- loadShaders cap
   (materialDSL, pipelineLayout) <- makePipelineLayouts dev
@@ -287,7 +289,7 @@ myAppStart winState cap@EngineCapability{ dev } = do
   inputMutex <- newMVar ()
   return $ MyAppState{..}
 
-myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Program ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
+myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
 myAppNewSwapchain MyAppState{..} swapInfo = do
   _ <- tryTakeMVar renderContextVar
   (framebuffers, nextSems, renderContext) <- prepareRender cap swapInfo shaderStages pipelineLayout
@@ -323,7 +325,7 @@ myAppRenderFrame appState@MyAppState{..} framebuffer waitSemsWithStages signalSe
 
   viewProjTransform <- viewProjMatrix (extent renderContext) lookDir
   postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf ->
-    recordAll renderContext viewProjTransform objs cmdBuf framebuffer
+    liftProg $ recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 
 data WindowState

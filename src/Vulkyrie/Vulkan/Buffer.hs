@@ -5,17 +5,16 @@ module Vulkyrie.Vulkan.Buffer
   , findMemoryType
   ) where
 
+import           Control.Monad.IO.Unlift
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Marshal.Create
-import           UnliftIO.Exception
 
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Engine
 import           Vulkyrie.Vulkan.Memory
-import           Control.Monad.IO.Unlift
 
 
 createBuffer :: EngineCapability
@@ -36,18 +35,11 @@ createBuffer EngineCapability{dev, memPool} bSize bUsage bMemPropFlags =
             (\vb -> liftIO $ vkDestroyBuffer dev vb VK_NULL) $
             withVkPtr bufferInfo $ \biPtr -> allocaPeek $
               runVk . vkCreateBuffer dev biPtr VK_NULL
-    in do
-      -- TODO ugly kludge
-      u <- askUnliftIO
-      liftIO $ mask $ \restore -> unliftIO u $ do
-        (destroyBuf, buf) <- onCreate $ manual restore metaBuffer
-        -- TODO resource instead of creation, with actual Resource
-        memLoc <- onCreate $ allocBindBufferMem memPool bMemPropFlags buf
-        -- The buf will be released before the memory
-        onDestroy $ liftIO $ cleanup Nothing destroyBuf
-
-        return (memLoc, buf)
-
+    -- releasing the buffer before releasing the memory that is bound to it
+    in inverseDestruction $ do
+      buf <- resource metaBuffer
+      memLoc <- onCreate $ allocBindBufferMem memPool bMemPropFlags buf
+      return (memLoc, buf)
 
 copyBuffer :: VkCommandBuffer -> VkBuffer -> VkBuffer -> VkDeviceSize -> Program ()
 copyBuffer cmdBuf srcBuffer dstBuffer bSize = do

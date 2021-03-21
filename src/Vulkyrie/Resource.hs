@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
@@ -24,23 +24,21 @@ module Vulkyrie.Resource
   , onDestroy
   ) where
 
-import           Control.Monad.IO.Unlift
 import           Graphics.Vulkan.Core_1_0
 import           Vulkyrie.Program
 
 class GenericResource res a where
-  -- | Makes use of the continuation based resource management built into Program
-  auto :: res a -> Program a
-  -- | Creates a destructor action along with the resource.
-  manual :: (IO a -> IO a) -> res a -> Program ([IO ()], a)
-
-newtype Resource a = Resource (Program a)
-  deriving (Functor, Applicative, Monad, MonadIO, MonadUnliftIO)
+  -- | Creates a Program.Resource that handles automatic deallocation.
+  auto :: res a -> Resource a
+  -- | Creates a destructor action along with allocating the resource.
+  --
+  --   Has to be called within a masked scope. Pass the restore. See Program.resourceMask.
+  manual :: (forall b. Program b -> Program b) -> res a -> Program (Program (), a)
 
 instance GenericResource Resource a where
-  auto (Resource prog) = prog
+  auto = id
   {-# INLINE auto #-}
-  manual restore (Resource prog) = manually restore prog
+  manual = manually
   {-# INLINE manual #-}
 
 -- | A MetaResource is only meant to correctly destroy resources that it created itself.
@@ -107,23 +105,25 @@ basicResource = metaResource
 
 -- | Need this to use MetaResources in the Resource monad
 resource :: MetaResource a -> Resource a
-resource ma = Resource (allocResource (destroy ma) (create ma))
+resource ma = allocResource (destroy ma) (create ma)
 {-# INLINE resource #-}
 
--- | A bit more polymorphic than (>>=) of Resource
+-- | A bit more polymorphic than (>>=) of Resource.
+--
+--   Note that the resulting Resource is a GenericResource as well and be further chained using composeResource.
 composeResource :: (GenericResource res1 a, GenericResource res2 b) => res1 a -> (a -> res2 b) -> Resource b
-composeResource ma fmb = Resource (auto ma >>= auto . fmb)
+composeResource ma fmb = auto ma >>= auto . fmb
 {-# INLINE composeResource #-}
 
 -- | Runs given program when creating the resource. Creation order is top to bottom.
 onCreate :: Program a -> Resource a
-onCreate = Resource
+onCreate = liftProg
 {-# INLINE onCreate #-}
 
 -- TODO onDestroy users need to mask, or need better solution
 -- | Runs given program when destroying the resource. Destruction order is bottom to top.
 onDestroy :: Program () -> Resource ()
-onDestroy = Resource . later
+onDestroy = later
 {-# INLINE onDestroy #-}
 
 {- probably too rare, not really needed now

@@ -102,23 +102,22 @@ postWithAndRetWait :: CommandCapability
                    -> ManagedQueue
                    -> [(VkSemaphore, VkPipelineStageFlags)]
                    -> [VkSemaphore]
-                   -> (VkCommandBuffer -> Program a)
+                   -> (VkCommandBuffer -> Resource a)
                    -> Program a
 postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action =
-  locally $ do
-    managedCmdBuf <- acquireCommandBuffer cmdCap
+  runResource $ do
+    managedCmdBuf <- liftProg $ acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
     let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
-    withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
+    liftProg $ withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
     result <- action cmdBuf
     runVk $ vkEndCommandBuffer cmdBuf
 
-    queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
-    -- async return because caller doesn't care about internal cleanup
-    waitDone queueEvent
-    releaseCommandBuffer managedCmdBuf
+    liftProg $ do
+      queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
+      waitDone queueEvent
+      releaseCommandBuffer managedCmdBuf
     return result
-    -- continuation ends because of locally. Auto things from action get deallocated.
 
 
 -- | Posts to ManagedQueue with new command buffer. Local continuation context.
@@ -129,28 +128,28 @@ postWithAndRet :: CommandCapability
                -> ManagedQueue
                -> [(VkSemaphore, VkPipelineStageFlags)]
                -> [VkSemaphore]
-               -> (VkCommandBuffer -> Program a)
+               -> (VkCommandBuffer -> Resource a)
                -> Program (a, QueueEvent)
 postWithAndRet cmdCap queue waitSemsWithStages signalSems action = do
   retBox <- newEmptyMVar
-  _ <- forkProg $ run retBox
+  void $ forkIO $ run retBox
   takeMVar retBox
 
   where
-  run retBox = do
-    managedCmdBuf <- acquireCommandBuffer cmdCap
+  run retBox = runResource $ do
+    managedCmdBuf <- liftProg $ acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
     let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
-    withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
+    liftProg $ withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
     result <- action cmdBuf
     runVk $ vkEndCommandBuffer cmdBuf
 
-    queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
-    -- async return because caller doesn't care about internal cleanup
-    putMVar retBox (result, queueEvent)
-    waitDone queueEvent
-    releaseCommandBuffer managedCmdBuf
-    -- continuation ends because of forkProg. Auto things from action get deallocated.
+    liftProg $ do
+      queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
+      -- async return because caller doesn't care about internal cleanup
+      putMVar retBox (result, queueEvent)
+      waitDone queueEvent
+      releaseCommandBuffer managedCmdBuf
 
 
 -- | Posts to ManagedQueue with new command buffer. Local continuation context.
@@ -161,7 +160,7 @@ postWith :: CommandCapability
          -> ManagedQueue
          -> [(VkSemaphore, VkPipelineStageFlags)]
          -> [VkSemaphore]
-         -> (VkCommandBuffer -> Program ())
+         -> (VkCommandBuffer -> Resource ())
          -> Program QueueEvent
 postWith cmdCap queue waitSemsWithStages signalSems action = do
   ((), queueEvent) <- postWithAndRet cmdCap queue waitSemsWithStages signalSems action
@@ -176,7 +175,7 @@ postWith_ :: CommandCapability
           -> ManagedQueue
           -> [(VkSemaphore, VkPipelineStageFlags)]
           -> [VkSemaphore]
-          -> (VkCommandBuffer -> Program ())
+          -> (VkCommandBuffer -> Resource ())
           -> Program ()
 postWith_ cmdCap queue waitSemsWithStages signalSems action =
   void $ postWithAndRet cmdCap queue waitSemsWithStages signalSems action
@@ -186,9 +185,9 @@ forkWithCmdCap :: CommandPoolPool
                -> (CommandCapability -> Program ())
                -> Program ThreadId
 forkWithCmdCap cmdPoolPool action =
-  forkProg $ do
+  forkIO $ runResource $ do
     cmdCap <- auto $ metaCommandCapability cmdPoolPool
-    action cmdCap
+    liftProg $ action cmdCap
 
 
 data ManagedCommandBuffer = ManagedCommandBuffer
@@ -297,7 +296,7 @@ metaCommandPoolPool device queueFamIdx =
       requestChan <- newChan
       freshPools <- newMVar initialCmdPools
 
-      _ <- forkProg $ loop $
+      void $ forkIO $ loop $
         readChan requestChan >>= \case
           Shutdown mvar -> do
             putMVar mvar ()

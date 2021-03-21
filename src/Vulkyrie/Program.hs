@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StrictData            #-}
@@ -7,13 +8,17 @@ module Vulkyrie.Program
     , runProgram
     , MonadIO (..)
       -- * Threading
-    , forkProg
-    , asyncProg
-    , waitProg
+    , threadRes
       -- * Resource management
+    , Resource
+    , askRegion
+    , runResource
     , later
+    , liftProg
     , allocResource
     , locally
+    , resourceMask
+    , inverseDestruction
     , manually
     , cleanup
       -- * Exception handling
@@ -42,62 +47,151 @@ import           Control.Monad.Logger.CallStack hiding (logDebug, logInfo, logWa
 import qualified Control.Monad.Logger.CallStack as Logger
 import           Control.Monad.Reader.Class
 import           Control.Monad.Trans.Reader (ReaderT, runReaderT)
+import           Control.Monad.Trans.Class      (lift)
 import           Data.Either                    (lefts)
-import           Data.List.NonEmpty
-import           Data.String                    (fromString)
+import           Data.List.NonEmpty (NonEmpty(..))
+import           Data.String
 import           Data.Typeable
 import           GHC.Stack
 import           Graphics.Vulkan.Core_1_0
 import           System.Exit
-import           UnliftIO.Async
 import           UnliftIO.Concurrent
 import           UnliftIO.Exception
 import           UnliftIO.IORef
 
 import           Vulkyrie.BuildFlags
 
-data ProgramContext
-  = ProgramContext
-  { destructorsVar :: IORef [IO ()]
-  }
+
+
+data ProgramContext = ProgramContext {}
 
 newtype Program a = Program (ReaderT ProgramContext (LoggingT IO) a)
-  deriving (Functor, Applicative, Monad, MonadIO, MonadReader ProgramContext, MonadUnliftIO, MonadLogger)
+  deriving (Functor, Applicative, Monad, MonadLogger, MonadIO, MonadUnliftIO)
 
 makeProgramContext :: IO ProgramContext
-makeProgramContext = do
-  destructorsVar <- newIORef []
-  return ProgramContext{..}
+makeProgramContext = return ProgramContext {}
+
+askProgramContext :: Program ProgramContext
+askProgramContext = Program ask
 
 runProgram :: Program a -> IO a
 runProgram prog = makeProgramContext >>= flip run prog
 
 run :: ProgramContext -> Program a -> IO a
-run ctx (Program p) = do
-  let ProgramContext{ destructorsVar } = ctx
+run ctx (Program prog) = runStdoutLoggingT $ runReaderT prog ctx
+
+
+
+
+data ResourceContext
+  = ResourceContext
+  { destructorsVar :: IORef [Program ()]
+  }
+
+-- | Resources enable automatic deallocation when the scope ends. Scopes are
+-- created with either locally or runResource.
+--
+-- Not exposing MonadUnliftIO to prevent forkIO and friends from messing with
+-- the IORef (use threadRes instead). MonadUnliftIO can be accessed by unwrapping
+-- the newtype.
+newtype Resource a = Resource (ReaderT ResourceContext Program a)
+  deriving (Functor, Applicative, Monad, MonadLogger, MonadIO)
+
+makeResourceContext :: Program ResourceContext
+makeResourceContext = do
+  destructorsVar <- newIORef []
+  return ResourceContext{..}
+
+askResourceContext :: Resource ResourceContext
+askResourceContext = Resource ask
+
+inContext :: ResourceContext -> Resource a -> Resource a
+inContext ctx (Resource res) = liftProg $ runReaderT res ctx
+
+askRegion :: Resource (Resource a -> Resource a)
+askRegion = inContext <$> askResourceContext
+
+
+runResource :: Resource a -> Program a
+runResource res = makeResourceContext >>= flip runRes res
+
+-- | Consumes the context. Would need to write empty list to it for reuse.
+runRes :: ResourceContext -> Resource a -> Program a
+runRes ctx (Resource res) = do
+  let ResourceContext{ destructorsVar } = ctx
   mask $ \restore -> do
-    a <- restore (runStdoutLoggingT $ runReaderT p ctx)
+    a <- restore (runReaderT res ctx)
       `catch` (\e -> readIORef destructorsVar >>= cleanup (Just e) >> throwIO e)
     readIORef destructorsVar >>= cleanup Nothing
     return a
 
-locally :: Program a -> Program a
-locally prog = do
+locally :: Resource a -> Resource a
+locally = liftProg . runResource
+
+resourceMask :: ((forall a. Program a -> Program a) -> Resource b) -> Resource b
+resourceMask act = Resource $ do
   ctx <- ask
-  destructorsVar <- newIORef []
-  liftIO $ run ctx{ destructorsVar } prog
+  lift $ mask $ \restore -> do
+    let Resource res = act restore
+    runReaderT res ctx
+
+-- TODO: this might behave unexpectedly with nested resources, as all destructor calls are reversed, even within nested ones
+inverseDestruction :: Resource a -> Resource a
+inverseDestruction (Resource res) = do
+  ResourceContext outerDestrVar <- askResourceContext
+  liftProg $ mask $ \restore -> do
+    ctx <- makeResourceContext
+    let ResourceContext{ destructorsVar } = ctx
+    restore (runReaderT res ctx)
+      `finally` do
+        destructors <- readIORef destructorsVar
+        modifyIORef' outerDestrVar (reverse destructors <>)
+
+{-
+asym :: Resource a -> (a -> Resource b) -> Resource b
+asym ra rb =
+  resourceMask $ \restore -> do
+    ResourceContext{ destructorsVar } <- askResourceContext
+    (destroyA, a) <- liftProg $ manually restore ra
+    (destroyB, b) <- liftProg $ manually restore (rb a)
+      `finally` modifyIORef' destructorsVar (destroyA <>)
+    modifyIORef' destructorsVar ((destroyA <> destroyB) <>)
+    return b
+-}
 
 -- | Has to be called within a masked scope. Pass the restore. Returns
 -- destructor list along with result.
-manually :: (IO a -> IO a) -> Program a -> Program ([IO ()], a)
-manually restore (Program p) = do
-  ctx <- ask
-  destructorsVar <- newIORef []
-  a <- liftIO $
-    restore (runStdoutLoggingT $ runReaderT p ctx{ destructorsVar })
+manually :: (forall a. Program a -> Program a) -> Resource b -> Program (Program (), b)
+manually restore (Resource res) = do
+  ctx <- makeResourceContext
+  let ResourceContext{ destructorsVar } = ctx
+  a <-
+    restore (runReaderT res ctx)
       `catch` (\e -> readIORef destructorsVar >>= cleanup (Just e) >> throwIO e)
-  destructors <- readIORef destructorsVar
-  return (destructors, a)
+  return (readIORef destructorsVar >>= cleanup Nothing, a)
+
+later :: Program () -> Resource ()
+later prog = do
+  ResourceContext{ destructorsVar } <- askResourceContext
+  modifyIORef' destructorsVar (prog :)
+{-# INLINE later #-}
+
+liftProg :: Program a -> Resource a
+liftProg prog = Resource $ lift prog
+
+-- TODO maybe masking during allocation should be default. bracket does it etc
+-- | Exception-safe. Allows async exceptions during allocation, so it's fine if
+-- the allocation is a complex Resource.
+allocResource :: (a -> Program ()) -- ^ free resource
+              -> Program a -- ^ allocate resource
+              -> Resource a
+allocResource free alloc =
+  -- using unwrapped Resource to get MonadUnliftIO for mask
+  Resource $ mask $ \restore -> do
+    a <- restore $ lift alloc
+    ResourceContext{ destructorsVar } <- ask
+    modifyIORef' destructorsVar (free a :)
+    return a
 
 data CleanupException = CleanupException
   { exceptionCausingCleanup :: Maybe SomeException
@@ -106,42 +200,20 @@ data CleanupException = CleanupException
   deriving (Show, Typeable)
 instance Exception CleanupException
 
-cleanup :: Maybe SomeException -> [IO ()] -> IO ()
+cleanup :: Maybe SomeException -> [Program ()] -> Program ()
 cleanup origException destructors =
   lefts <$> mapM try destructors >>= \case
     e : es -> throwIO (CleanupException origException (e :| es))
     [] -> return ()
 
--- TODO thread management
-forkProg :: Program () -> Program ThreadId
-forkProg = forkIO . locally
 
-asyncProg :: Program a -> Program (Async a)
-asyncProg = async . locally
 
-waitProg :: Async a -> Program a
-waitProg = wait
+-- TODO letting owning thread know that child thread exited?
+-- TODO this can't clean up threads recursively
+threadRes :: Program () -> Resource ThreadId
+threadRes prog = allocResource killThread (forkIO prog)
 
--- TODO restrict to IO. Probably no need for atomic.
-later :: Program ()
-      -> Program ()
-later prog = do
-  u <- askUnliftIO
-  ProgramContext{ destructorsVar } <- ask
-  atomicModifyIORef' destructorsVar $ \ds -> (unliftIO u prog : ds, ())
-{-# INLINE later #-}
 
--- TODO maybe masking during allocation should be default. bracket does it etc
--- | Exception-safe. Allows async exceptions during allocation, so it's fine if
--- the allocation is a complex Program.
-allocResource :: (a -> Program ()) -- ^ free resource
-              -> Program a -- ^ allocate resource
-              -> Program a
-allocResource free alloc =
-  mask $ \restore -> do
-    a <- restore alloc
-    later $ free a
-    return a
 
 newtype VulkanException = VulkanException VkResult
   deriving (Show, Typeable)
@@ -164,24 +236,28 @@ runAndCatchVk action handler = do
   r <- liftIO action
   when (r < VK_SUCCESS) (handler $ VulkanException r)
 
-logDebug :: HasCallStack => String -> Program ()
+
+
+logDebug :: (HasCallStack, MonadLogger m) => String -> m ()
 logDebug =
   if isDEVELOPMENT
   then Logger.logDebug . fromString
   else const (pure ())
 {-# INLINE logDebug #-}
 
-logInfo :: HasCallStack => String -> Program ()
+logInfo :: (HasCallStack, MonadLogger m) => String -> m ()
 logInfo = Logger.logInfo . fromString
 {-# INLINE logInfo #-}
 
-logWarn :: HasCallStack => String -> Program ()
+logWarn :: (HasCallStack, MonadLogger m) => String -> m ()
 logWarn = Logger.logWarn . fromString
 {-# INLINE logWarn #-}
 
-logError :: HasCallStack => String -> Program ()
+logError :: (HasCallStack, MonadLogger m) => String -> m ()
 logError = Logger.logError . fromString
 {-# INLINE logError #-}
+
+
 
 
 data LoopControl a = ContinueLoop | AbortLoop a deriving Eq
@@ -206,7 +282,7 @@ asyncRedo prog = myThreadId >>= go where
     -- TODO use forkOS when using unsafe ffi calls?
     -- don't need the threadId
     void $ forkFinally
-      (locally $ do
+      (do
         prog trigger
         -- When the redo-thread exits, we only need to signal exit to the parent
         -- if nothing else has been signalled yet.

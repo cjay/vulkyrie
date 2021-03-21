@@ -49,7 +49,7 @@ data Object = Object
 
 
 bindDescrSet :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> DescrBindInfo -> Program ()
-bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = locally $ do
+bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = runResource $ do
   descrSetPtr <- newArrayRes [descrSet]
   let descrSetCnt = 1
   let dynOffCnt = fromIntegral $ length dynamicOffsets
@@ -110,7 +110,7 @@ recordAll
   -- basic drawing commands
   liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
 
-  -- locally $ do
+  -- runResource $ do
   --   frameDsPtr <- newArrayRes [frameDescrSet]
   --   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
   --     -- first set, set count, sets, dyn offset count, dyn offsets

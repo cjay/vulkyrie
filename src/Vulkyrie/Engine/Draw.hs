@@ -101,7 +101,7 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
     let presentAction = present presentQueue [(swapchainVar, imgIndex)] [renderFinishedSem]
     submitPresent cmdQueue presentQueue presentAction (liftIO $ releaseToken swapImgTokens)
 
-    void $ forkProg $ do
+    void $ forkIO $ do
       waitDone nextEvent
       writeChan renderFinishedSems renderFinishedSem
       liftIO $ Event.signal frameFinishedEvent
