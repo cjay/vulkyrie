@@ -105,8 +105,8 @@ createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
   surfFmt <- chooseSwapSurfaceFormat scsd
   let spMode = chooseSwapPresentMode scsd syncMode
       sExtent = chooseSwapExtent scsd
-  logInfo $ "available present modes " ++ show (presentModes scsd)
-  logInfo $ "using present mode " ++ show spMode
+  logInfo $ "available present modes " <> showt (presentModes scsd)
+  logInfo $ "using present mode " <> showt spMode
 
   let maxIC = getField @"maxImageCount" $ capabilities scsd
       minIC = getField @"minImageCount" $ capabilities scsd

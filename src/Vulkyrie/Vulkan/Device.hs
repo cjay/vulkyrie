@@ -15,6 +15,7 @@ import           Data.Bits
 import           Data.List                            ((\\), sortOn, intersect)
 import           Data.Ord
 import qualified Data.Map                             as Map
+import           Data.Text                            (pack)
 import           Foreign.C.String                     (peekCString)
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
@@ -43,7 +44,7 @@ pickPhysicalDevice vkInstance mVkSurf = do
       $ \x -> runVk . vkEnumeratePhysicalDevices vkInstance x
 
     when (null devs) $ throwString "Zero device count!"
-    logInfo $ "Found " ++ show (length devs) ++ " devices."
+    logInfo $ "Found " <> showt (length devs) <> " devices."
 
     suitableDevs <- filterM (fmap snd . isDeviceSuitable mVkSurf) devs
     when (null suitableDevs) $ throwString "No suitable devices!"
@@ -88,7 +89,7 @@ checkDeviceExtensionSupport pdev extensions = do
   availExts <- forM availExtsC . flip withVkPtr $
     liftIO . peekCString
            . ( `plusPtr` fieldOffset @"extensionName" @VkExtensionProperties)
-  logInfo $ "available extensions: " ++ unlines availExts
+  logInfo $ "available extensions: " <> pack (unlines availExts)
   return . null $ reqExts \\ availExts
 
 

@@ -65,8 +65,8 @@ loadShaders EngineCapability{ dev } = do
               VK_SHADER_STAGE_FRAGMENT_BIT
               Nothing
 
-      logInfo $ "Createad vertex shader module: " ++ show shaderVert
-      logInfo $ "Createad fragment shader module: " ++ show shaderFrag
+      logInfo $ "Createad vertex shader module: " <> showt shaderVert
+      logInfo $ "Createad fragment shader module: " <> showt shaderFrag
 
       return [shaderVert, shaderFrag]
 

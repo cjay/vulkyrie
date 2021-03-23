@@ -20,6 +20,7 @@ import           UnliftIO.IORef
 import           Vulkyrie.Program
 import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Instance
+import Data.Text (pack)
 
 
 initGLFWWindow :: Int -- ^ Window width. Ignored if fullscreen.
@@ -34,7 +35,7 @@ initGLFWWindow winWidth winHeight name fullscreen windowSizeChanged = do
       (const $ liftIO GLFW.terminate >> logInfo "Terminated GLFW.")
       (liftIO GLFW.init >>= flip unless (throwString "Failed to initialize GLFW."))
 
-    liftIO GLFW.getVersionString >>= mapM_ (logInfo . ("GLFW version: " <>))
+    liftIO GLFW.getVersionString >>= mapM_ (logInfo . ("GLFW version: " <>) . pack)
 
     liftIO GLFW.vulkanSupported >>= flip unless
       (throwString "GLFW reports that vulkan is not supported!")

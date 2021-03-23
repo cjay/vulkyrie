@@ -17,6 +17,7 @@ module Vulkyrie.Program
     , logInfo
     , logWarn
     , logError
+    , showt
       -- * Other
     , LoopControl (..)
     , loop
@@ -29,11 +30,11 @@ module Vulkyrie.Program
 import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.IO.Unlift
-import           Control.Monad.Logger.CallStack hiding (logDebug, logInfo, logWarn, logError)
+import           Control.Monad.Logger.CallStack hiding (logDebug)
 import qualified Control.Monad.Logger.CallStack as Logger
 import           Control.Monad.Reader.Class
 import           Control.Monad.Trans.Reader (ReaderT, runReaderT)
-import           Data.String
+import           Data.Text
 import           Data.Typeable
 import           GHC.Stack
 import           Graphics.Vulkan.Core_1_0
@@ -89,26 +90,17 @@ runAndCatchVk action handler = do
 
 
 
-logDebug :: (HasCallStack, MonadLogger m) => String -> m ()
+logDebug :: (HasCallStack, MonadLogger m) => Text -> m ()
 logDebug =
   if isDEVELOPMENT
-  then Logger.logDebug . fromString
+  then Logger.logDebug
   else const (pure ())
 {-# INLINE logDebug #-}
 
-logInfo :: (HasCallStack, MonadLogger m) => String -> m ()
-logInfo = Logger.logInfo . fromString
-{-# INLINE logInfo #-}
-
-logWarn :: (HasCallStack, MonadLogger m) => String -> m ()
-logWarn = Logger.logWarn . fromString
-{-# INLINE logWarn #-}
-
-logError :: (HasCallStack, MonadLogger m) => String -> m ()
-logError = Logger.logError . fromString
-{-# INLINE logError #-}
-
-
+-- | Relevant for logging now. Like showt from TextShow, but doesn't require a new typeclass.
+-- TODO vulkan-api should generate TextShow instances..
+showt :: Show a => a -> Text
+showt = pack . show
 
 
 data LoopControl a = ContinueLoop | AbortLoop a deriving Eq

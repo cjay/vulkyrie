@@ -65,17 +65,17 @@ runVulkanProgram App{ .. } = runProgram $ runResource $ do
   let enabledLayers = ["VK_LAYER_KHRONOS_validation" | Validation `elem` flags ]
   vulkanInstance <- auto $ createGLFWVulkanInstance (windowName <> "-instance") enabledLayers
   vulkanSurface <- auto $ createSurface vulkanInstance window
-  logInfo $ "Createad surface: " ++ show vulkanSurface
+  logInfo $ "Createad surface: " <> showt vulkanSurface
 
   winState <- appNewWindow window
 
   liftProg $ glfwWaitEventsMeanwhile (appMainThreadHook winState) $ runResource $ do
     (_, pdev) <- liftProg $ pickPhysicalDevice vulkanInstance (Just vulkanSurface)
-    logInfo $ "Selected physical device: " ++ show pdev
+    logInfo $ "Selected physical device: " <> showt pdev
 
     (dev, queues) <- createGraphicsDevice pdev vulkanSurface
-    logInfo $ "Createad device: " ++ show dev
-    logInfo $ "Createad queues: " ++ show queues
+    logInfo $ "Createad device: " <> showt dev
+    logInfo $ "Createad queues: " <> showt queues
 
     msp <- auto $ metaMasterSemaphorePool dev
     presentQueue <- ManagedPresentQueue (Device.presentQueue queues) <$> newMVar ()

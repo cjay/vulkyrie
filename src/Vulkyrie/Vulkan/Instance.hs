@@ -3,6 +3,8 @@ module Vulkyrie.Vulkan.Instance
     ( createVulkanInstance
     ) where
 
+import           Data.Text                            (pack)
+import qualified Data.Text as Text
 import           Foreign.C.String               (peekCString)
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
@@ -26,12 +28,12 @@ createVulkanInstance :: String -- ^ application name
 createVulkanInstance progName engineName extensions layers =
   resource $ metaResource destroyVulkanInstance $ do
 
-    extStrings <- liftIO $ mapM peekCString extensions
-    logDebug $ unlines
-      $ "Enabling instance extensions: " : map ("  " ++) extStrings
+    extStrings <- liftIO $ mapM (fmap pack . peekCString) extensions
+    logDebug $ Text.unlines
+      $ "Enabling instance extensions: " : map ("  " <>) extStrings
 
-    logDebug $ unlines
-      $ "Enabling instance layers: " : map ("  " ++) layers
+    logDebug $ Text.unlines
+      $ "Enabling instance layers: " : map (("  " <>) . pack) layers
 
     withVkPtr iCreateInfo $ \iciPtr ->
       allocaPeek $ runVk . vkCreateInstance iciPtr VK_NULL
