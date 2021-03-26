@@ -7,7 +7,6 @@ module Vulkyrie.Resource
   ( GenericResource
   , auto
   , manual
-  , Resource
 
   , MetaResource
   , destroy
@@ -24,28 +23,21 @@ module Vulkyrie.Resource
 
     -- * Resource Monad
   , Resource
-  , askRegion
   , runResource
   , onDestroy
-  , liftProg
   , allocResource
   , locally
-  , resourceMask
   , inverseDestruction
   , manually
   , cleanup
   ) where
 
-import           Control.Monad.IO.Class
-import           Control.Monad.Logger.CallStack hiding (logDebug, logInfo, logWarn, logError)
-import           Control.Monad.Reader.Class
-import           Control.Monad.Trans.Class
-import           Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import           Data.Either
 import           Data.Typeable
 import           Graphics.Vulkan.Core_1_0
 import           UnliftIO.Concurrent
-import           UnliftIO.Exception
+import UnliftIO.Exception
+    ( SomeException, Exception, catch, finally, mask, throwIO, try )
 import           UnliftIO.IORef
 
 import           Data.List.NonEmpty (NonEmpty(..))
@@ -57,9 +49,9 @@ class GenericResource res a where
   -- | Creates a destructor action along with allocating the resource.
   --
   --   Has to be called within a masked scope. Pass the restore. See Program.resourceMask.
-  manual :: (forall b. Program b -> Program b) -> res a -> Program (Program (), a)
+  manual :: (forall b. Prog r b -> Prog r b) -> res a -> Prog r (Prog r' (), a)
 
-instance GenericResource Resource a where
+instance GenericResource (Prog ResourceContext) a where
   auto = id
   {-# INLINE auto #-}
   manual = manually
@@ -73,13 +65,13 @@ instance GenericResource Resource a where
 --   freedom of not (necessarily) carrying around all information needed for
 --   destruction along with the resource value.
 data MetaResource a = MetaResource
-  { destroy :: a -> Program ()
-  , create :: Program a
+  { destroy :: forall r. a -> Prog r ()
+  , create :: forall r. Prog r a
   }
 
 -- | Creates a MetaResource. Drop in replacement for Vulkyrie.Program.allocResource.
-metaResource :: (a -> Program ()) -- ^ destroy resource
-             -> Program a        -- ^ create resource
+metaResource :: (forall r. a -> Prog r ()) -- ^ destroy resource
+             -> (forall r. Prog r a)        -- ^ create resource
              -> MetaResource a
 metaResource destroy create = MetaResource {..}
 {-# INLINE metaResource #-}
@@ -104,12 +96,12 @@ resource ma = allocResource (destroy ma) (create ma)
 --   original Vulkan types that have a vkAlloc.. and vkFree.. function.
 class AllocFree a where
   -- | Synonym for destroy
-  free :: MetaResource a -> (a -> Program ())
+  free :: MetaResource a -> (a -> Prog r ())
   free = destroy
   {-# INLINE free #-}
 
   -- | Synonym for create
-  alloc :: MetaResource a -> Program a
+  alloc :: MetaResource a -> Prog r a
   alloc = create
   {-# INLINE alloc #-}
 
@@ -126,8 +118,8 @@ instance (AllocFree a) => AllocFree [a]
 type BasicResource = MetaResource
 
 -- | Creates a BasicResource. Drop in replacement for Vulkyrie.Program.allocResource.
-basicResource :: (a -> Program ()) -- ^ destroy resource
-              -> Program a        -- ^ create resource
+basicResource :: (forall r. a -> Prog r ()) -- ^ destroy resource
+              -> (forall r. Prog r a)        -- ^ create resource
               -> BasicResource a
 basicResource = metaResource
 
@@ -143,9 +135,9 @@ composeResource ma fmb = auto ma >>= auto . fmb
 
 
 
-data ResourceContext
-  = ResourceContext
-  { destructorsVar :: IORef [Program ()]
+data ResourceContext =
+  ResourceContext
+  { destructorsVar :: IORef [Prog () ()]
   }
 
 -- | Resources enable automatic deallocation when the scope ends. Scopes are
@@ -154,55 +146,41 @@ data ResourceContext
 -- Not exposing MonadUnliftIO to prevent forkIO and friends from messing with
 -- the IORef (use threadRes instead). MonadUnliftIO can be accessed by unwrapping
 -- the newtype.
-newtype Resource a = Resource (ReaderT ResourceContext Program a)
-  deriving (Functor, Applicative, Monad, MonadLogger, MonadIO)
+-- newtype Resource a = Resource (ReaderT ResourceContext Program a)
+--   deriving (Functor, Applicative, Monad, MonadLogger, MonadIO)
+type Resource a = Prog ResourceContext a
 
-makeResourceContext :: Program ResourceContext
+
+makeResourceContext :: Prog r ResourceContext
 makeResourceContext = do
   destructorsVar <- newIORef []
   return ResourceContext{..}
 
-askResourceContext :: Resource ResourceContext
-askResourceContext = Resource ask
 
-inContext :: ResourceContext -> Resource a -> Resource a
-inContext ctx (Resource res) = liftProg $ runReaderT res ctx
-
-askRegion :: Resource (Resource a -> Resource a)
-askRegion = inContext <$> askResourceContext
-
-
-runResource :: Resource a -> Program a
+runResource :: Resource a -> Prog r a
 runResource res = makeResourceContext >>= flip runRes res
 
 -- | Consumes the context. Would need to write empty list to it for reuse.
-runRes :: ResourceContext -> Resource a -> Program a
-runRes ctx (Resource res) = do
+runRes :: ResourceContext -> Resource a -> Prog r a
+runRes ctx res = withResourceContext () $ do
   let ResourceContext{ destructorsVar } = ctx
   mask $ \restore -> do
-    a <- restore (runReaderT res ctx)
+    a <- restore (withResourceContext ctx res)
       `catch` (\e -> readIORef destructorsVar >>= cleanup (Just e) >> throwIO e)
     readIORef destructorsVar >>= cleanup Nothing
     return a
 
 locally :: Resource a -> Resource a
-locally = liftProg . runResource
-
-resourceMask :: ((forall a. Program a -> Program a) -> Resource b) -> Resource b
-resourceMask act = Resource $ do
-  ctx <- ask
-  lift $ mask $ \restore -> do
-    let Resource res = act restore
-    runReaderT res ctx
+locally = runResource
 
 -- TODO: this might behave unexpectedly with nested resources, as all destructor calls are reversed, even within nested ones
 inverseDestruction :: Resource a -> Resource a
-inverseDestruction (Resource res) = do
+inverseDestruction res = do
   ResourceContext outerDestrVar <- askResourceContext
-  liftProg $ mask $ \restore -> do
+  mask $ \restore -> do
     ctx <- makeResourceContext
     let ResourceContext{ destructorsVar } = ctx
-    restore (runReaderT res ctx)
+    restore (withResourceContext ctx res)
       `finally` do
         destructors <- readIORef destructorsVar
         modifyIORef' outerDestrVar (reverse destructors <>)
@@ -212,8 +190,8 @@ asym :: Resource a -> (a -> Resource b) -> Resource b
 asym ra rb =
   resourceMask $ \restore -> do
     ResourceContext{ destructorsVar } <- askResourceContext
-    (destroyA, a) <- liftProg $ manually restore ra
-    (destroyB, b) <- liftProg $ manually restore (rb a)
+    (destroyA, a) <- manually restore ra
+    (destroyB, b) <- manually restore (rb a)
       `finally` modifyIORef' destructorsVar (destroyA <>)
     modifyIORef' destructorsVar ((destroyA <> destroyB) <>)
     return b
@@ -221,38 +199,35 @@ asym ra rb =
 
 -- | Has to be called within a masked scope. Pass the restore. Returns
 -- destructor action along with result.
-manually :: (forall a. Program a -> Program a) -> Resource b -> Program (Program (), b)
-manually restore (Resource res) = do
+manually :: (forall b. Prog r b -> Prog r b) -> Resource a -> Prog r (Prog r' (), a)
+manually restore res = do
   ctx <- makeResourceContext
   let ResourceContext{ destructorsVar } = ctx
   a <-
-    restore (runReaderT res ctx)
-      `catch` (\e -> readIORef destructorsVar >>= cleanup (Just e) >> throwIO e)
-  return (readIORef destructorsVar >>= cleanup Nothing, a)
+    restore (withResourceContext ctx res)
+      `catch` (\e -> readIORef destructorsVar >>= withResourceContext () . cleanup (Just e) >> throwIO e)
+  return (readIORef destructorsVar >>= withResourceContext () . cleanup Nothing, a)
 
 -- | Runs given program when destroying the resource. Destruction order is bottom to top.
 --
 --   Never use this to deallocate, that way you get no exception masking! Use allocResource!
-onDestroy :: Program () -> Resource ()
+onDestroy :: Prog () () -> Resource ()
 onDestroy prog = do
   ResourceContext{ destructorsVar } <- askResourceContext
   modifyIORef' destructorsVar (prog :)
 {-# INLINE onDestroy #-}
 
-liftProg :: Program a -> Resource a
-liftProg prog = Resource $ lift prog
-
 -- TODO maybe masking during allocation should be default. bracket does it etc
 -- | Exception-safe. Allows async exceptions during allocation, so it's fine if
 -- the allocation is a complex Resource.
-allocResource :: (a -> Program ()) -- ^ free resource
-              -> Program a -- ^ allocate resource
+allocResource :: (forall r. a -> Prog r ()) -- ^ free resource
+              -> (forall r. Prog r a) -- ^ allocate resource
               -> Resource a
 allocResource free alloc =
   -- using unwrapped Resource to get MonadUnliftIO for mask
-  Resource $ mask $ \restore -> do
-    a <- restore $ lift alloc
-    ResourceContext{ destructorsVar } <- ask
+  mask $ \restore -> do
+    a <- restore $ alloc
+    ResourceContext{ destructorsVar } <- askResourceContext
     modifyIORef' destructorsVar (free a :)
     return a
 
@@ -263,7 +238,7 @@ data CleanupException = CleanupException
   deriving (Show, Typeable)
 instance Exception CleanupException
 
-cleanup :: Maybe SomeException -> [Program ()] -> Program ()
+cleanup :: Maybe SomeException -> [Prog r ()] -> Prog r ()
 cleanup origException destructors =
   lefts <$> mapM try destructors >>= \case
     e : es -> throwIO (CleanupException origException (e :| es))
@@ -272,5 +247,5 @@ cleanup origException destructors =
 
 -- TODO letting owning thread know that child thread exited?
 -- TODO this can't clean up threads recursively
-threadRes :: Program () -> Resource ThreadId
+threadRes :: (forall r. Prog r ()) -> Resource ThreadId
 threadRes prog = allocResource killThread (forkIO prog)

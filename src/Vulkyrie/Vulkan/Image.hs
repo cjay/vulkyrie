@@ -66,12 +66,12 @@ createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPo
     (VK_IMAGE_USAGE_TRANSFER_SRC_BIT .|. VK_IMAGE_USAGE_TRANSFER_DST_BIT .|. VK_IMAGE_USAGE_SAMPLED_BIT)
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
-  sems <- liftProg $ acquireSemaphores semPool 2
+  sems <- acquireSemaphores semPool 2
   let [sem0, sem1] = sems
 
-  finishEvent <- liftProg $ do
+  finishEvent <- do
     postWith_ cmdCap cmdQueue [] [sem0] $
-      liftProg . transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM Undef_TransDst mipLevels
+      transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM Undef_TransDst mipLevels
 
     -- the local continuation context of postWith_ destroys the temporary staging
     -- buffer after data copy is complete
@@ -81,19 +81,19 @@ createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPo
           ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
       -- copy data
-      stagingDataPtr <- liftProg . allocaPeek $
+      stagingDataPtr <- allocaPeek $
         runVk . vkMapMemory dev (memory stagingMem) (memoryOffset stagingMem) bufSize VK_ZERO_FLAGS
       liftIO $ withForeignPtr imageDataForeignPtr $ \imageDataPtr ->
         copyArray (castPtr stagingDataPtr) imageDataPtr imageDataLen
       liftIO $ vkUnmapMemory dev (memory stagingMem)
 
-      liftProg $ copyBufferToImage cmdBuf stagingBuf image
+      copyBufferToImage cmdBuf stagingBuf image
         (fromIntegral imageWidth) (fromIntegral imageHeight)
 
     postWith cmdCap cmdQueue [(sem1, VK_PIPELINE_STAGE_TRANSFER_BIT)] [] $
       -- generateMipmaps does this as a side effect:
       -- transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM TransDst_ShaderRO mipLevels
-      liftProg . generateMipmaps pdev image VK_FORMAT_R8G8B8A8_UNORM (fromIntegral imageWidth) (fromIntegral imageHeight) mipLevels
+      generateMipmaps pdev image VK_FORMAT_R8G8B8A8_UNORM (fromIntegral imageWidth) (fromIntegral imageHeight) mipLevels
 
   imageView <- createImageView dev image VK_FORMAT_R8G8B8A8_UNORM VK_IMAGE_ASPECT_COLOR_BIT mipLevels
 
@@ -107,7 +107,7 @@ generateMipmaps :: VkPhysicalDevice
                 -> Word32
                 -> Word32
                 -> VkCommandBuffer
-                -> Program ()
+                -> Prog r ()
 generateMipmaps pdev image format width height mipLevels cmdBuf = do
   formatProps <- allocaPeek $ \propsPtr ->
     liftIO $ vkGetPhysicalDeviceFormatProperties pdev format propsPtr
@@ -351,7 +351,7 @@ transitionImageLayout :: VkImage
                       -> ImageLayoutTransition
                       -> Word32
                       -> VkCommandBuffer
-                      -> Program ()
+                      -> Prog r ()
 transitionImageLayout image format transition mipLevels cmdBuf =
   do
     let TransitionDependent {..} = dependents transition
@@ -427,7 +427,7 @@ createImage EngineCapability{ dev, memPool } width height mipLevels samples form
     -- releasing the image before releasing the memory that is bound to it
     in inverseDestruction $ do
       image <- resource metaImage
-      memLoc <- liftProg $ allocBindImageMem memPool propFlags image
+      memLoc <- allocBindImageMem memPool propFlags image
       return (memLoc, image)
 
 
@@ -436,7 +436,7 @@ copyBufferToImage :: VkCommandBuffer
                   -> VkImage
                   -> Word32
                   -> Word32
-                  -> Program ()
+                  -> Prog r ()
 copyBufferToImage cmdBuf buffer image width height = do
   let region = createVk @VkBufferImageCopy
         $  set @"bufferOffset" 0
@@ -467,7 +467,7 @@ findSupportedFormat :: VkPhysicalDevice
                     -> [VkFormat]
                     -> VkImageTiling
                     -> VkFormatFeatureFlags
-                    -> Program VkFormat
+                    -> Prog r VkFormat
 findSupportedFormat pdev candidates tiling features = do
   goodCands <- flip filterM candidates $ \format -> do
     props <- allocaPeek $ \propsPtr ->
@@ -484,7 +484,7 @@ findSupportedFormat pdev candidates tiling features = do
 
 
 findDepthFormat :: VkPhysicalDevice
-                -> Program VkFormat
+                -> Prog r VkFormat
 findDepthFormat pdev =
   findSupportedFormat pdev
     [VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT]
@@ -503,18 +503,17 @@ createDepthAttImgView :: EngineCapability
                       -> VkSampleCountFlagBits
                       -> Resource ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
 createDepthAttImgView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool } extent samples = do
-  depthFormat <- liftProg $ findDepthFormat pdev
+  depthFormat <- findDepthFormat pdev
 
   (_, depthImage) <- createImage ecap
     (getField @"width" extent) (getField @"height" extent) 1 samples depthFormat
     VK_IMAGE_TILING_OPTIMAL VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
 
   depthImageView <- createImageView dev depthImage depthFormat VK_IMAGE_ASPECT_DEPTH_BIT 1
-  liftProg $ do
-    sem <- head <$> acquireSemaphores semPool 1
-    postWith_ cmdCap cmdQueue [] [sem] $
-      liftProg . transitionImageLayout depthImage depthFormat Undef_DepthStencilAtt 1
-    return ((sem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT), depthImageView)
+  sem <- head <$> acquireSemaphores semPool 1
+  postWith_ cmdCap cmdQueue [] [sem] $
+    transitionImageLayout depthImage depthFormat Undef_DepthStencilAtt 1
+  return ((sem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT), depthImageView)
 
 
 createColorAttImgView :: EngineCapability
@@ -530,8 +529,7 @@ createColorAttImgView ecap@EngineCapability{ dev, cmdCap, cmdQueue, semPool } fo
     (VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT .|. VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
   colorImageView <- createImageView dev colorImage format VK_IMAGE_ASPECT_COLOR_BIT 1
-  liftProg $ do
-    sem <- head <$> acquireSemaphores semPool 1
-    postWith_ cmdCap cmdQueue [] [sem] $
-      liftProg . transitionImageLayout colorImage format Undef_ColorAtt 1
-    return ((sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT), colorImageView)
+  sem <- head <$> acquireSemaphores semPool 1
+  postWith_ cmdCap cmdQueue [] [sem] $
+    transitionImageLayout colorImage format Undef_ColorAtt 1
+  return ((sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT), colorImageView)

@@ -69,7 +69,7 @@ initGLFWWindow winWidth winHeight name fullscreen windowSizeChanged = do
 
 -- | Repeats until WindowShouldClose flag is set. Returns true if program should exit.
 --   Local resource scope.
-glfwMainLoop :: GLFW.Window -> Program (LoopControl ()) -> Program Bool
+glfwMainLoop :: GLFW.Window -> Prog r (LoopControl ()) -> Prog r Bool
 glfwMainLoop w action = go
   where
     go = do
@@ -86,13 +86,13 @@ glfwMainLoop w action = go
 --   Waits repeatedly with 1 second timeout to allow exceptions to be handled
 --   without events happening. If waiting without timeout, the waitEvents
 --   function would need to be marked interruptible in the GLFW binding.
-glfwWaitEventsMeanwhile :: IO () -> Program () -> Program ()
+glfwWaitEventsMeanwhile :: IO () -> Prog r () -> Prog r ()
 glfwWaitEventsMeanwhile mainThreadHook =
   occupyThreadAndFork
     (liftIO $ forever $ GLFW.waitEventsTimeout 1 >> mainThreadHook)
 
 
-glfwWaitMinimized :: GLFW.Window -> Program ()
+glfwWaitMinimized :: GLFW.Window -> Prog r ()
 glfwWaitMinimized win = liftIO go where
   go = do
     (x,y) <- GLFW.getFramebufferSize win

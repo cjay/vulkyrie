@@ -69,8 +69,8 @@ runVulkanProgram App{ .. } = runProgram $ runResource $ do
 
   winState <- appNewWindow window
 
-  liftProg $ glfwWaitEventsMeanwhile (appMainThreadHook winState) $ runResource $ do
-    (_, pdev) <- liftProg $ pickPhysicalDevice vulkanInstance (Just vulkanSurface)
+  glfwWaitEventsMeanwhile (appMainThreadHook winState) $ runResource $ do
+    (_, pdev) <- pickPhysicalDevice vulkanInstance (Just vulkanSurface)
     logInfo $ "Selected physical device: " <> showt pdev
 
     (dev, queues) <- createGraphicsDevice pdev vulkanSurface
@@ -98,7 +98,7 @@ runVulkanProgram App{ .. } = runProgram $ runResource $ do
     writeList2Chan renderFinishedSems =<< replicateM maxFramesInFlight (auto $ metaSemaphore dev)
     frameFinishedEvent <- liftIO Event.new
 
-    let beforeSwapchainCreation :: Program ()
+    let beforeSwapchainCreation :: Prog r ()
         beforeSwapchainCreation =
           -- wait as long as window has width=0 and height=0
           -- commented out because this only works in the main thread:
@@ -110,11 +110,11 @@ runVulkanProgram App{ .. } = runProgram $ runResource $ do
           atomicWriteIORef windowSizeChanged False
 
     -- creating first swapchain before loop
-    liftProg beforeSwapchainCreation
-    scsd <- liftProg $ querySwapchainSupport pdev vulkanSurface
+    beforeSwapchainCreation
+    scsd <- querySwapchainSupport pdev vulkanSurface
 
     nextSwapchainSlot <- createSwapchainSlot dev
-    (firstSwapchain, firstSwapInfo) <- liftProg $ createSwapchain dev scsd queues vulkanSurface syncMode Nothing
+    (firstSwapchain, firstSwapInfo) <- createSwapchain dev scsd queues vulkanSurface syncMode Nothing
     putMVar nextSwapchainSlot (Just firstSwapchain)
     swapInfoRef <- newIORef firstSwapInfo
     swapImgTokens <- liftIO . newNatTokenVar $ swapMaxAcquired firstSwapInfo
@@ -126,7 +126,7 @@ runVulkanProgram App{ .. } = runProgram $ runResource $ do
     nextSems <- newMVar []
 
     -- The code below re-runs when the swapchain was re-created
-    liftProg $ asyncRedo $ \redoWithNewSwapchain -> runResource $ do
+    asyncRedo $ \redoWithNewSwapchain -> runResource $ do
       logInfo "New thread: Creating things that depend on the swapchain.."
       -- need this for delayed destruction of the old swapchain if it gets replaced
       swapchainSlot <- createSwapchainSlot dev
@@ -143,7 +143,7 @@ runVulkanProgram App{ .. } = runProgram $ runResource $ do
       frameCount :: IORef Int <- newIORef 0
       currentSec :: IORef Int <- newIORef 0
 
-      shouldExit <- liftProg $ glfwMainLoop window $ do
+      shouldExit <- glfwMainLoop window $ do
         let rdata = RenderData
               { swapchainVar = swapchainSlot
               , presentQueue
@@ -193,7 +193,7 @@ runVulkanProgram App{ .. } = runProgram $ runResource $ do
             return $ AbortLoop ()
           else return ContinueLoop
       -- after glfwMainLoop exits, we need to wait for the frame to finish before deallocating things
-      liftProg $ waitCheckpoint gfxQueue -- staged stuff in ManagedQueue needs to be submitted
+      waitCheckpoint gfxQueue -- staged stuff in ManagedQueue needs to be submitted
       if shouldExit
         then runVk $ vkDeviceWaitIdle dev
         -- Using Event here properly deals with multiple waiting threads, in

@@ -58,12 +58,12 @@ rotation seconds =
   in rotate (vec3 0 0 1) (realToFrac phaseTau * 2 * pi)
 
 
-objMatrixOverTime :: Program Mat44f
+objMatrixOverTime :: Prog r Mat44f
 objMatrixOverTime = rotation <$> getTime
 
 
 -- | cam rotation using (yaw, pitch)
-viewProjMatrix :: VkExtent2D -> (Double, Double) -> Program Mat44f
+viewProjMatrix :: VkExtent2D -> (Double, Double) -> Prog r Mat44f
 viewProjMatrix extent (yaw, pitch) = do
   let width = getField @"width" extent
       height = getField @"height" extent
@@ -80,21 +80,20 @@ loadShaders EngineCapability{ dev } = do
     vertSM <- auto $ shaderModuleFile dev "shaders/triangle.vert.spv"
     fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
 
-    liftProg $ do
-      shaderVert
-        <- createShaderStage vertSM
-              VK_SHADER_STAGE_VERTEX_BIT
-              Nothing
+    shaderVert
+      <- createShaderStage vertSM
+            VK_SHADER_STAGE_VERTEX_BIT
+            Nothing
 
-      shaderFrag
-        <- createShaderStage fragSM
-              VK_SHADER_STAGE_FRAGMENT_BIT
-              Nothing
+    shaderFrag
+      <- createShaderStage fragSM
+            VK_SHADER_STAGE_FRAGMENT_BIT
+            Nothing
 
-      logInfo $ "Createad vertex shader module: " <> showt shaderVert
-      logInfo $ "Createad fragment shader module: " <> showt shaderFrag
+    logInfo $ "Createad vertex shader module: " <> showt shaderVert
+    logInfo $ "Createad fragment shader module: " <> showt shaderFrag
 
-      return [shaderVert, shaderFrag]
+    return [shaderVert, shaderFrag]
 
 
 makePipelineLayouts :: VkDevice -> Resource (VkDescriptorSetLayout, VkPipelineLayout)
@@ -135,15 +134,14 @@ loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
   (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
     (createTextureInfo cap False) texturePaths
 
-  liftProg $ do
-    loadEvents <- newMVar $ textureReadyEvents <> [vertexBufReady, indexBufReady]
+  loadEvents <- newMVar $ textureReadyEvents <> [vertexBufReady, indexBufReady]
 
-    materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
+  materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
 
-    forM_ (zip descrTextureInfos materialDescrSets) $
-      \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
+  forM_ (zip descrTextureInfos materialDescrSets) $
+    \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
 
-    return $ Assets {..}
+  return $ Assets {..}
 
 data Assets
   = Assets
@@ -162,8 +160,8 @@ prepareRender :: EngineCapability
               -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
 prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = do
   let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
-  msaaSamples <- liftProg $ getMaxUsableSampleCount pdev
-  depthFormat <- liftProg $ findDepthFormat pdev
+  msaaSamples <- getMaxUsableSampleCount pdev
+  depthFormat <- findDepthFormat pdev
 
   swapImgViews <- auto $
     mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
@@ -185,7 +183,7 @@ prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLa
 
 
 
-makeWorld :: MyAppState -> Program [Object]
+makeWorld :: MyAppState -> Prog r [Object]
 makeWorld MyAppState{ assets } = do
   let Assets{..} = assets
   -- objTransformsRef <- newIORef [translate3 $ vec3 0 1 1, translate3 $ vec3 0 0 0]
@@ -325,7 +323,7 @@ myAppRenderFrame appState@MyAppState{..} framebuffer waitSemsWithStages signalSe
 
   viewProjTransform <- viewProjMatrix (extent renderContext) lookDir
   postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf ->
-    liftProg $ recordAll renderContext viewProjTransform objs cmdBuf framebuffer
+    recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 
 data WindowState

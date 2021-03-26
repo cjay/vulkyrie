@@ -42,7 +42,7 @@ metaFileContent fpath = metaResource
 createShaderStage :: VkShaderModule
                   -> VkShaderStageFlagBits
                   -> Maybe VkSpecializationInfo
-                  -> Program VkPipelineShaderStageCreateInfo
+                  -> Prog r VkPipelineShaderStageCreateInfo
 createShaderStage shaderModule stageBit maySpecInfo = do
     let specInfo = maybe (specializationInfo [] 0 VK_NULL) id maySpecInfo
     return $ createVk @VkPipelineShaderStageCreateInfo

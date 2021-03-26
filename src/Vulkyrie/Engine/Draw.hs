@@ -33,7 +33,7 @@ type RenderFun =
   -- ^ semaphores with stages to wait on
   -> [VkSemaphore]
   -- ^ semaphores to signal
-  -> Program QueueEvent
+  -> forall r. Prog r QueueEvent
 
 
 data RenderData
@@ -60,7 +60,7 @@ data RenderData
   }
 
 
-drawFrame :: EngineCapability -> RenderData -> Program Bool
+drawFrame :: EngineCapability -> RenderData -> Prog r Bool
 drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
     imageAvailSem <- head <$> acquireSemaphores semPool 1
 

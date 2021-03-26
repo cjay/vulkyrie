@@ -4,8 +4,11 @@
 {-# LANGUAGE StrictData            #-}
 
 module Vulkyrie.Program
-    ( Program (..)
+    ( Prog (..)
     , runProgram
+    , askResourceContext
+    , withResourceContext
+    , askRegion
     , MonadIO (..)
       -- * Exception handling
     , VulkanException (..)
@@ -33,6 +36,7 @@ import           Control.Monad.IO.Unlift
 import           Control.Monad.Logger.CallStack hiding (logDebug)
 import qualified Control.Monad.Logger.CallStack as Logger
 import           Control.Monad.Reader.Class
+import           Control.Monad.Trans (lift)
 import           Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import           Data.Text
 import           Data.Typeable
@@ -46,23 +50,35 @@ import           UnliftIO.IORef
 import           Vulkyrie.BuildFlags
 
 
+data ProgContext = ProgContext
 
-data ProgramContext = ProgramContext {}
+data Context r =
+  Context
+  {
+    resourceContext :: r
+  , progContext :: ProgContext
+  }
 
-newtype Program a = Program (ReaderT ProgramContext (LoggingT IO) a)
+newtype Prog r a = Prog (ReaderT (Context r) (LoggingT IO) a)
   deriving (Functor, Applicative, Monad, MonadLogger, MonadIO, MonadUnliftIO)
 
-makeProgramContext :: IO ProgramContext
-makeProgramContext = return ProgramContext {}
 
-askProgramContext :: Program ProgramContext
-askProgramContext = Program ask
+askResourceContext :: Prog r r
+askResourceContext = resourceContext <$> Prog ask
 
-runProgram :: Program a -> IO a
-runProgram prog = makeProgramContext >>= flip run prog
+runProgram :: Prog () a -> IO a
+runProgram prog = run (Context () ProgContext) prog
 
-run :: ProgramContext -> Program a -> IO a
-run ctx (Program prog) = runStdoutLoggingT $ runReaderT prog ctx
+withResourceContext :: r -> Prog r a -> Prog r' a
+withResourceContext rctx (Prog prog) = Prog $ do
+  ctx <- ask
+  lift $ runReaderT prog ctx{ resourceContext = rctx }
+
+askRegion :: Prog r (Prog r a -> Prog r' a)
+askRegion = withResourceContext <$> askResourceContext
+
+run :: Context r -> Prog r a -> IO a
+run ctx (Prog prog) = runStdoutLoggingT $ runReaderT prog ctx
 
 
 
@@ -105,7 +121,7 @@ showt = pack . show
 
 data LoopControl a = ContinueLoop | AbortLoop a deriving Eq
 
-loop :: Program (LoopControl a) -> Program a
+loop :: Prog r (LoopControl a) -> Prog r a
 loop action = go
   where go = action >>= \case
           ContinueLoop -> go
@@ -114,14 +130,14 @@ loop action = go
 data RedoSignal = SigRedo | SigExit deriving Eq
 
 -- | Enables deferred deallocation.
-asyncRedo :: (Program () -> Program ()) -> Program ()
+asyncRedo :: forall r. (Prog r () -> Prog r ()) -> Prog r ()
 asyncRedo prog = myThreadId >>= go where
   go parentThreadId = do
     control <- newEmptyMVar
     let trigger = do
           success <- tryPutMVar control SigRedo
           unless success $ throwString "asyncRedo action tried to signal more than once"
-          liftIO yield
+          yield
     -- TODO use forkOS when using unsafe ffi calls?
     -- don't need the threadId
     void $ forkFinally
@@ -144,9 +160,9 @@ asyncRedo prog = myThreadId >>= go where
 --
 --   Caveat: The separate thread is not a bound thread, in contrast to the main thread.
 --   Use `runInBoundThread` there if you need thread local state for C libs.
-occupyThreadAndFork :: Program () -- ^ the program to run in the main thread
-                    -> Program () -- ^ the program to run in a separate thread
-                    -> Program ()
+occupyThreadAndFork :: Prog r () -- ^ the program to run in the main thread
+                    -> Prog r () -- ^ the program to run in a separate thread
+                    -> Prog r ()
 occupyThreadAndFork mainProg deputyProg = do
   mainThreadId <- myThreadId
   -- TODO proper thread management. at least wrap in some AsyncException.
@@ -158,5 +174,5 @@ occupyThreadAndFork mainProg deputyProg = do
 
 -- | to make sure IORef writes arrive in other threads
 -- TODO Investigate cache coherence + IORefs. I'm not 100% sure this does what I want.
-touchIORef :: IORef a -> Program ()
+touchIORef :: IORef a -> Prog r ()
 touchIORef ref = atomicModifyIORef' ref (\x -> (x, ()))

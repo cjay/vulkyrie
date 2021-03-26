@@ -117,7 +117,7 @@ createDescriptorSetLayout dev bindings =
 allocateDescriptorSet :: VkDevice
                       -> VkDescriptorPool
                       -> VkDescriptorSetLayout
-                      -> Program VkDescriptorSet
+                      -> Prog r VkDescriptorSet
 allocateDescriptorSet dev descriptorPool layout =
   head <$> allocateDescriptorSets dev descriptorPool [layout]
 
@@ -126,7 +126,7 @@ allocateDescriptorSetsForLayout :: VkDevice
                                 -> VkDescriptorPool
                                 -> Int
                                 -> VkDescriptorSetLayout
-                                -> Program [VkDescriptorSet]
+                                -> Prog r [VkDescriptorSet]
 allocateDescriptorSetsForLayout dev descriptorPool n layout =
   allocateDescriptorSets dev descriptorPool (replicate n layout)
 
@@ -135,7 +135,7 @@ allocateDescriptorSetsForLayout dev descriptorPool n layout =
 allocateDescriptorSets :: VkDevice
                        -> VkDescriptorPool
                        -> [VkDescriptorSetLayout]
-                       -> Program [VkDescriptorSet]
+                       -> Prog r [VkDescriptorSet]
 allocateDescriptorSets dev descriptorPool layouts = do
   let len = length layouts
   let dsai = createVk @VkDescriptorSetAllocateInfo
@@ -153,7 +153,7 @@ updateDescriptorSet :: VkDevice
                     -> Word32
                     -> [VkDescriptorBufferInfo]
                     -> [VkDescriptorImageInfo]
-                    -> Program ()
+                    -> Prog r ()
 updateDescriptorSet dev descriptorSet firstBinding uniformBufferInfos imageInfos =
   let uniformWrite bufferInfo binding =
         createVk @VkWriteDescriptorSet

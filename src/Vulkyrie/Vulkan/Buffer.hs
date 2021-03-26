@@ -38,10 +38,10 @@ createBuffer EngineCapability{dev, memPool} bSize bUsage bMemPropFlags =
     -- releasing the buffer before releasing the memory that is bound to it
     in inverseDestruction $ do
       buf <- resource metaBuffer
-      memLoc <- liftProg $ allocBindBufferMem memPool bMemPropFlags buf
+      memLoc <- allocBindBufferMem memPool bMemPropFlags buf
       return (memLoc, buf)
 
-copyBuffer :: VkCommandBuffer -> VkBuffer -> VkBuffer -> VkDeviceSize -> Program ()
+copyBuffer :: VkCommandBuffer -> VkBuffer -> VkBuffer -> VkDeviceSize -> Prog r ()
 copyBuffer cmdBuf srcBuffer dstBuffer bSize = do
   let copyRegion = createVk @VkBufferCopy
         $  set @"srcOffset" 0

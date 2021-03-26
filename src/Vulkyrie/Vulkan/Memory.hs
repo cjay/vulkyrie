@@ -42,7 +42,7 @@ findMemoryType :: VkPhysicalDeviceMemoryProperties
                -> Word32 -- ^ type filter bitfield
                -> VkMemoryPropertyFlags
                   -- ^ desired memory properties
-               -> Program MemTypeIndex
+               -> Prog r MemTypeIndex
 findMemoryType memProps typeFilter properties = do
   let mtCount = getField @"memoryTypeCount" memProps
       memTypes = getVec @"memoryTypes" memProps
@@ -60,7 +60,7 @@ findMemoryType memProps typeFilter properties = do
 
 
 -- TODO unify with allocBindBufferMem
-allocBindImageMem :: MemoryPool -> VkMemoryPropertyFlags -> VkImage -> Program MemoryLoc
+allocBindImageMem :: MemoryPool -> VkMemoryPropertyFlags -> VkImage -> Prog r MemoryLoc
 allocBindImageMem memPool@MemoryPool{dev, memProps} propFlags image = do
   memRequirements <- allocaPeek $ \reqsPtr ->
     liftIO $ vkGetImageMemoryRequirements dev image reqsPtr
@@ -75,7 +75,7 @@ allocBindImageMem memPool@MemoryPool{dev, memProps} propFlags image = do
   return loc
 
 
-allocBindBufferMem :: MemoryPool -> VkMemoryPropertyFlags -> VkBuffer -> Program MemoryLoc
+allocBindBufferMem :: MemoryPool -> VkMemoryPropertyFlags -> VkBuffer -> Prog r MemoryLoc
 allocBindBufferMem memPool@MemoryPool{dev, memProps} propFlags buffer = do
   memRequirements <- allocaPeek $ \reqsPtr ->
     liftIO $ vkGetBufferMemoryRequirements dev buffer reqsPtr
@@ -140,7 +140,7 @@ allocMem :: MemoryPool
          -> MemTypeIndex
          -> VkDeviceSize -- ^ requested size in bytes
          -> VkDeviceSize -- ^ requested alignment
-         -> Program MemoryLoc
+         -> Prog r MemoryLoc
 allocMem MemoryPool{..} (MemTypeIndex memTypeIndex) requestSize alignment = do
   let vectIndex = fromIntegral memTypeIndex :: Int
       size = max requestSize memoryChunkSize

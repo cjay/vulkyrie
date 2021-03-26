@@ -103,20 +103,19 @@ postWithAndRetWait :: CommandCapability
                    -> [(VkSemaphore, VkPipelineStageFlags)]
                    -> [VkSemaphore]
                    -> (VkCommandBuffer -> Resource a)
-                   -> Program a
+                   -> Prog r a
 postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action =
   runResource $ do
-    managedCmdBuf <- liftProg $ acquireCommandBuffer cmdCap
+    managedCmdBuf <- acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
     let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
-    liftProg $ withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
+    withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
     result <- action cmdBuf
     runVk $ vkEndCommandBuffer cmdBuf
 
-    liftProg $ do
-      queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
-      waitDone queueEvent
-      releaseCommandBuffer managedCmdBuf
+    queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
+    waitDone queueEvent
+    releaseCommandBuffer managedCmdBuf
     return result
 
 
@@ -129,7 +128,7 @@ postWithAndRet :: CommandCapability
                -> [(VkSemaphore, VkPipelineStageFlags)]
                -> [VkSemaphore]
                -> (VkCommandBuffer -> Resource a)
-               -> Program (a, QueueEvent)
+               -> Prog r (a, QueueEvent)
 postWithAndRet cmdCap queue waitSemsWithStages signalSems action = do
   retBox <- newEmptyMVar
   void $ forkIO $ run retBox
@@ -137,19 +136,18 @@ postWithAndRet cmdCap queue waitSemsWithStages signalSems action = do
 
   where
   run retBox = runResource $ do
-    managedCmdBuf <- liftProg $ acquireCommandBuffer cmdCap
+    managedCmdBuf <- acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
     let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
-    liftProg $ withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
+    withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
     result <- action cmdBuf
     runVk $ vkEndCommandBuffer cmdBuf
 
-    liftProg $ do
-      queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
-      -- async return because caller doesn't care about internal cleanup
-      putMVar retBox (result, queueEvent)
-      waitDone queueEvent
-      releaseCommandBuffer managedCmdBuf
+    queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
+    -- async return because caller doesn't care about internal cleanup
+    putMVar retBox (result, queueEvent)
+    waitDone queueEvent
+    releaseCommandBuffer managedCmdBuf
 
 
 -- | Posts to ManagedQueue with new command buffer. Local continuation context.
@@ -161,7 +159,7 @@ postWith :: CommandCapability
          -> [(VkSemaphore, VkPipelineStageFlags)]
          -> [VkSemaphore]
          -> (VkCommandBuffer -> Resource ())
-         -> Program QueueEvent
+         -> Prog r QueueEvent
 postWith cmdCap queue waitSemsWithStages signalSems action = do
   ((), queueEvent) <- postWithAndRet cmdCap queue waitSemsWithStages signalSems action
   return queueEvent
@@ -176,18 +174,18 @@ postWith_ :: CommandCapability
           -> [(VkSemaphore, VkPipelineStageFlags)]
           -> [VkSemaphore]
           -> (VkCommandBuffer -> Resource ())
-          -> Program ()
+          -> Prog r ()
 postWith_ cmdCap queue waitSemsWithStages signalSems action =
   void $ postWithAndRet cmdCap queue waitSemsWithStages signalSems action
 
 
 forkWithCmdCap :: CommandPoolPool
-               -> (CommandCapability -> Program ())
-               -> Program ThreadId
+               -> (forall r'. CommandCapability -> Prog r' ())
+               -> Prog r ThreadId
 forkWithCmdCap cmdPoolPool action =
   forkIO $ runResource $ do
     cmdCap <- auto $ metaCommandCapability cmdPoolPool
-    liftProg $ action cmdCap
+    action cmdCap
 
 
 data ManagedCommandBuffer = ManagedCommandBuffer
@@ -223,7 +221,7 @@ metaCommandCapability cpp =
 
 
 -- | Give opportunity to obtain a fresh command pool. Not thread-safe.
-poolSwapOpportunity :: CommandCapability -> Program ()
+poolSwapOpportunity :: CommandCapability -> Prog r ()
 poolSwapOpportunity CommandCapability{..} = do
   -- TODO shouldn't swap if pool is mostly unused
   pool <- readIORef currentPool
@@ -239,7 +237,7 @@ resCommandBuffer cap =
     (acquireCommandBuffer cap)
 
 -- | Acquire a command buffer from the capability. Not thread-safe.
-acquireCommandBuffer :: CommandCapability -> Program ManagedCommandBuffer
+acquireCommandBuffer :: CommandCapability -> Prog r ManagedCommandBuffer
 acquireCommandBuffer CommandCapability{..} = do
   pool <- readIORef currentPool
   mcpAcquireCommandBuffer pool >>= \case
@@ -253,7 +251,7 @@ acquireCommandBuffer CommandCapability{..} = do
 
 
 -- | Give a command buffer back to the cmdBuf pool. Thread-safe.
-releaseCommandBuffer :: ManagedCommandBuffer -> Program ()
+releaseCommandBuffer :: ManagedCommandBuffer -> Prog r ()
 releaseCommandBuffer ManagedCommandBuffer{..} =
   mcpReleaseCommandBuffer cmdPoolOfBuffer actualCmdBuf
 
@@ -317,13 +315,13 @@ metaCommandPoolPool device queueFamIdx =
   )
 
 
-acquireCommandPool :: CommandPoolPool -> Program ManagedCommandPool
+acquireCommandPool :: CommandPoolPool -> Prog r ManagedCommandPool
 acquireCommandPool CommandPoolPool{ mCommandPool, freshPools } = do
   fresh <- takeMVar freshPools
   case fresh of pool:rest -> putMVar freshPools rest >> return pool
                 []        -> putMVar freshPools [] >> create mCommandPool
 
-releaseCommandPool :: CommandPoolPool -> ManagedCommandPool -> Program ()
+releaseCommandPool :: CommandPoolPool -> ManagedCommandPool -> Prog r ()
 releaseCommandPool CommandPoolPool{ requestChan } cmdPool = do
   touchCommandPool cmdPool -- make sure changes arrive in next thread that uses the pool
   writeChan requestChan (Release cmdPool)
@@ -353,7 +351,7 @@ data ManagedCommandPool = ManagedCommandPool
   }
 
 -- | to make sure IORef writes from the other thread have arrived
-touchCommandPool :: ManagedCommandPool -> Program ()
+touchCommandPool :: ManagedCommandPool -> Prog r ()
 touchCommandPool ManagedCommandPool{..} = do
   touchIORef acquiredCount
   -- touchIORef enableNotify <- all writes to this are atomic already
@@ -381,7 +379,7 @@ metaManagedCommandPool device queueFamIdx =
       return ManagedCommandPool{dev=device, ..}
   )
 
-waitResetableCommandPool :: ManagedCommandPool -> Program ()
+waitResetableCommandPool :: ManagedCommandPool -> Prog r ()
 waitResetableCommandPool ManagedCommandPool{..} = do
   acquiredCnt <- readIORef acquiredCount
   (releasedCount, released) <- takeMVar releasedCmdBufs
@@ -398,7 +396,7 @@ waitResetableCommandPool ManagedCommandPool{..} = do
 -- | Moves released command buffers to the fresh cmdBufs list. Not thread-safe.
 --
 --   Make sure that mcpAcquireCommandBuffer can't be called at the same time.
-resetCommandPool :: ManagedCommandPool -> Program ()
+resetCommandPool :: ManagedCommandPool -> Prog r ()
 resetCommandPool ManagedCommandPool{..} = do
   (_, cmdBufs) <- takeMVar releasedCmdBufs
   writeIORef acquiredCount 0
@@ -408,7 +406,7 @@ resetCommandPool ManagedCommandPool{..} = do
   modifyIORef' freshCmdBufs (++ cmdBufs)
 
 -- | Acquire a command buffer from the pool, if available. Not thread-safe.
-mcpAcquireCommandBuffer :: ManagedCommandPool -> Program (Maybe VkCommandBuffer)
+mcpAcquireCommandBuffer :: ManagedCommandPool -> Prog r (Maybe VkCommandBuffer)
 mcpAcquireCommandBuffer ManagedCommandPool{..} =
   -- first try freshCmdBufs to avoid thread synchronization
   readIORef freshCmdBufs >>= \case
@@ -419,7 +417,7 @@ mcpAcquireCommandBuffer ManagedCommandPool{..} =
     [] -> return Nothing
 
 -- | Acquire a command buffer from the pool, create one if none are available. Not thread-safe.
-mcpInsistAcquireCommandBuffer :: ManagedCommandPool -> Program VkCommandBuffer
+mcpInsistAcquireCommandBuffer :: ManagedCommandPool -> Prog r VkCommandBuffer
 mcpInsistAcquireCommandBuffer ManagedCommandPool{..} = do
   -- first try freshCmdBufs to avoid thread synchronization
   cmdBuf <- readIORef freshCmdBufs >>= \case
@@ -429,7 +427,7 @@ mcpInsistAcquireCommandBuffer ManagedCommandPool{..} = do
   return cmdBuf
 
 -- | Give a command buffer back to the managed command pool. Thread-safe.
-mcpReleaseCommandBuffer :: ManagedCommandPool -> VkCommandBuffer -> Program ()
+mcpReleaseCommandBuffer :: ManagedCommandPool -> VkCommandBuffer -> Prog r ()
 mcpReleaseCommandBuffer ManagedCommandPool{..} cmdBuf = do
   (releasedCount, released) <- takeMVar releasedCmdBufs
   let releasedCount' = releasedCount + 1

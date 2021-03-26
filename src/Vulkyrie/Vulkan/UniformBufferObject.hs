@@ -33,14 +33,14 @@ uboCreateBuffers ecap size n =
          ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
 
 
-uboBufferInfo :: VkDeviceSize -> VkBuffer -> Program VkDescriptorBufferInfo
+uboBufferInfo :: VkDeviceSize -> VkBuffer -> Prog r VkDescriptorBufferInfo
 uboBufferInfo size uniformBuffer = return $ createVk @VkDescriptorBufferInfo
         $  set @"buffer" uniformBuffer
         &* set @"offset" 0
         &* set @"range" size
 
 
-uboUpdate :: PrimBytes o => VkDevice -> VkDeviceSize -> VkDeviceMemory -> o -> Program ()
+uboUpdate :: PrimBytes o => VkDevice -> VkDeviceSize -> VkDeviceMemory -> o -> Prog r ()
 uboUpdate device size mem ubo = do
       uboPtr <- allocaPeek $
         runVk . vkMapMemory device mem 0 size VK_ZERO_FLAGS

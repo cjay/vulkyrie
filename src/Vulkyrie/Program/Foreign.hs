@@ -40,8 +40,8 @@ import           Vulkyrie.Resource
 
 withVkPtr :: VulkanMarshal a
           => a
-          -> (Ptr a -> Program b)
-          -> Program b
+          -> (Ptr a -> Prog r b)
+          -> Prog r b
 withVkPtr x f = do
   u <- askUnliftIO
   liftIO (withPtr x (unliftIO u . f))
@@ -55,7 +55,7 @@ withArrayLen xs pf = do
   return ret
 {-# INLINE withArrayLen #-}
 
-withVkArrayLen :: (Storable a, VulkanMarshal a) => [a] -> (Word32 -> Ptr a -> Program b) -> Program b
+withVkArrayLen :: (Storable a, VulkanMarshal a) => [a] -> (Word32 -> Ptr a -> Prog r b) -> Prog r b
 withVkArrayLen xs pf = do
   u <- askUnliftIO
   liftIO $ withArrayLen xs (\l p -> unliftIO u $ pf l p)
@@ -63,8 +63,8 @@ withVkArrayLen xs pf = do
 
 -- | Uses `newVkData`, deallocation happens via GC.
 allocaPeekVk :: VulkanMarshal a
-             => (Ptr a -> Program ())
-             -> Program a
+             => (Ptr a -> Prog r ())
+             -> Prog r a
 allocaPeekVk pf = do
   u <- askUnliftIO
   liftIO $ newVkData (unliftIO u . pf)
@@ -76,15 +76,15 @@ touch x = GHC.Base.IO $ \s -> case GHC.Base.touch# x s of s' -> (# s', () #)
 {-# INLINE touch #-}
 
 alloca :: Storable a
-       => (Ptr a -> Program b)
-       -> Program b
+       => (Ptr a -> Prog r b)
+       -> Prog r b
 alloca = Foreign.alloca
 {-# INLINE alloca #-}
 
-allocaPeekDF :: forall a (ns :: [Nat])
+allocaPeekDF :: forall a (ns :: [Nat]) r
               . (PrimBytes a, Dimensions ns)
-             => (Ptr a -> Program ())
-             -> Program (DataFrame a ns)
+             => (Ptr a -> Prog r ())
+             -> Prog r (DataFrame a ns)
 allocaPeekDF pf
   | Dict <- inferKnownBackend @a @ns
   = do
@@ -96,28 +96,28 @@ allocaPeekDF pf
 
 allocaArray :: Storable a
             => Int
-            -> (Ptr a -> Program b)
-            -> Program b
+            -> (Ptr a -> Prog r b)
+            -> Prog r b
 allocaArray = Foreign.allocaArray
 {-# INLINE allocaArray #-}
 
 
 allocaPeek :: Storable a
-           => (Ptr a -> Program ())
-           -> Program a
+           => (Ptr a -> Prog r ())
+           -> Prog r a
 allocaPeek f = alloca $ \ptr -> f ptr >> liftIO (Storable.peek ptr)
 {-# INLINE allocaPeek #-}
 
 
-peekArray :: Storable a => Int -> Ptr a -> Program [a]
+peekArray :: Storable a => Int -> Ptr a -> Prog r [a]
 peekArray = Foreign.peekArray
 {-# INLINE peekArray #-}
 
-peek :: Storable a => Ptr a -> Program a
+peek :: Storable a => Ptr a -> Prog r a
 peek = liftIO . Storable.peek
 {-# INLINE peek #-}
 
-poke :: Storable a => Ptr a -> a -> Program ()
+poke :: Storable a => Ptr a -> a -> Prog r ()
 poke p v = liftIO $ Storable.poke p v
 {-# INLINE poke #-}
 
@@ -129,8 +129,8 @@ ptrAtIndex ptr i = ptr `plusPtr` (i * Storable.sizeOf @a undefined)
 -- | Get size of action output and then get the result,
 --   performing data copy.
 asListVk :: Storable x
-         => (Ptr Word32 -> Ptr x -> Program ())
-         -> Program [x]
+         => (Ptr Word32 -> Ptr x -> Prog r ())
+         -> Prog r [x]
 asListVk action = alloca $ \counterPtr -> do
   action counterPtr VK_NULL_HANDLE
   counter <- liftIO $ fromIntegral <$> Storable.peek counterPtr

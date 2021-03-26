@@ -38,7 +38,7 @@ import           Vulkyrie.Vulkan.Shader
 
 
 -- | cam pos using (x, y), ortho projection from z 0.1 to 10 excluding boundaries.
-viewProjMatrix :: VkExtent2D -> Vec2f -> Program Mat44f
+viewProjMatrix :: VkExtent2D -> Vec2f -> Prog r Mat44f
 viewProjMatrix extent (Vec2 x y) = do
   let width :: Float = fromIntegral $ getField @"width" extent
       height :: Float = fromIntegral $ getField @"height" extent
@@ -54,21 +54,20 @@ loadShaders EngineCapability{ dev } = do
     vertSM <- auto $ shaderModuleFile dev "shaders/sprites.vert.spv"
     fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
 
-    liftProg $ do
-      shaderVert
-        <- createShaderStage vertSM
-              VK_SHADER_STAGE_VERTEX_BIT
-              Nothing
+    shaderVert
+      <- createShaderStage vertSM
+            VK_SHADER_STAGE_VERTEX_BIT
+            Nothing
 
-      shaderFrag
-        <- createShaderStage fragSM
-              VK_SHADER_STAGE_FRAGMENT_BIT
-              Nothing
+    shaderFrag
+      <- createShaderStage fragSM
+            VK_SHADER_STAGE_FRAGMENT_BIT
+            Nothing
 
-      logInfo $ "Createad vertex shader module: " <> showt shaderVert
-      logInfo $ "Createad fragment shader module: " <> showt shaderFrag
+    logInfo $ "Createad vertex shader module: " <> showt shaderVert
+    logInfo $ "Createad fragment shader module: " <> showt shaderFrag
 
-      return [shaderVert, shaderFrag]
+    return [shaderVert, shaderFrag]
 
 
 makePipelineLayouts :: VkDevice -> Resource (VkDescriptorSetLayout, VkPipelineLayout)
@@ -101,15 +100,14 @@ loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
   (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
     (createTextureInfo cap True) texturePaths
 
-  liftProg $ do
-    loadEvents <- newMVar $ textureReadyEvents
+  loadEvents <- newMVar $ textureReadyEvents
 
-    materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
+  materialDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool (length descrTextureInfos) materialDSL
 
-    forM_ (zip descrTextureInfos materialDescrSets) $
-      \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
+  forM_ (zip descrTextureInfos materialDescrSets) $
+    \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
 
-    return $ Assets {..}
+  return $ Assets {..}
 
 data Assets
   = Assets
@@ -125,10 +123,10 @@ prepareRender :: EngineCapability
               -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
 prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = do
   let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
-  msaaSamples <- liftProg $ getMaxUsableSampleCount pdev
+  msaaSamples <- getMaxUsableSampleCount pdev
   -- to turn off msaa:
   -- let msaaSamples = VK_SAMPLE_COUNT_1_BIT
-  depthFormat <- liftProg $ findDepthFormat pdev
+  depthFormat <- findDepthFormat pdev
 
   swapImgViews <- auto $
     mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
@@ -151,7 +149,7 @@ prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLa
 
 
 
-makeWorld :: GameState -> Assets -> Program (Vec2f, [Object])
+makeWorld :: GameState -> Assets -> Prog r (Vec2f, [Object])
 makeWorld GameState {..} Assets {..} = do
 
   let objs = flip map walls $
@@ -209,7 +207,7 @@ myAppRenderFrame MyAppState{..} framebuffer waitSemsWithStages signalSems = do
   renderContext <- readMVar renderContextVar
   viewProjTransform <- viewProjMatrix (extent renderContext) camPos
   postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf ->
-    liftProg $ recordAll renderContext viewProjTransform objs cmdBuf framebuffer
+    recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 data WindowState
   = WindowState

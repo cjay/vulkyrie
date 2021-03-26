@@ -17,7 +17,21 @@ import           Numeric.DataFrame
 import           Numeric.DataFrame.IO
 
 import           Graphics.Vulkan
-import           Graphics.Vulkan.Core_1_0
+import Graphics.Vulkan.Core_1_0
+    ( vkCmdBeginRenderPass,
+      vkCmdBindDescriptorSets,
+      vkCmdBindIndexBuffer,
+      vkCmdBindPipeline,
+      vkCmdBindVertexBuffers,
+      vkCmdDrawIndexed,
+      vkCmdEndRenderPass,
+      vkCmdPushConstants,
+      VkDeviceSize,
+      VkIndexType(VK_INDEX_TYPE_UINT32),
+      VkPipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS),
+      VkShaderStageBitmask(VK_SHADER_STAGE_VERTEX_BIT),
+      VkSubpassContents(VK_SUBPASS_CONTENTS_INLINE),
+      VkExtent2D )
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
@@ -62,7 +76,7 @@ data Object = Object
   }
 
 
-bindDescrSet :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> DescrBindInfo -> Program ()
+bindDescrSet :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> DescrBindInfo -> Prog r ()
 bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = runResource $ do
   descrSetPtr <- newArrayRes [descrSet]
   let descrSetCnt = 1
@@ -73,7 +87,7 @@ bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = runResource $ 
 
 
 -- | Update push constants: transformation matrix
-pushTransform :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Program ()
+pushTransform :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Prog r ()
 pushTransform cmdBuf pipelineLayout df = do
   liftIO $ thawPinDataFrame df >>= (flip withDataFramePtr $ \ptr ->
     vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_VERTEX_BIT 0 64 (castPtr ptr))
@@ -86,7 +100,7 @@ pushTexIndex cmdBuf pipelineLayout texIndex = alloca $ \ptr -> do
     liftIO $ vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_FRAGMENT_BIT 64 4 (castPtr ptr)
 -}
 
-recordObject :: VkPipelineLayout -> VkCommandBuffer -> Mat44f -> Object -> Program ()
+recordObject :: VkPipelineLayout -> VkCommandBuffer -> Mat44f -> Object -> Prog r ()
 recordObject pipelineLayout cmdBuf transform Object{..} = do
   -- not yet:
   -- liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
@@ -123,7 +137,7 @@ recordAll :: RenderContext
           -> [Object]
           -> VkCommandBuffer
           -> VkFramebuffer
-          -> Program ()
+          -> Prog r ()
 recordAll
     RenderContext{..} viewProjTransform objects cmdBuf framebuffer = do
 

@@ -5,11 +5,11 @@ import UnliftIO.Exception
 import Vulkyrie.Program
 import Vulkyrie.Resource
 
-tests :: Program ()
+tests :: Prog r ()
 tests = do
   resourceTest
 
-resourceTest :: Program ()
+resourceTest :: Prog r ()
 resourceTest = do
   runResource $ do
     let ra = res "A" 1
@@ -73,8 +73,8 @@ res2 :: Resource Int
 res2 = do
   liftIO $ putStrLn "onCreate before"
   onDestroy $ liftIO $ putStrLn "onDestroy before"
-  b <- resourceMask $ \restore -> do
-    (destroyA, a) <- liftProg . manual restore $ res "A1" 1
+  b <- mask $ \restore -> do
+    (destroyA, a) <- manual restore $ res "A1" 1
     liftIO $ putStrLn "onCreate between"
     onDestroy $ liftIO $ putStrLn "onDestroy between creation"
     b <- resource $ res "B1" (a+3)

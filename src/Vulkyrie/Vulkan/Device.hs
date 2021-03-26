@@ -38,7 +38,7 @@ data SwapchainSupportDetails
 
 pickPhysicalDevice :: VkInstance
                    -> Maybe VkSurfaceKHR
-                   -> Program (Maybe SwapchainSupportDetails, VkPhysicalDevice)
+                   -> Prog r (Maybe SwapchainSupportDetails, VkPhysicalDevice)
 pickPhysicalDevice vkInstance mVkSurf = do
     devs <- asListVk
       $ \x -> runVk . vkEnumeratePhysicalDevices vkInstance x
@@ -54,7 +54,7 @@ pickPhysicalDevice vkInstance mVkSurf = do
     return (mscsd, dev)
 
 
-deviceScore :: VkPhysicalDevice -> Program Int
+deviceScore :: VkPhysicalDevice -> Prog r Int
 deviceScore pdev = do
   devProps <- allocaPeek $ \propsPtr ->
     liftIO $ vkGetPhysicalDeviceProperties pdev propsPtr
@@ -64,7 +64,7 @@ deviceScore pdev = do
 
 querySwapchainSupport :: VkPhysicalDevice
                       -> VkSurfaceKHR
-                      -> Program SwapchainSupportDetails
+                      -> Prog r SwapchainSupportDetails
 querySwapchainSupport pdev surf = do
 
   capabilities <- allocaPeekVk
@@ -81,7 +81,7 @@ querySwapchainSupport pdev surf = do
 
 checkDeviceExtensionSupport :: VkPhysicalDevice
                             -> [CString]
-                            -> Program Bool
+                            -> Prog r Bool
 checkDeviceExtensionSupport pdev extensions = do
   reqExts <- liftIO $ mapM peekCString extensions
   availExtsC <- asListVk
@@ -96,7 +96,7 @@ checkDeviceExtensionSupport pdev extensions = do
 
 isDeviceSuitable :: Maybe VkSurfaceKHR
                  -> VkPhysicalDevice
-                 -> Program (Maybe SwapchainSupportDetails, Bool)
+                 -> Prog r (Maybe SwapchainSupportDetails, Bool)
 isDeviceSuitable mVkSurf pdev = do
   extsGood <- checkDeviceExtensionSupport pdev
     [VK_KHR_SWAPCHAIN_EXTENSION_NAME]
@@ -125,7 +125,7 @@ isDeviceSuitable mVkSurf pdev = do
 
 
 getMaxUsableSampleCount :: VkPhysicalDevice
-                        -> Program VkSampleCountFlagBits
+                        -> Prog r VkSampleCountFlagBits
 getMaxUsableSampleCount pdev = do
   devProps <- allocaPeek $ \propsPtr ->
     liftIO $ vkGetPhysicalDeviceProperties pdev propsPtr
@@ -151,7 +151,7 @@ getMaxUsableSampleCount pdev = do
 
 
 
-getQueueFamilies :: VkPhysicalDevice -> Program [(Word32, VkQueueFamilyProperties)]
+getQueueFamilies :: VkPhysicalDevice -> Prog r [(Word32, VkQueueFamilyProperties)]
 getQueueFamilies pdev = do
   fams <- asListVk
     $ \c -> liftIO . vkGetPhysicalDeviceQueueFamilyProperties pdev c
@@ -166,7 +166,7 @@ isGraphicsFam (_, qfp)
 isPresentationFam :: VkPhysicalDevice
                   -> VkSurfaceKHR
                   -> (Word32, VkQueueFamilyProperties)
-                  -> Program Bool
+                  -> Prog r Bool
 isPresentationFam dev surf (i, _)
   = do
     supported <- allocaPeek $
@@ -192,10 +192,10 @@ createGraphicsDevice pdev surf
   -- check physical device extensions
 
   -- find an appropriate queue family
-  qfams <- liftProg $ getQueueFamilies pdev
+  qfams <- getQueueFamilies pdev
   let gfxFams = map fst $ filter isGraphicsFam qfams
   when (null gfxFams) $ throwString "No graphics queue family found."
-  presFams <- liftProg $ map fst <$> filterM (isPresentationFam pdev surf) qfams
+  presFams <- map fst <$> filterM (isPresentationFam pdev surf) qfams
   when (null presFams) $ throwString "No presentation queue family found for the surface."
   -- It's best for performance if presentation can happen in the graphics queue
   let bestFams = gfxFams `intersect` presFams
@@ -237,7 +237,7 @@ createGraphicsDevice pdev surf
       allocaPeek $ runVk . vkCreateDevice pdev dciPtr VK_NULL
 
   -- get the queues
-  gQueues <- liftProg $ flip Map.traverseWithKey qcInfoMap $ \qFamIdx _ ->
+  gQueues <- flip Map.traverseWithKey qcInfoMap $ \qFamIdx _ ->
              allocaPeek $ liftIO . vkGetDeviceQueue dev qFamIdx 0
 
   mdevQueues <- maybe (throwString "Some queues lost!") pure

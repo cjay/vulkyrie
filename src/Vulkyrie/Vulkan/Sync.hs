@@ -96,7 +96,7 @@ metaFencePool device =
 -- | Resets used fences and moves them to the fresh fences list. Not thread-safe.
 --
 --   Make sure that acquireFence can't be called at the same time.
-resetFences :: FencePool -> Program ()
+resetFences :: FencePool -> Prog r ()
 resetFences FencePool{..} = do
   fences <- takeMVar usedFences
   putMVar usedFences []
@@ -106,7 +106,7 @@ resetFences FencePool{..} = do
     modifyIORef' freshFences (++ fences)
 
 -- | Acquire a fence from the fence pool. Not thread-safe.
-acquireFence :: FencePool -> Program VkFence
+acquireFence :: FencePool -> Prog r VkFence
 acquireFence FencePool{..} =
   -- first try freshFences to avoid thread synchronization
   readIORef freshFences >>= \case
@@ -123,7 +123,7 @@ acquireFence FencePool{..} =
 -- | Release a fence back to the fence pool. Thread-safe.
 --
 --   It can only be acquired again after calling `resetFences`.
-releaseFence :: FencePool -> VkFence -> Program ()
+releaseFence :: FencePool -> VkFence -> Prog r ()
 releaseFence FencePool{..} fence = do
   ufs <- takeMVar usedFences
   putMVar usedFences (fence:ufs)
@@ -149,7 +149,7 @@ metaMasterSemaphorePool device =
   )
 
 -- | Used by SemaphorePool.
-mspAcquireSemaphores :: MasterSemaphorePool -> Int -> Program (Seq VkSemaphore)
+mspAcquireSemaphores :: MasterSemaphorePool -> Int -> Prog r (Seq VkSemaphore)
 mspAcquireSemaphores MasterSemaphorePool{..} num = do
   sems <- takeMVar mspSemaphores
   let (taken, rest) = Seq.splitAt num sems
@@ -159,7 +159,7 @@ mspAcquireSemaphores MasterSemaphorePool{..} num = do
   return $ taken <> new
 
 -- | Used by ManagedQueue.
-mspReleaseSemaphores :: MasterSemaphorePool -> [VkSemaphore] -> Program ()
+mspReleaseSemaphores :: MasterSemaphorePool -> [VkSemaphore] -> Prog r ()
 mspReleaseSemaphores MasterSemaphorePool{..} sems = do
   have <- takeMVar mspSemaphores
   putMVar mspSemaphores $ have <> fromList sems
@@ -195,7 +195,7 @@ metaSemaphorePool msp =
 
 
 -- | Gives explicit opportunity to restock from the MasterSemaphorePool.
-semaphoreRestockOpportunity :: SemaphorePool -> Program ()
+semaphoreRestockOpportunity :: SemaphorePool -> Prog r ()
 semaphoreRestockOpportunity SemaphorePool{..} = do
   count <- readIORef acquiredCount
   maxCount <- readIORef maxAcquiredCount
@@ -210,7 +210,7 @@ semaphoreRestockOpportunity SemaphorePool{..} = do
 
 
 -- | Semaphores are outomatically released to the MasterSemaphorePool by ManagedQueue
-acquireSemaphores :: SemaphorePool -> Int -> Program [VkSemaphore]
+acquireSemaphores :: SemaphorePool -> Int -> Prog r [VkSemaphore]
 acquireSemaphores SemaphorePool{..} num = do
   count <- readIORef acquiredCount
   writeIORef acquiredCount (count + num)
@@ -229,6 +229,6 @@ acquireSemaphores SemaphorePool{..} num = do
   return $ toList $ taken <> completion
 
 -- | Explicit release, for when you end up not submitting them to a ManagedQueue.
-releaseSemaphores :: SemaphorePool -> [VkSemaphore] -> Program ()
+releaseSemaphores :: SemaphorePool -> [VkSemaphore] -> Prog r ()
 releaseSemaphores SemaphorePool{ masterSemaphorePool } =
   mspReleaseSemaphores masterSemaphorePool

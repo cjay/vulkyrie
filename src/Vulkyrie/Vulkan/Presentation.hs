@@ -33,7 +33,7 @@ createSurface vkInstance window = resource $
 
 
 chooseSwapSurfaceFormat :: SwapchainSupportDetails
-                        -> Program VkSurfaceFormatKHR
+                        -> Prog r VkSurfaceFormatKHR
 chooseSwapSurfaceFormat SwapchainSupportDetails {..}
     = maybe (throwString "No available surface formats!")
             (pure . argVal . getMin)
@@ -98,7 +98,7 @@ createSwapchain :: VkDevice
                 -> VkSurfaceKHR
                 -> SyncMode
                 -> Maybe VkSwapchainKHR
-                -> Program (VkSwapchainKHR, SwapchainInfo)
+                -> Prog r (VkSwapchainKHR, SwapchainInfo)
 createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
 
   -- TODO not necessary every time I think
@@ -161,7 +161,7 @@ createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
 
 destroySwapchainIfNecessary :: VkDevice
                             -> MVar (Maybe VkSwapchainKHR)
-                            -> Program ()
+                            -> Prog r ()
 destroySwapchainIfNecessary dev slot = do
   maySwapchain <- takeMVar slot
   liftIO $ sequence_ $ flip (vkDestroySwapchainKHR dev) VK_NULL <$> maySwapchain

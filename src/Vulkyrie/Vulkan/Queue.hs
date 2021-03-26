@@ -62,7 +62,7 @@ data ManagedPresentQueue =
     -- ^ needed because there is no single management thread for the queue
   }
 
-present :: ManagedPresentQueue -> [(MVar (Maybe VkSwapchainKHR), Word32)] -> [VkSemaphore] -> Program ()
+present :: ManagedPresentQueue -> [(MVar (Maybe VkSwapchainKHR), Word32)] -> [VkSemaphore] -> Prog r ()
 present ManagedPresentQueue{..} images waitSems = do
   let (swapchainVars, imageIndices) = unzip images
   bracket
@@ -107,30 +107,30 @@ data QueueEvent
 
 
 -- | Produces a QueueEvent that has already been set to the done state.
-newDoneQueueEvent :: Program QueueEvent
+newDoneQueueEvent :: Prog r QueueEvent
 newDoneQueueEvent = QueueEvent <$> liftIO Event.newSet <*> liftIO Event.newSet
 
 -- | Block until the submission has been submitted to the queue.
-waitSubmitted :: QueueEvent -> Program ()
+waitSubmitted :: QueueEvent -> Prog r ()
 waitSubmitted QueueEvent { submitEvent } = liftIO $ Event.wait submitEvent
 
 -- | Block until the submission has been executed by the queue.
-waitDone :: QueueEvent -> Program ()
+waitDone :: QueueEvent -> Prog r ()
 waitDone QueueEvent { doneEvent } = liftIO $ Event.wait doneEvent
 
 -- | Like wait, but with a timeout. A return value of False indicates a timeout
 --   occurred.
 --
 --   The timeout is specified in microseconds.
-waitDoneTimeout :: QueueEvent -> Integer -> Program Bool
+waitDoneTimeout :: QueueEvent -> Integer -> Prog r Bool
 waitDoneTimeout QueueEvent { doneEvent } timeout = liftIO $ Event.waitTimeout doneEvent timeout
 
 -- | Checks if the submission has been submitted.
-isSubmitted :: QueueEvent -> Program Bool
+isSubmitted :: QueueEvent -> Prog r Bool
 isSubmitted QueueEvent { submitEvent } = liftIO $ Event.isSet submitEvent
 
 -- | Checks if the submission has been executed.
-isDone :: QueueEvent -> Program Bool
+isDone :: QueueEvent -> Prog r Bool
 isDone QueueEvent { doneEvent } = liftIO $ Event.isSet doneEvent
 
 
@@ -165,7 +165,7 @@ data QueueRequest = Shutdown
 data Instruction = Post VkSubmitInfo
                  | SubmitIfNeeded
                  | Submit
-                 | Present ManagedPresentQueue (Program ()) (IO ())
+                 | Present ManagedPresentQueue (forall r. Prog r ()) (IO ())
                  | Notify (MVar QueueEvent)
                  | Checkpoint Event
 
@@ -188,7 +188,7 @@ metaManagedQueue dev queue msp =
       pumpThread <- newMVar Nothing
 
       let mq = ManagedQueue { masterSemaphorePool=msp, .. }
-          submit_ :: Program ()
+          submit_ :: Prog r ()
           submit_ = do
             fence <- acquireFence fencePool
             fenceResetDone <- async $ resetFences fencePool
@@ -209,7 +209,7 @@ metaManagedQueue dev queue msp =
             -- blocking because acquireFence is not allowed while resetFences is running
             wait fenceResetDone
 
-          post_ :: VkSubmitInfo -> Program ()
+          post_ :: VkSubmitInfo -> Prog r ()
           post_ submitInfo = do
             sIs <- readIORef submitInfos
             writeIORef submitInfos (sIs `DL.snoc` submitInfo)
@@ -251,32 +251,32 @@ metaManagedQueue dev queue msp =
 
 
 -- | Stage VkSubmitInfo for submission. Can stage many.
-post :: ManagedQueue -> VkSubmitInfo -> Program ()
+post :: ManagedQueue -> VkSubmitInfo -> Prog r ()
 post ManagedQueue{ requestChan } submitInfo =
   writeChan requestChan $ Transaction [Post submitInfo]
 
-postSubmitPresent :: ManagedQueue -> VkSubmitInfo -> ManagedPresentQueue -> (Program ()) -> IO () -> Program ()
+postSubmitPresent :: ManagedQueue -> VkSubmitInfo -> ManagedPresentQueue -> (forall r'. Prog r' ()) -> IO () -> Prog r ()
 postSubmitPresent ManagedQueue{ requestChan } submitInfo presentQueue presentAction postPresentAction =
   writeChan requestChan $ Transaction
     [Post submitInfo, Submit, Present presentQueue presentAction postPresentAction]
 
 -- | Only submits something if there are any staged VkSubmitInfos.
-submitIfNeeded :: ManagedQueue -> Program ()
+submitIfNeeded :: ManagedQueue -> Prog r ()
 submitIfNeeded ManagedQueue{ requestChan } =
   writeChan requestChan $ Transaction [SubmitIfNeeded]
 
 -- | Submit with submission-notification.
-submit :: ManagedQueue -> Program ()
+submit :: ManagedQueue -> Prog r ()
 submit ManagedQueue{ requestChan } =
   writeChan requestChan $ Transaction [Submit]
 
-submitPresent :: ManagedQueue -> ManagedPresentQueue -> (Program ()) -> IO () -> Program ()
+submitPresent :: ManagedQueue -> ManagedPresentQueue -> (forall r'. Prog r' ()) -> IO () -> Prog r ()
 submitPresent ManagedQueue{ requestChan } presentQueue presentAction postPresentAction =
   writeChan requestChan $ Transaction
     [Submit, Present presentQueue presentAction postPresentAction]
 
 -- | Stage VkSubmitInfo for submission and notify when it was done.
-postNotify :: ManagedQueue -> VkSubmitInfo -> Program QueueEvent
+postNotify :: ManagedQueue -> VkSubmitInfo -> Prog r QueueEvent
 postNotify ManagedQueue{ requestChan } submitInfo = do
   resultBox <- newEmptyMVar
   writeChan requestChan $ Transaction [Notify resultBox, Post submitInfo]
@@ -285,14 +285,14 @@ postNotify ManagedQueue{ requestChan } submitInfo = do
 -- | Submit with done-notification. Always submits, even with empty VkSubmitInfos.
 --
 --   Can be used to ensure that any previous submissions have been executed.
-submitNotify :: ManagedQueue -> Program QueueEvent
+submitNotify :: ManagedQueue -> Prog r QueueEvent
 submitNotify ManagedQueue{ requestChan } = do
   resultBox <- newEmptyMVar
   writeChan requestChan $ Transaction [Notify resultBox, Submit]
   takeMVar resultBox
 
 -- | Stage VkSubmitInfo for submission and notify when it was done.
-postSubmitNotify :: ManagedQueue -> VkSubmitInfo -> Program QueueEvent
+postSubmitNotify :: ManagedQueue -> VkSubmitInfo -> Prog r QueueEvent
 postSubmitNotify ManagedQueue{ requestChan } submitInfo = do
   resultBox <- newEmptyMVar
   writeChan requestChan $ Transaction [Notify resultBox, Post submitInfo, Submit]
@@ -301,18 +301,18 @@ postSubmitNotify ManagedQueue{ requestChan } submitInfo = do
 -- | Immediately wait for notification after staging.
 --
 --   This will wait forever if nothing causes eventual submission.
-postWait :: ManagedQueue -> VkSubmitInfo -> Program ()
+postWait :: ManagedQueue -> VkSubmitInfo -> Prog r ()
 postWait mq submitInfo = do
   event <- postNotify mq submitInfo
   waitDone event
 
 -- | Immediately wait for notification after submitting.
-submitWait :: ManagedQueue -> Program ()
+submitWait :: ManagedQueue -> Prog r ()
 submitWait mq = do
   event <- submitNotify mq
   waitDone event
 
-waitCheckpoint :: ManagedQueue -> Program ()
+waitCheckpoint :: ManagedQueue -> Prog r ()
 waitCheckpoint ManagedQueue{ requestChan } = do
   event <- liftIO Event.new
   writeChan requestChan $ Transaction [Checkpoint event]
@@ -321,7 +321,7 @@ waitCheckpoint ManagedQueue{ requestChan } = do
 -- | Creates a thread for automatic submission every n microseconds.
 --
 --   Kills previous pump thread if it exists.
-attachQueuePump :: ManagedQueue -> Int -> Program ()
+attachQueuePump :: ManagedQueue -> Int -> Prog r ()
 attachQueuePump mq@ManagedQueue{ pumpThread } microSecs = do
   takeMVar pumpThread >>= mapM_ killThread
   tId <- forkIO $ forever $ do
@@ -330,7 +330,7 @@ attachQueuePump mq@ManagedQueue{ pumpThread } microSecs = do
   putMVar pumpThread (Just tId)
 
 -- | Kills queue pump thread if it exists.
-removeQueuePump :: ManagedQueue -> Program ()
+removeQueuePump :: ManagedQueue -> Prog r ()
 removeQueuePump ManagedQueue{ pumpThread } =
   do
     takeMVar pumpThread >>= mapM_ killThread
@@ -354,7 +354,7 @@ makeSubmitInfo waitSemsWithStages signalSems cmdBufs =
           &* setListCountAndRef @"signalSemaphoreCount" @"pSignalSemaphores" signalSems
 
 
-submitInfoGetWaitSemaphores :: VkSubmitInfo -> Program [VkSemaphore]
+submitInfoGetWaitSemaphores :: VkSubmitInfo -> Prog r [VkSemaphore]
 submitInfoGetWaitSemaphores =
   liftIO . getListCountAndRef @"waitSemaphoreCount" @"pWaitSemaphores"
 
@@ -365,7 +365,7 @@ data CommandThread = CommandThread
   { waitSems   :: IORef [(VkSemaphore, VkPipelineStageFlags)]
   }
 
-joinCommandThreads :: [CommandThread] -> Program CommandThread
+joinCommandThreads :: [CommandThread] -> Prog r CommandThread
 joinCommandThreads threads = do
   let refs = map waitSems threads
   allSems <- concat <$> mapM (readIORef) refs
@@ -373,7 +373,7 @@ joinCommandThreads threads = do
   newRef <- newIORef allSems
   return $ CommandThread newRef
 
-newCommandThread :: Program CommandThread
+newCommandThread :: Prog r CommandThread
 newCommandThread = do
   ref <- newIORef []
   return $ CommandThread ref

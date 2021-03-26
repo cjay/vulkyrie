@@ -95,7 +95,7 @@ faceToTriangles (Face a b c is) = pairwise (Tri a) (b:c:is)
   where pairwise f xs = zipWith f xs (tail xs)
 
 loadModel :: FilePath
-          -> Program (DataFrame Vertex '[XN 3], DataFrame Word32 '[XN 3])
+          -> Prog r (DataFrame Vertex '[XN 3], DataFrame Word32 '[XN 3])
 loadModel file = do
   logInfo "Loading model.."
   obj <- either throwString pure =<< Codec.Wavefront.fromFile file

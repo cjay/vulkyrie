@@ -56,6 +56,6 @@ createVulkanInstance progName engineName extensions layers =
       &* set           @"enabledExtensionCount" (fromIntegral $ length extensions)
       &* setListRef    @"ppEnabledExtensionNames" extensions
 
-destroyVulkanInstance :: VkInstance -> Program ()
+destroyVulkanInstance :: VkInstance -> Prog r ()
 destroyVulkanInstance vkInstance
   = liftIO (vkDestroyInstance vkInstance VK_NULL) >> (logDebug "Destroyed vkInstance.")
