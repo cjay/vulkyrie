@@ -374,7 +374,7 @@ metaManagedCommandPool device queueFamIdx =
       releasedCmdBufs <- newMVar (0, [])
       enableNotify <- newIORef False
       notifyResetable <- newEmptyMVar
-      initialCmdBufs <- alloc (mCmdBufs initialCmdBufNum)
+      initialCmdBufs <- create (mCmdBufs initialCmdBufNum)
       freshCmdBufs <- newIORef initialCmdBufs
       return ManagedCommandPool{dev=device, ..}
   )
@@ -422,7 +422,7 @@ mcpInsistAcquireCommandBuffer ManagedCommandPool{..} = do
   -- first try freshCmdBufs to avoid thread synchronization
   cmdBuf <- readIORef freshCmdBufs >>= \case
     f:rest -> writeIORef freshCmdBufs rest >> return f
-    [] -> head <$> alloc (mCmdBufs 1)
+    [] -> head <$> create (mCmdBufs 1)
   modifyIORef' acquiredCount (+1)
   return cmdBuf
 

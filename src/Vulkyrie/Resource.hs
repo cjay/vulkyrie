@@ -12,8 +12,6 @@ module Vulkyrie.Resource
   , destroy
   , create
   , metaResource
-  , alloc
-  , free
 
   , BasicResource
   , basicResource
@@ -32,7 +30,6 @@ module Vulkyrie.Resource
 
 import           Data.Either
 import           Data.Typeable
-import           Graphics.Vulkan.Core_1_0
 import           UnliftIO.Concurrent
 import UnliftIO.Exception
     ( SomeException, Exception, catch, finally, mask, throwIO, try )
@@ -87,28 +84,6 @@ instance GenericResource MetaResource a where
 
   manual restore MetaResource{..} = manual restore (allocResource destroy create)
   {-# INLINE manual #-}
-
-
--- | Things that allow alloc and free synonyms to create and destroy.
---
---   This is purely for the right wording. The only instances are
---   VkCommandBuffer, VkDescriptorSet and VkDeviceMemory. These are the only
---   original Vulkan types that have a vkAlloc.. and vkFree.. function.
-class AllocFree a where
-  -- | Synonym for destroy
-  free :: MetaResource a -> (a -> Prog r ())
-  free = destroy
-  {-# INLINE free #-}
-
-  -- | Synonym for create
-  alloc :: MetaResource a -> Prog r a
-  alloc = create
-  {-# INLINE alloc #-}
-
-instance AllocFree VkCommandBuffer
-instance AllocFree VkDescriptorSet
-instance AllocFree VkDeviceMemory
-instance (AllocFree a) => AllocFree [a]
 
 
 -- TODO should change BasicResource to be able to access destroy directly
