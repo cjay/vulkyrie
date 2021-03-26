@@ -13,9 +13,6 @@ module Vulkyrie.Resource
   , create
   , metaResource
 
-  , BasicResource
-  , basicResource
-
   , composeResource
 
     -- * Resource Monad
@@ -84,19 +81,6 @@ instance GenericResource MetaResource a where
 
   manual restore MetaResource{..} = manual restore (allocResource destroy create)
   {-# INLINE manual #-}
-
-
--- TODO should change BasicResource to be able to access destroy directly
--- | Like MetaResource, but is meant to destroy any resources of the correct type.
---
---   Take care not to capture creation parameters in the destruction action.
-type BasicResource = MetaResource
-
--- | Creates a BasicResource. Drop in replacement for Vulkyrie.Program.elementaryResource.
-basicResource :: (forall r. a -> Prog r ()) -- ^ destroy resource
-              -> (forall r. Prog r a)        -- ^ create resource
-              -> BasicResource a
-basicResource = metaResource
 
 
 -- | A bit more polymorphic than (>>=) of Resource.
