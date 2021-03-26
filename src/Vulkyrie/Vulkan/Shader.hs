@@ -72,11 +72,11 @@ metaShaderModule dev (codeSize, codePtr) =
 
 
 shaderModuleFile :: VkDevice -> FilePath -> Resource VkShaderModule
-shaderModuleFile dev fpath = do
+shaderModuleFile dev fpath = Resource $ do
   outer <- askRegion
-  locally $ do
-    content <- resource $ metaFileContent fpath
-    outer $ resource $ metaShaderModule dev content
+  region $ do
+    content <- auto $ metaFileContent fpath
+    outer $ auto $ metaShaderModule dev content
 
 
 specializationInfo :: [VkSpecializationMapEntry] -> CSize -> Ptr Void -> VkSpecializationInfo

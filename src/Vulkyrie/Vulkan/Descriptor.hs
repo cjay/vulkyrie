@@ -58,9 +58,9 @@ data DynamicDescriptorPool = DynamicDescriptorPool
 
 
 -- TODO make pool size dynamic
-createDescriptorPool :: VkDevice -> Int -> Resource VkDescriptorPool
+createDescriptorPool :: VkDevice -> Int -> MetaResource VkDescriptorPool
 createDescriptorPool dev n =
-  resource $ metaResource
+  metaResource
     (liftIO . flip (vkDestroyDescriptorPool dev) VK_NULL) $
     allocaPeek $ \pPtr -> withVkPtr
       ( createVk
@@ -101,14 +101,14 @@ samplerBinding bindId =
 
 createDescriptorSetLayout :: VkDevice
                           -> [VkDescriptorSetLayoutBinding]
-                          -> Resource VkDescriptorSetLayout
+                          -> MetaResource VkDescriptorSetLayout
 createDescriptorSetLayout dev bindings =
   let dslCreateInfo = createVk @VkDescriptorSetLayoutCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
         &* set @"pNext" VK_NULL
         &* set @"flags" VK_ZERO_FLAGS
         &* setListCountAndRef @"bindingCount" @"pBindings" bindings
-  in resource $ metaResource
+  in metaResource
      (\dsl -> liftIO $ vkDestroyDescriptorSetLayout dev dsl VK_NULL) $
      withVkPtr dslCreateInfo $ \dslciPtr -> allocaPeek $
        runVk . vkCreateDescriptorSetLayout dev dslciPtr VK_NULL

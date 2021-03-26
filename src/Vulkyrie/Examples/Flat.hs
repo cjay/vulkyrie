@@ -50,7 +50,7 @@ viewProjMatrix extent (Vec2 x y) = do
 
 
 loadShaders :: EngineCapability -> Resource [VkPipelineShaderStageCreateInfo]
-loadShaders EngineCapability{ dev } = do
+loadShaders EngineCapability{ dev } = Resource $ do
     vertSM <- auto $ shaderModuleFile dev "shaders/sprites.vert.spv"
     fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
 
@@ -71,7 +71,7 @@ loadShaders EngineCapability{ dev } = do
 
 
 makePipelineLayouts :: VkDevice -> Resource (VkDescriptorSetLayout, VkPipelineLayout)
-makePipelineLayouts dev = do
+makePipelineLayouts dev = Resource $ do
   frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
   -- TODO automate bind ids
   materialDSL <- auto $ createDescriptorSetLayout dev [samplerBinding 0]
@@ -95,10 +95,10 @@ makePipelineLayouts dev = do
 
 
 loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Resource Assets
-loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
+loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = Resource $ do
   let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg", "sprite.png"]
   (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
-    (createTextureInfo cap True) texturePaths
+    (auto . createTextureInfo cap True) texturePaths
 
   loadEvents <- newMVar $ textureReadyEvents
 
@@ -121,15 +121,15 @@ prepareRender :: EngineCapability
               -> [VkPipelineShaderStageCreateInfo]
               -> VkPipelineLayout
               -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
-prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = do
+prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = Resource $ do
   let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
   msaaSamples <- getMaxUsableSampleCount pdev
   -- to turn off msaa:
   -- let msaaSamples = VK_SAMPLE_COUNT_1_BIT
   depthFormat <- findDepthFormat pdev
 
-  swapImgViews <- auto $
-    mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
+  swapImgViews <-
+    mapM (\image -> auto $ createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
   renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
   graphicsPipeline
     <- auto $ createGraphicsPipeline dev swapExtent
@@ -168,7 +168,7 @@ makeWorld GameState {..} Assets {..} = do
   return (camPos, if allDone then objs else [])
 
 myAppNewWindow :: GLFW.Window -> Resource WindowState
-myAppNewWindow window = do
+myAppNewWindow window = Resource $ do
   keyEvents <- newChan
   let keyCallback _ key _ keyState _ = do
         writeChan keyEvents $ KeyEvent key keyState
@@ -180,20 +180,20 @@ myAppMainThreadHook WindowState {..} = do
   return ()
 
 myAppStart :: WindowState -> EngineCapability -> Resource MyAppState
-myAppStart winState@WindowState{ keyEvents } cap@EngineCapability{ dev } = do
-  shaderStages <- loadShaders cap
-  (materialDSL, pipelineLayout) <- makePipelineLayouts dev
+myAppStart winState@WindowState{ keyEvents } cap@EngineCapability{ dev } = Resource $ do
+  shaderStages <- auto $ loadShaders cap
+  (materialDSL, pipelineLayout) <- auto $ makePipelineLayouts dev
   -- TODO beware of automatic resource lifetimes when making assets dynamic
-  assets <- loadAssets cap materialDSL
+  assets <- auto $ loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
   gameState <- newMVar initialGameState
   _ <- liftIO $ forkIO $ runGame gameState keyEvents
   return $ MyAppState{..}
 
 myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
-myAppNewSwapchain MyAppState{..} swapInfo = do
+myAppNewSwapchain MyAppState{..} swapInfo = Resource $ do
   _ <- tryTakeMVar renderContextVar
-  (framebuffers, nextSems, renderContext) <- prepareRender cap swapInfo shaderStages pipelineLayout
+  (framebuffers, nextSems, renderContext) <- auto $ prepareRender cap swapInfo shaderStages pipelineLayout
   putMVar renderContextVar renderContext
   return (framebuffers, nextSems)
 
@@ -206,7 +206,7 @@ myAppRenderFrame MyAppState{..} framebuffer waitSemsWithStages signalSems = do
 
   renderContext <- readMVar renderContextVar
   viewProjTransform <- viewProjMatrix (extent renderContext) camPos
-  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf ->
+  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf -> Resource $
     recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 data WindowState

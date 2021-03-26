@@ -58,22 +58,22 @@ data App s w
   }
 
 runVulkanProgram :: App s w -> IO ()
-runVulkanProgram App{ .. } = runProgram $ runResource $ do
+runVulkanProgram App{ .. } = runProgram $ region $ do
   windowSizeChanged <- newIORef False
   let (windowWidth, windowHeight) = windowSize
-  window <- initGLFWWindow windowWidth windowHeight windowName windowFullscreen windowSizeChanged
+  window <- auto $ initGLFWWindow windowWidth windowHeight windowName windowFullscreen windowSizeChanged
   let enabledLayers = ["VK_LAYER_KHRONOS_validation" | Validation `elem` flags ]
   vulkanInstance <- auto $ createGLFWVulkanInstance (windowName <> "-instance") enabledLayers
   vulkanSurface <- auto $ createSurface vulkanInstance window
   logInfo $ "Createad surface: " <> showt vulkanSurface
 
-  winState <- appNewWindow window
+  winState <- auto $ appNewWindow window
 
-  glfwWaitEventsMeanwhile (appMainThreadHook winState) $ runResource $ do
+  glfwWaitEventsMeanwhile (appMainThreadHook winState) $ region $ do
     (_, pdev) <- pickPhysicalDevice vulkanInstance (Just vulkanSurface)
     logInfo $ "Selected physical device: " <> showt pdev
 
-    (dev, queues) <- createGraphicsDevice pdev vulkanSurface
+    (dev, queues) <- auto $ createGraphicsDevice pdev vulkanSurface
     logInfo $ "Createad device: " <> showt dev
     logInfo $ "Createad queues: " <> showt queues
 
@@ -92,7 +92,7 @@ runVulkanProgram App{ .. } = runProgram $ runResource $ do
           semPool, memPool, descriptorPool }
 
     logInfo "Starting App.."
-    appState <- appStart winState cap
+    appState <- auto $ appStart winState cap
 
     renderFinishedSems <- newChan
     writeList2Chan renderFinishedSems =<< replicateM maxFramesInFlight (auto $ metaSemaphore dev)
@@ -113,7 +113,7 @@ runVulkanProgram App{ .. } = runProgram $ runResource $ do
     beforeSwapchainCreation
     scsd <- querySwapchainSupport pdev vulkanSurface
 
-    nextSwapchainSlot <- createSwapchainSlot dev
+    nextSwapchainSlot <- auto $ createSwapchainSlot dev
     (firstSwapchain, firstSwapInfo) <- createSwapchain dev scsd queues vulkanSurface syncMode Nothing
     putMVar nextSwapchainSlot (Just firstSwapchain)
     swapInfoRef <- newIORef firstSwapInfo
@@ -126,16 +126,16 @@ runVulkanProgram App{ .. } = runProgram $ runResource $ do
     nextSems <- newMVar []
 
     -- The code below re-runs when the swapchain was re-created
-    asyncRedo $ \redoWithNewSwapchain -> runResource $ do
+    asyncRedo $ \redoWithNewSwapchain -> region $ do
       logInfo "New thread: Creating things that depend on the swapchain.."
       -- need this for delayed destruction of the old swapchain if it gets replaced
-      swapchainSlot <- createSwapchainSlot dev
+      swapchainSlot <- auto $ createSwapchainSlot dev
       putMVar swapchainSlot =<< takeMVar nextSwapchainSlot
       swapInfo <- readIORef swapInfoRef
       -- TODO waiting for vulkan spec clarification: acquiredness of images after swapchain replacement
       liftIO $ changeNumTokens swapImgTokens (swapMaxAcquired swapInfo)
 
-      (framebuffers, nextAppSems) <- appNewSwapchain appState swapInfo
+      (framebuffers, nextAppSems) <- auto $ appNewSwapchain appState swapInfo
       sems <- takeMVar nextSems
       putMVar nextSems (sems <> nextAppSems)
 

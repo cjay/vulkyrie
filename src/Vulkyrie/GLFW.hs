@@ -29,7 +29,7 @@ initGLFWWindow :: Int -- ^ Window width. Ignored if fullscreen.
                -> Bool -- ^ fullscreen
                -> IORef Bool -- ^ Window size change signalling
                -> Resource GLFW.Window
-initGLFWWindow winWidth winHeight name fullscreen windowSizeChanged = do
+initGLFWWindow winWidth winHeight name fullscreen windowSizeChanged = Resource $ do
     -- even if something bad happens, we need to terminate GLFW
     allocResource
       (const $ liftIO GLFW.terminate >> logInfo "Terminated GLFW.")
@@ -100,10 +100,10 @@ glfwWaitMinimized win = liftIO go where
     when (x == 0 && y == 0) go
 
 createGLFWVulkanInstance :: String -> [String] -> Resource VkInstance
-createGLFWVulkanInstance progName layers = do
+createGLFWVulkanInstance progName layers = Resource $ do
     -- get required extension names from GLFW
     glfwReqExts <- liftIO GLFW.getRequiredInstanceExtensions
-    createVulkanInstance
+    auto $ createVulkanInstance
       progName
       "My perfect Haskell engine"
       glfwReqExts

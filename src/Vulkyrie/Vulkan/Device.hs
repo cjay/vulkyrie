@@ -188,7 +188,7 @@ createGraphicsDevice :: VkPhysicalDevice
                      -> VkSurfaceKHR
                      -> Resource (VkDevice, DevQueues)
 createGraphicsDevice pdev surf
-  | extensions <- [VK_KHR_SWAPCHAIN_EXTENSION_NAME] = do
+  | extensions <- [VK_KHR_SWAPCHAIN_EXTENSION_NAME] = Resource $ do
   -- check physical device extensions
 
   -- find an appropriate queue family
@@ -204,7 +204,7 @@ createGraphicsDevice pdev surf
           fam:_ -> (fam, fam)
           [] -> (head gfxFams, head presFams)
       qFamIndices = if gfxFamIdx == presFamIdx then [gfxFamIdx] else [gfxFamIdx, presFamIdx]
-  famIndsPtr <- newArrayRes qFamIndices
+  famIndsPtr <- auto $ newArrayRes qFamIndices
 
   let qcInfoMap = Map.fromList $ flip fmap qFamIndices $ \qFamIdx -> (qFamIdx, qCreateInfo qFamIdx)
         where qCreateInfo qFamIdx = createVk @VkDeviceQueueCreateInfo

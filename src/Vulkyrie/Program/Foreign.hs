@@ -142,18 +142,18 @@ asListVk action = alloca $ \counterPtr -> do
 
 mallocArrayRes :: Storable a => Int -> Resource (Ptr a)
 mallocArrayRes n =
-  allocResource
+  elementaryResource
     Foreign.free
     (Foreign.mallocArray n)
 {-# INLINE mallocArrayRes #-}
 
 mallocRes :: Storable a => Resource (Ptr a)
-mallocRes = allocResource Foreign.free Foreign.malloc
+mallocRes = elementaryResource Foreign.free Foreign.malloc
 {-# INLINE mallocRes #-}
 
 newArrayRes :: Storable a => [a] -> Resource (Ptr a)
 newArrayRes xs =
-  allocResource
+  elementaryResource
     Foreign.free
     (Foreign.newArray xs)
 {-# INLINE newArrayRes #-}

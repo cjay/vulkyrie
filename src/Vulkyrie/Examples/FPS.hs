@@ -76,7 +76,7 @@ viewProjMatrix extent (yaw, pitch) = do
 
 
 loadShaders :: EngineCapability -> Resource [VkPipelineShaderStageCreateInfo]
-loadShaders EngineCapability{ dev } = do
+loadShaders EngineCapability{ dev } = Resource $ do
     vertSM <- auto $ shaderModuleFile dev "shaders/triangle.vert.spv"
     fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
 
@@ -97,7 +97,7 @@ loadShaders EngineCapability{ dev } = do
 
 
 makePipelineLayouts :: VkDevice -> Resource (VkDescriptorSetLayout, VkPipelineLayout)
-makePipelineLayouts dev = do
+makePipelineLayouts dev = Resource $ do
   frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
   -- TODO automate bind ids
   materialDSL <- auto $ createDescriptorSetLayout dev [samplerBinding 0]
@@ -121,7 +121,7 @@ makePipelineLayouts dev = do
 
 
 loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Resource Assets
-loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
+loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = Resource $ do
   let vertices = rectVertices
       indices = rectIndices
       indexCount = dfLen indices
@@ -132,7 +132,7 @@ loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = do
   (indexBufReady, indexBuffer) <- auto $ createIndexBuffer cap indices
   let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
   (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
-    (createTextureInfo cap False) texturePaths
+    (auto . createTextureInfo cap False) texturePaths
 
   loadEvents <- newMVar $ textureReadyEvents <> [vertexBufReady, indexBufReady]
 
@@ -158,13 +158,13 @@ prepareRender :: EngineCapability
               -> [VkPipelineShaderStageCreateInfo]
               -> VkPipelineLayout
               -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
-prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = do
+prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = Resource $ do
   let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
   msaaSamples <- getMaxUsableSampleCount pdev
   depthFormat <- findDepthFormat pdev
 
-  swapImgViews <- auto $
-    mapM (\image -> createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
+  swapImgViews <-
+    mapM (\image -> auto $ createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
   renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
   graphicsPipeline
     <- auto $ createGraphicsPipeline dev swapExtent
@@ -250,7 +250,7 @@ makeWorld MyAppState{ assets } = do
   if allDone then return objs else return []
 
 myAppNewWindow :: GLFW.Window -> Resource WindowState
-myAppNewWindow window = do
+myAppNewWindow window = Resource $ do
   liftIO $ GLFW.setCursorInputMode window GLFW.CursorInputMode'Disabled
   rawSupported <- liftIO $ GLFW.rawMouseMotionSupported
   if rawSupported
@@ -278,19 +278,19 @@ myAppMainThreadHook WindowState {..} = do
   return ()
 
 myAppStart :: WindowState -> EngineCapability -> Resource MyAppState
-myAppStart winState cap@EngineCapability{ dev } = do
-  shaderStages <- loadShaders cap
-  (materialDSL, pipelineLayout) <- makePipelineLayouts dev
+myAppStart winState cap@EngineCapability{ dev } = Resource $ do
+  shaderStages <- auto $ loadShaders cap
+  (materialDSL, pipelineLayout) <- auto $ makePipelineLayouts dev
   -- TODO beware of automatic resource lifetimes when making assets dynamic
-  assets <- loadAssets cap materialDSL
+  assets <- auto $ loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
   inputMutex <- newMVar ()
   return $ MyAppState{..}
 
 myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
-myAppNewSwapchain MyAppState{..} swapInfo = do
+myAppNewSwapchain MyAppState{..} swapInfo = Resource $ do
   _ <- tryTakeMVar renderContextVar
-  (framebuffers, nextSems, renderContext) <- prepareRender cap swapInfo shaderStages pipelineLayout
+  (framebuffers, nextSems, renderContext) <- auto $ prepareRender cap swapInfo shaderStages pipelineLayout
   putMVar renderContextVar renderContext
   return (framebuffers, nextSems)
 
@@ -322,7 +322,7 @@ myAppRenderFrame appState@MyAppState{..} framebuffer waitSemsWithStages signalSe
   putMVar inputMutex ()
 
   viewProjTransform <- viewProjMatrix (extent renderContext) lookDir
-  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf ->
+  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf -> Resource $
     recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 

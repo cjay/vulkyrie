@@ -28,7 +28,7 @@ pushConstantRange stageFlags offset size = createVk
 createPipelineLayout :: VkDevice
                      -> [VkDescriptorSetLayout]
                      -> [VkPushConstantRange]
-                     -> Resource VkPipelineLayout
+                     -> MetaResource VkPipelineLayout
 createPipelineLayout dev descrSetLayouts pushConstRanges = do
   let plCreateInfo = createVk @VkPipelineLayoutCreateInfo
         $  set @"sType" VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
@@ -37,7 +37,7 @@ createPipelineLayout dev descrSetLayouts pushConstRanges = do
         -- the sequence of descr set layouts determines the set numbers
         &* setListCountAndRef @"setLayoutCount" @"pSetLayouts" descrSetLayouts   -- Optional
         &* setListCountAndRef @"pushConstantRangeCount" @"pPushConstantRanges" pushConstRanges -- Optional
-  resource $ metaResource
+  metaResource
     (\pl -> liftIO $ vkDestroyPipelineLayout dev pl VK_NULL) $
     withVkPtr plCreateInfo $ \plciPtr -> allocaPeek $
       runVk . vkCreatePipelineLayout dev plciPtr VK_NULL

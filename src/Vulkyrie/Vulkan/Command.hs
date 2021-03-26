@@ -105,12 +105,12 @@ postWithAndRetWait :: CommandCapability
                    -> (VkCommandBuffer -> Resource a)
                    -> Prog r a
 postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action =
-  runResource $ do
+  region $ do
     managedCmdBuf <- acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
     let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
     withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
-    result <- action cmdBuf
+    result <- auto $ action cmdBuf
     runVk $ vkEndCommandBuffer cmdBuf
 
     queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
@@ -135,12 +135,12 @@ postWithAndRet cmdCap queue waitSemsWithStages signalSems action = do
   takeMVar retBox
 
   where
-  run retBox = runResource $ do
+  run retBox = region $ do
     managedCmdBuf <- acquireCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
     let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
     withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
-    result <- action cmdBuf
+    result <- auto $ action cmdBuf
     runVk $ vkEndCommandBuffer cmdBuf
 
     queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
@@ -183,7 +183,7 @@ forkWithCmdCap :: CommandPoolPool
                -> (forall r'. CommandCapability -> Prog r' ())
                -> Prog r ThreadId
 forkWithCmdCap cmdPoolPool action =
-  forkIO $ runResource $ do
+  forkIO $ region $ do
     cmdCap <- auto $ metaCommandCapability cmdPoolPool
     action cmdCap
 
@@ -230,9 +230,9 @@ poolSwapOpportunity CommandCapability{..} = do
   writeIORef currentPool newPool
 
 -- | Resource for automatic acquire and release of command buffers
-resCommandBuffer :: CommandCapability -> Resource ManagedCommandBuffer
+resCommandBuffer :: CommandCapability -> MetaResource ManagedCommandBuffer
 resCommandBuffer cap =
-  resource $ metaResource
+  metaResource
     releaseCommandBuffer
     (acquireCommandBuffer cap)
 

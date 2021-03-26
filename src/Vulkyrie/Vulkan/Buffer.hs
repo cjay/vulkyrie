@@ -36,8 +36,8 @@ createBuffer EngineCapability{dev, memPool} bSize bUsage bMemPropFlags =
             withVkPtr bufferInfo $ \biPtr -> allocaPeek $
               runVk . vkCreateBuffer dev biPtr VK_NULL
     -- releasing the buffer before releasing the memory that is bound to it
-    in inverseDestruction $ do
-      buf <- resource metaBuffer
+    in Resource $ inverseDestruction $ do
+      buf <- auto metaBuffer
       memLoc <- allocBindBufferMem memPool bMemPropFlags buf
       return (memLoc, buf)
 

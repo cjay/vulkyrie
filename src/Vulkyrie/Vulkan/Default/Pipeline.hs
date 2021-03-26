@@ -151,7 +151,7 @@ createGraphicsPipeline
             )
 
     -- finally, create pipeline!
-  in do
+  in Resource $ do
     let gpCreateInfo = createVk @VkGraphicsPipelineCreateInfo
           $  set @"sType" VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO
           &* set @"pNext" VK_NULL
@@ -172,7 +172,7 @@ createGraphicsPipeline
           &* set @"basePipelineHandle" VK_NULL_HANDLE
           &* set @"basePipelineIndex" (-1)
 
-    resource $ metaResource
+    auto $ metaResource
       (\gp -> liftIO $ vkDestroyPipeline dev gp VK_NULL) $
       withVkPtr gpCreateInfo $ \gpciPtr -> allocaPeek $
         runVk . vkCreateGraphicsPipelines dev VK_NULL 1 gpciPtr VK_NULL

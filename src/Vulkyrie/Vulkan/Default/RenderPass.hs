@@ -30,11 +30,11 @@ createPrivateAttachments :: EngineCapability
                          -> VkFormat
                          -> VkSampleCountFlagBits
                          -> Resource ([(VkSemaphore, VkPipelineStageBitmask a)], [VkImageView])
-createPrivateAttachments cap extent imgFormat samples = do
+createPrivateAttachments cap extent imgFormat samples = Resource $ do
   let msaaOn = samples /= VK_SAMPLE_COUNT_1_BIT
   fmap unzip . sequence $
-    [createDepthAttImgView cap extent samples]
-    <> [createColorAttImgView cap imgFormat extent samples | msaaOn]
+    [auto $ createDepthAttImgView cap extent samples]
+    <> [auto $ createColorAttImgView cap imgFormat extent samples | msaaOn]
 
 -- | Attachment order: Private attachments first, followed by one color output attachment having 1 sample.
 createRenderPass :: VkDevice
@@ -42,7 +42,7 @@ createRenderPass :: VkDevice
                  -> VkFormat
                  -> VkSampleCountFlagBits
                  -> VkImageLayout
-                 -> Resource VkRenderPass
+                 -> MetaResource VkRenderPass
 createRenderPass dev colorFormat depthFormat samples colorOutFinalLayout =
   let msaaOn = samples /= VK_SAMPLE_COUNT_1_BIT
       finalColorLayout =
@@ -133,7 +133,7 @@ createRenderPass dev colorFormat depthFormat samples colorOutFinalLayout =
         &* set @"dependencyCount" 1
         &* setVkRef @"pDependencies" dependency
 
-  in resource $ metaResource
+  in metaResource
        (\rp -> liftIO $ vkDestroyRenderPass dev rp VK_NULL) $
        withVkPtr rpCreateInfo $ \rpciPtr -> allocaPeek $
          runVk . vkCreateRenderPass dev rpciPtr VK_NULL

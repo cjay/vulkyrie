@@ -24,9 +24,9 @@ createVulkanInstance :: String -- ^ application name
                         --   or from GLFW
                      -> [String]
                         -- ^ required layer names
-                     -> Resource VkInstance
+                     -> MetaResource VkInstance
 createVulkanInstance progName engineName extensions layers =
-  resource $ metaResource destroyVulkanInstance $ do
+  metaResource destroyVulkanInstance $ do
 
     extStrings <- liftIO $ mapM (fmap pack . peekCString) extensions
     logDebug $ Text.unlines

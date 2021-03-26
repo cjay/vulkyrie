@@ -16,9 +16,9 @@ createFramebuffer :: VkDevice
                   -> VkRenderPass
                   -> VkExtent2D
                   -> [VkImageView]
-                  -> Resource VkFramebuffer
+                  -> MetaResource VkFramebuffer
 createFramebuffer dev renderPass extent attachments =
-  resource $ metaResource
+  metaResource
     (\fb -> liftIO $ vkDestroyFramebuffer dev fb VK_NULL)
     (let fbci = createVk @VkFramebufferCreateInfo
             $  set @"sType" VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO

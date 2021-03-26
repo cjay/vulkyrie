@@ -25,8 +25,8 @@ import           Vulkyrie.Vulkan.Device
 
 data SyncMode = VSyncTriple | VSync | NoSync deriving (Eq, Ord, Show)
 
-createSurface :: VkInstance -> GLFW.Window -> Resource VkSurfaceKHR
-createSurface vkInstance window = resource $
+createSurface :: VkInstance -> GLFW.Window -> MetaResource VkSurfaceKHR
+createSurface vkInstance window =
   metaResource (\s -> liftIO $ vkDestroySurfaceKHR vkInstance s VK_NULL) $
     allocaPeek $
       runVk . GLFW.createWindowSurface vkInstance window VK_NULL
@@ -170,6 +170,6 @@ destroySwapchainIfNecessary dev slot = do
 -- TODO: this is a leaky abstraction. Improve after reworking resource management.
 createSwapchainSlot :: VkDevice -> Resource (MVar (Maybe VkSwapchainKHR))
 createSwapchainSlot dev =
-  allocResource
+  elementaryResource
     (destroySwapchainIfNecessary dev)
     newEmptyMVar

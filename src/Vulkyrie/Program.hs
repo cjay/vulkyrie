@@ -74,6 +74,7 @@ withResourceContext rctx (Prog prog) = Prog $ do
   ctx <- ask
   lift $ runReaderT prog ctx{ resourceContext = rctx }
 
+-- | For registering a resource with a different (usually enclosing) runResource scope.
 askRegion :: Prog r (Prog r a -> Prog r' a)
 askRegion = withResourceContext <$> askResourceContext
 

@@ -77,11 +77,11 @@ data Object = Object
 
 
 bindDescrSet :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> DescrBindInfo -> Prog r ()
-bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = runResource $ do
-  descrSetPtr <- newArrayRes [descrSet]
+bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = region $ do
+  descrSetPtr <- auto $ newArrayRes [descrSet]
   let descrSetCnt = 1
   let dynOffCnt = fromIntegral $ length dynamicOffsets
-  dynOffPtr <- newArrayRes dynamicOffsets
+  dynOffPtr <- auto $ newArrayRes dynamicOffsets
   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
     descrSetId descrSetCnt descrSetPtr dynOffCnt dynOffPtr
 
@@ -104,15 +104,15 @@ recordObject :: VkPipelineLayout -> VkCommandBuffer -> Mat44f -> Object -> Prog 
 recordObject pipelineLayout cmdBuf transform Object{..} = do
   -- not yet:
   -- liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
-  runResource $ do
+  region $ do
     let BufferLoc{..} = vertexBufferLoc
-    vertexBufArr <- newArrayRes [buffer]
-    vertexOffArr <- newArrayRes [bufferOffset]
+    vertexBufArr <- auto $ newArrayRes [buffer]
+    vertexOffArr <- auto $ newArrayRes [bufferOffset]
     liftIO $ vkCmdBindVertexBuffers cmdBuf
       0 1 -- first binding, binding count
       vertexBufArr vertexOffArr
 
-  runResource $ do
+  region $ do
     let BufferLoc{..} = indexBufferLoc
     liftIO $ vkCmdBindIndexBuffer cmdBuf buffer bufferOffset VK_INDEX_TYPE_UINT32
 
@@ -148,7 +148,7 @@ recordAll
   -- basic drawing commands
   liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
 
-  -- runResource $ do
+  -- region $ do
   --   frameDsPtr <- newArrayRes [frameDescrSet]
   --   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
   --     -- first set, set count, sets, dyn offset count, dyn offsets
