@@ -31,7 +31,7 @@ initGLFWWindow :: Int -- ^ Window width. Ignored if fullscreen.
                -> Resource GLFW.Window
 initGLFWWindow winWidth winHeight name fullscreen windowSizeChanged = Resource $ do
     -- even if something bad happens, we need to terminate GLFW
-    allocResource
+    autoDestroyCreate
       (const $ liftIO GLFW.terminate >> logInfo "Terminated GLFW.")
       (liftIO GLFW.init >>= flip unless (throwString "Failed to initialize GLFW."))
 
@@ -43,7 +43,8 @@ initGLFWWindow winWidth winHeight name fullscreen windowSizeChanged = Resource $
     liftIO . GLFW.windowHint $ WindowHint'ClientAPI ClientAPI'NoAPI
     liftIO . GLFW.windowHint $ WindowHint'Resizable True
 
-    allocResource
+    -- TODO that's a bit complex for an elementary creation. factor out stuff?
+    autoDestroyCreate
       ( \window -> do
           liftIO (GLFW.destroyWindow window)
           logDebug "Closed GLFW window."

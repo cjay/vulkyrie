@@ -232,7 +232,7 @@ createGraphicsDevice pdev surf
         &* setVkRef @"pEnabledFeatures" pdevFeatures
 
   -- try to create a device
-  dev <- allocResource (\dev -> liftIO $ vkDestroyDevice dev VK_NULL) $
+  dev <- autoDestroyCreate (\dev -> liftIO $ vkDestroyDevice dev VK_NULL) $
     withVkPtr devCreateInfo $ \dciPtr ->
       allocaPeek $ runVk . vkCreateDevice pdev dciPtr VK_NULL
 

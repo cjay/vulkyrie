@@ -19,7 +19,7 @@ module Vulkyrie.Resource
   , Resource (..)
   , region
   , onDestroy
-  , allocResource
+  , autoDestroyCreate
   , elementaryResource
   , inverseDestruction
   , cleanup
@@ -29,14 +29,14 @@ import           Data.Either
 import           Data.Typeable
 import           UnliftIO.Concurrent
 import UnliftIO.Exception
-    ( SomeException, Exception, catch, finally, mask, throwIO, try )
+    ( SomeException, Exception, catch, finally, mask, mask_, throwIO, try )
 import           UnliftIO.IORef
 
 import           Data.List.NonEmpty (NonEmpty(..))
 import           Vulkyrie.Program
 
 class GenericResource res a where
-  -- | Creates a Program.Resource that handles automatic deallocation.
+  -- | Creates an action for use inside of region (see region below)
   auto :: res a -> Prog ResourceContext a
   -- | Creates a destructor action along with allocating the resource.
   --
@@ -68,7 +68,7 @@ data MetaResource a = MetaResource
   , create :: forall r. Prog r a
   }
 
--- | Creates a MetaResource. Drop in replacement for Vulkyrie.Program.elementaryResource.
+-- | Creates a MetaResource
 metaResource :: (forall r. a -> Prog r ()) -- ^ destroy resource
              -> (forall r. Prog r a)        -- ^ create resource
              -> MetaResource a
@@ -76,10 +76,10 @@ metaResource destroy create = MetaResource {..}
 {-# INLINE metaResource #-}
 
 instance GenericResource MetaResource a where
-  auto MetaResource{..} = allocResource destroy create
+  auto MetaResource{..} = autoDestroyCreate destroy create
   {-# INLINE auto #-}
 
-  manual restore MetaResource{..} = manual restore (allocResource destroy create)
+  manual restore MetaResource{..} = manual restore (autoDestroyCreate destroy create)
   {-# INLINE manual #-}
 
 
@@ -160,24 +160,25 @@ onDestroy prog = do
   modifyIORef' destructorsVar (prog :)
 {-# INLINE onDestroy #-}
 
--- TODO maybe masking during allocation should be default. bracket does it etc
--- | Exception-safe. Allows async exceptions during allocation, so it's fine if
--- the allocation is a complex Resource.
-allocResource :: (forall r. a -> Prog r ()) -- ^ free resource
-              -> (forall r. Prog r a) -- ^ allocate resource
-              -> Prog ResourceContext a
-allocResource free alloc =
-  -- using unwrapped Resource to get MonadUnliftIO for mask
-  mask $ \restore -> do
-    a <- restore $ alloc
+-- | Exception-safe allocation of an elementary resource.
+--
+-- Exceptions are also masked during allocation, like with bracket and friends.
+-- Do not use this for composite resources.
+autoDestroyCreate :: (forall r. a -> Prog r ()) -- ^ free resource
+                  -> (forall r. Prog r a) -- ^ allocate resource
+                  -> Prog ResourceContext a
+autoDestroyCreate free alloc =
+  mask_ $ do
+    a <- alloc
     ResourceContext{ destructorsVar } <- askResourceContext
     modifyIORef' destructorsVar (free a :)
     return a
 
+-- | Resource version of autoDestroyCreate
 elementaryResource :: (forall r. a -> Prog r ()) -- ^ free resource
                    -> (forall r. Prog r a) -- ^ allocate resource
                    -> Resource a
-elementaryResource free alloc = Resource $ allocResource free alloc
+elementaryResource free alloc = Resource $ autoDestroyCreate free alloc
 
 data CleanupException = CleanupException
   { exceptionCausingCleanup :: Maybe SomeException
