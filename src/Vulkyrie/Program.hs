@@ -34,14 +34,13 @@ import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.IO.Unlift
 import           Control.Monad.Logger.CallStack hiding (logDebug)
-import qualified Control.Monad.Logger.CallStack as Logger
+import qualified Control.Monad.Logger as Logger
 import           Control.Monad.Reader.Class
 import           Control.Monad.Trans (lift)
 import           Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import           Data.Text
-import           Data.Typeable
-import           GHC.Stack
-import           Graphics.Vulkan.Core_1_0
+import           GHC.Stack ( HasCallStack, callStack )
+import           Graphics.Vulkan.Core_1_0 ( VkResult(VK_SUCCESS) )
 import           System.Exit
 import           UnliftIO.Concurrent
 import           UnliftIO.Exception
@@ -74,7 +73,7 @@ withResourceContext rctx (Prog prog) = Prog $ do
   ctx <- ask
   lift $ runReaderT prog ctx{ resourceContext = rctx }
 
--- | For registering a resource with a different (usually enclosing) runResource scope.
+-- | For registering a resource with a different (usually enclosing) region scope.
 askRegion :: Prog r (Prog r a -> Prog r' a)
 askRegion = withResourceContext <$> askResourceContext
 
@@ -110,7 +109,9 @@ runAndCatchVk action handler = do
 logDebug :: (HasCallStack, MonadLogger m) => Text -> m ()
 logDebug =
   if isDEVELOPMENT
-  then Logger.logDebug
+  -- Can't use Control.Monad.Logger.CallStack.logDebug here because then the
+  -- location info in the log message refers to this wrapper function.
+  then Logger.logDebugCS callStack
   else const (pure ())
 {-# INLINE logDebug #-}
 
