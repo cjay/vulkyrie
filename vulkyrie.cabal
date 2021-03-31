@@ -59,27 +59,21 @@ library
                         Vulkyrie.Vulkan.UniformBufferObject
                         Vulkyrie.Vulkan.VertexBuffer
     build-depends:      apecs
-                      , async
                       , base >= 4.9
                       , concurrent-extra
                       , containers
-                      , directory
                       , dimensions
                       , dlist
                       , dynamic-mvector
                       , easytensor
                       , easytensor-vulkan
-                      , filepath
                       , GLFW-b >= 3.3.0.0
                       , JuicyPixels
                       , monad-logger
                       , mtl
                       , primitive
-                      , process
-                      , resourcet
                       , template-haskell
                       , text
-                      , time
                       , transformers
                       , unliftio
                       , unliftio-core
@@ -96,7 +90,7 @@ library
                        , TypeApplications
     if flag(dev)
         cpp-options: -DDEVELOPMENT
-        ghc-options: -O0 -Wall -Wunused-packages
+        ghc-options: -O0 -Wall
     else
         ghc-options: -O2
 
