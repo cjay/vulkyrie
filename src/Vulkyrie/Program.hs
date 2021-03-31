@@ -24,7 +24,6 @@ module Vulkyrie.Program
       -- * Other
     , LoopControl (..)
     , loop
-    , asyncRedo
     , occupyThreadAndFork
     , touchIORef
     ) where
@@ -128,34 +127,6 @@ loop action = go
   where go = action >>= \case
           ContinueLoop -> go
           AbortLoop a -> return a
-
-data RedoSignal = SigRedo | SigExit deriving Eq
-
--- | Enables deferred deallocation.
-asyncRedo :: forall r. (Prog r () -> Prog r ()) -> Prog r ()
-asyncRedo prog = myThreadId >>= go where
-  go parentThreadId = do
-    control <- newEmptyMVar
-    let trigger = do
-          success <- tryPutMVar control SigRedo
-          unless success $ throwString "asyncRedo action tried to signal more than once"
-          yield
-    -- TODO use forkOS when using unsafe ffi calls?
-    -- don't need the threadId
-    void $ forkFinally
-      (do
-        prog trigger
-        -- When the redo-thread exits, we only need to signal exit to the parent
-        -- if nothing else has been signalled yet.
-        void $ tryPutMVar control SigExit
-      )
-      (\case
-        -- TODO proper thread management. at least wrap in some AsyncException.
-        Left exception -> throwTo parentThreadId exception
-        Right ()       -> return ()
-      )
-    sig <- takeMVar control
-    when (sig == SigRedo) (go parentThreadId)
 
 
 -- | For C functions that have to run in the main thread as long as the program runs.

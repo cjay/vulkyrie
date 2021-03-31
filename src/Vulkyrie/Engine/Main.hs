@@ -18,6 +18,7 @@ import           UnliftIO.Exception
 import           UnliftIO.IORef
 import           UnliftIO.MVar
 
+import           Vulkyrie.Concurrent
 import           Vulkyrie.Engine.Draw
 import           Vulkyrie.GLFW
 import           Vulkyrie.Program

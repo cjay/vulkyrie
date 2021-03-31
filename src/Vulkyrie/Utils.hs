@@ -1,11 +1,41 @@
 module Vulkyrie.Utils where
 
-import Control.Monad
-import           Numeric.DataFrame
+import Control.Exception (Exception, catch, throwIO)
+import Control.Monad ( forM_ )
+import Control.Monad.IO.Unlift (MonadUnliftIO, withRunInIO)
+import Numeric.DataFrame ( scalar, Mat44f )
 import Control.Concurrent
+    ( forkFinally,
+      myThreadId,
+      newEmptyMVar,
+      newMVar,
+      putMVar,
+      takeMVar,
+      ThreadId,
+      MVar )
 import qualified Control.Monad.ST        as ST
 import qualified Numeric.DataFrame.ST    as ST
+import Control.Monad.IO.Class (MonadIO, liftIO)
 
+-- | Unlifted version of Control.Exception.catch
+--
+-- UnliftIO.Exception.catch can't catch async exceptions, and the unliftio
+-- library has no way to do it on purpose. We need it for resource cleanup
+-- before either rethrowing it or wrapping it in a CleanupException.
+{-# INLINE catchAsync #-}
+catchAsync
+  :: (MonadUnliftIO m, Exception e)
+  => m a -- ^ action
+  -> (e -> m a) -- ^ handler
+  -> m a
+catchAsync f g = withRunInIO $ \run -> run f `Control.Exception.catch` \e -> run (g e)
+
+-- | Unlifted version of Control.Exception.throwIO
+--
+-- Needed to rethrow async exceptions during resource cleanup.
+{-# INLINE throwAsyncIO #-}
+throwAsyncIO :: (MonadIO m, Exception e) => e -> m a
+throwAsyncIO = liftIO . Control.Exception.throwIO
 
 -- | Like forkIO, but prints when the thread starts and ends, and tells if it ends with an exception
 debugForkIO :: IO () -> IO ThreadId

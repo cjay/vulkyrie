@@ -7,6 +7,7 @@ module Vulkyrie.Resource
   ( GenericResource
   , auto
   , manual
+  , auto_
 
   , MetaResource
   , destroy
@@ -16,24 +17,28 @@ module Vulkyrie.Resource
   , composeResource
 
     -- * Resource Monad
+  , ResourceContext
   , Resource (..)
   , region
+  , regionResource
   , onDestroy
   , autoDestroyCreate
   , elementaryResource
   , inverseDestruction
-  , cleanup
   ) where
 
+import           Control.Monad
 import           Data.Either
+import           Data.List.NonEmpty (NonEmpty(..))
 import           Data.Typeable
-import           UnliftIO.Concurrent
-import UnliftIO.Exception
-    ( SomeException, Exception, catch, finally, mask, mask_, throwIO, try )
+import           UnliftIO.Exception
+    ( SomeException, Exception(..), finally, mask, mask_, try, throwIO )
 import           UnliftIO.IORef
 
-import           Data.List.NonEmpty (NonEmpty(..))
 import           Vulkyrie.Program
+import           Vulkyrie.Utils (catchAsync, throwAsyncIO)
+import GHC.Stack (HasCallStack, prettyCallStack, callStack)
+import Data.Text (pack, Text)
 
 class GenericResource res a where
   -- | Creates an action for use inside of region (see region below)
@@ -42,6 +47,9 @@ class GenericResource res a where
   --
   --   Has to be called within a masked scope. Pass the restore, see UnliftIO.Exception.mask.
   manual :: (forall b. Prog r b -> Prog r b) -> res a -> Prog r (Prog r' (), a)
+
+auto_ :: GenericResource res a => res a -> Prog ResourceContext ()
+auto_ = void . auto
 
 instance GenericResource (Prog ResourceContext) a where
   auto = id
@@ -52,8 +60,8 @@ instance GenericResource (Prog ResourceContext) a where
     let ResourceContext{ destructorsVar } = ctx
     a <-
       restore (withResourceContext ctx res)
-        `catch` (\e -> readIORef destructorsVar >>= withResourceContext () . cleanup (Just e) >> throwIO e)
-    return (readIORef destructorsVar >>= withResourceContext () . cleanup Nothing, a)
+        `catchAsync` (\e -> readIORef destructorsVar >>= withResourceContext () . cleanup "manual" (Just e) >> throwAsyncIO e)
+    return (readIORef destructorsVar >>= withResourceContext () . cleanup "manual" Nothing, a)
   {-# INLINE manual #-}
 
 -- | A MetaResource is only meant to correctly destroy resources that it created itself.
@@ -118,13 +126,61 @@ makeResourceContext = do
   return ResourceContext{..}
 
 -- | region establishes a scope for automatic resource destruction
-region :: Prog ResourceContext a -> Prog r a
+region :: HasCallStack => Prog ResourceContext a -> Prog r a
 region res = withResourceContext () $ do
+  let regionSrc = pack $ prettyCallStack callStack
   ctx@ResourceContext{ destructorsVar } <- makeResourceContext
   mask $ \restore -> do
     a <- restore (withResourceContext ctx res)
-      `catch` (\e -> readIORef destructorsVar >>= cleanup (Just e) >> throwIO e)
-    readIORef destructorsVar >>= cleanup Nothing
+      `catchAsync` (\e -> readIORef destructorsVar >>= cleanup regionSrc (Just e) >> throwAsyncIO e)
+    readIORef destructorsVar >>= cleanup regionSrc Nothing
+    return a
+
+regionResource :: HasCallStack => Resource ResourceContext
+regionResource = Resource $ do
+  let regionSrc = pack $ prettyCallStack callStack
+  autoDestroyCreate
+    (\ResourceContext{ destructorsVar } ->
+      withResourceContext () $ readIORef destructorsVar >>= cleanup regionSrc Nothing)
+    makeResourceContext
+
+data CleanupException = CleanupException
+  { regionSrc :: Text
+  , exceptionCausingCleanup :: Maybe SomeException
+  , exceptionsDuringCleanup :: NonEmpty SomeException
+  }
+  deriving (Show, Typeable)
+instance Exception CleanupException
+
+-- | Runs the given destructors within a masked context.
+cleanup :: Text -> Maybe SomeException -> [Prog r ()] -> Prog r ()
+cleanup regionSrc origException destructors =
+  lefts <$> mapM try destructors >>= \case
+    e : es -> throwIO (CleanupException regionSrc origException (e :| es))
+    [] -> return ()
+
+-- | Exception-safe allocation of an elementary resource.
+--
+-- Exceptions are also masked during allocation, like with bracket and friends.
+-- Do not use this for composite resources.
+autoDestroyCreate :: (forall r. a -> Prog r ()) -- ^ free resource
+                  -> (forall r. Prog r a) -- ^ allocate resource
+                  -> Prog ResourceContext a
+autoDestroyCreate free alloc =
+  mask_ $ do
+    a <- alloc
+    ResourceContext{ destructorsVar } <- askResourceContext
+    modifyIORef' destructorsVar (free a :)
+    return a
+
+autoDestroyCreateWithUnmask :: (forall r. a -> Prog r ()) -- ^ free resource
+                            -> (forall r. (Prog r b -> Prog r b) -> Prog r a) -- ^ allocate resource
+                            -> Prog ResourceContext a
+autoDestroyCreateWithUnmask free alloc = do
+  ResourceContext{ destructorsVar } <- askResourceContext
+  mask $ \unmask -> do
+    a <- alloc unmask
+    modifyIORef' destructorsVar (free a :)
     return a
 
 -- TODO: this might behave unexpectedly with nested resources, as all destructor calls are reversed, even within nested ones
@@ -160,41 +216,8 @@ onDestroy prog = do
   modifyIORef' destructorsVar (prog :)
 {-# INLINE onDestroy #-}
 
--- | Exception-safe allocation of an elementary resource.
---
--- Exceptions are also masked during allocation, like with bracket and friends.
--- Do not use this for composite resources.
-autoDestroyCreate :: (forall r. a -> Prog r ()) -- ^ free resource
-                  -> (forall r. Prog r a) -- ^ allocate resource
-                  -> Prog ResourceContext a
-autoDestroyCreate free alloc =
-  mask_ $ do
-    a <- alloc
-    ResourceContext{ destructorsVar } <- askResourceContext
-    modifyIORef' destructorsVar (free a :)
-    return a
-
 -- | Resource version of autoDestroyCreate
 elementaryResource :: (forall r. a -> Prog r ()) -- ^ free resource
                    -> (forall r. Prog r a) -- ^ allocate resource
                    -> Resource a
 elementaryResource free alloc = Resource $ autoDestroyCreate free alloc
-
-data CleanupException = CleanupException
-  { exceptionCausingCleanup :: Maybe SomeException
-  , exceptionsDuringCleanup :: NonEmpty SomeException
-  }
-  deriving (Show, Typeable)
-instance Exception CleanupException
-
-cleanup :: Maybe SomeException -> [Prog r ()] -> Prog r ()
-cleanup origException destructors =
-  lefts <$> mapM try destructors >>= \case
-    e : es -> throwIO (CleanupException origException (e :| es))
-    [] -> return ()
-
-
--- TODO letting owning thread know that child thread exited?
--- TODO this can't clean up threads recursively
-threadRes :: (forall r. Prog r ()) -> Resource ThreadId
-threadRes prog = elementaryResource killThread (forkIO prog)
