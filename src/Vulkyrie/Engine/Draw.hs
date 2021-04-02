@@ -38,7 +38,7 @@ type RenderFun =
 
 data RenderData
   = RenderData
-  { swapchainVar              :: MVar (Maybe VkSwapchainKHR)
+  { swapchainVar              :: MVar VkSwapchainKHR
     -- ^ Swapchain in MVar to synchronize host access for vkAcquireNextImageKHR
   , presentQueue              :: ManagedPresentQueue
     -- ^ Presentation queue. Not necessarily the same as the graphics queue(s).
@@ -65,25 +65,25 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
     imageAvailSem <- head <$> acquireSemaphores semPool 1
 
     liftIO $ acquireToken swapImgTokens
-    swapchain <- takeMVar swapchainVar >>= \case
-      Just sc -> return sc
-      Nothing -> error "unexpected Nothing in swapchain slot"
-    -- Acquiring an image from the swapchain
-    -- Can throw VK_ERROR_OUT_OF_DATE_KHR
-    -- TODO: validation layer complaint about too many acquired images is
-    -- probably not justified, waiting for vulkan spec to be clarified
-    imgIndex <- allocaPeek $ \imgIndexPtr -> runAndCatchVk
-      ( vkAcquireNextImageKHR
-            dev swapchain maxBound
-            imageAvailSem VK_NULL_HANDLE imgIndexPtr
+    imgIndex <- bracket
+      (takeMVar swapchainVar)
+      (putMVar swapchainVar)
+      (\swapchain ->
+        -- Acquiring an image from the swapchain
+        -- Can throw VK_ERROR_OUT_OF_DATE_KHR
+        -- TODO: validation layer complaint about too many acquired images is
+        -- probably not justified, waiting for vulkan spec to be clarified
+        allocaPeek $ \imgIndexPtr -> runAndCatchVk
+          ( vkAcquireNextImageKHR
+                dev swapchain maxBound
+                imageAvailSem VK_NULL_HANDLE imgIndexPtr
+          )
+          ( \(err :: VulkanException) -> do
+              releaseSemaphores semPool [imageAvailSem]
+              liftIO $ releaseToken swapImgTokens
+              throwIO err
+          )
       )
-      ( \(err :: VulkanException) -> do
-          releaseSemaphores semPool [imageAvailSem]
-          putMVar swapchainVar (Just swapchain)
-          liftIO $ releaseToken swapImgTokens
-          throwIO err
-      )
-    putMVar swapchainVar (Just swapchain)
 
     nextSems_ <- takeMVar nextSems
     putMVar nextSems []

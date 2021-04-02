@@ -114,9 +114,12 @@ runVulkanProgram App{ .. } = runProgram $ region $ do
     beforeSwapchainCreation
     scsd <- querySwapchainSupport pdev vulkanSurface
 
-    nextSwapchainSlot <- auto $ createSwapchainSlot dev
-    (firstSwapchain, firstSwapInfo) <- createSwapchain dev scsd queues vulkanSurface syncMode Nothing
-    putMVar nextSwapchainSlot (Just firstSwapchain)
+    swapchainOwner <- auto resourceOwner
+    (firstSwapchain, firstSwapInfo) <-
+      withResourceOwner swapchainOwner $
+        auto $ createSwapchain dev scsd queues vulkanSurface syncMode Nothing
+    -- The MVar is used to hold the current swapchain and to synchronize access to it
+    swapchainVar <- newMVar firstSwapchain
     swapInfoRef <- newIORef firstSwapInfo
     swapImgTokens <- liftIO . newNatTokenVar $ swapMaxAcquired firstSwapInfo
 
@@ -129,9 +132,9 @@ runVulkanProgram App{ .. } = runProgram $ region $ do
     -- The code below re-runs when the swapchain was re-created
     asyncRedo $ \redoWithNewSwapchain -> region $ do
       logInfo "New thread: Creating things that depend on the swapchain.."
-      -- need this for delayed destruction of the old swapchain if it gets replaced
-      swapchainSlot <- auto $ createSwapchainSlot dev
-      putMVar swapchainSlot =<< takeMVar nextSwapchainSlot
+      -- Need this for deferred destruction of the swapchain if it gets replaced
+      -- by a new one
+      takeOwnership swapchainOwner
       swapInfo <- readIORef swapInfoRef
       -- TODO waiting for vulkan spec clarification: acquiredness of images after swapchain replacement
       liftIO $ changeNumTokens swapImgTokens (swapMaxAcquired swapInfo)
@@ -146,7 +149,7 @@ runVulkanProgram App{ .. } = runProgram $ region $ do
 
       shouldExit <- glfwMainLoop window $ do
         let rdata = RenderData
-              { swapchainVar = swapchainSlot
+              { swapchainVar
               , presentQueue
               , swapImgTokens
               , renderFinishedSems
@@ -182,13 +185,14 @@ runVulkanProgram App{ .. } = runProgram $ region $ do
           then do
             beforeSwapchainCreation
             logInfo "Recreating swapchain.."
-            swapchain <- takeMVar swapchainSlot
+            swapchain <- takeMVar swapchainVar
             -- This query should happen as close to createSwapchain as possible to
             -- get the latest changes to the window size.
             newScsd <- querySwapchainSupport pdev vulkanSurface
-            (newSwapchain, newSwapInfo) <- createSwapchain dev newScsd queues vulkanSurface syncMode swapchain
-            putMVar swapchainSlot swapchain
-            putMVar nextSwapchainSlot (Just newSwapchain)
+            (newSwapchain, newSwapInfo) <-
+              withResourceOwner swapchainOwner $
+                auto $ createSwapchain dev newScsd queues vulkanSurface syncMode (Just swapchain)
+            putMVar swapchainVar newSwapchain
             atomicWriteIORef swapInfoRef newSwapInfo
             redoWithNewSwapchain
             return $ AbortLoop ()

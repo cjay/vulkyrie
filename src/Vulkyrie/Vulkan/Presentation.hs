@@ -4,7 +4,6 @@ module Vulkyrie.Vulkan.Presentation
   , SyncMode (..)
   , createSurface
   , createSwapchain
-  , createSwapchainSlot
   ) where
 
 import           Data.Maybe
@@ -16,7 +15,6 @@ import           Graphics.Vulkan.Ext.VK_KHR_surface
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
 import           UnliftIO.Exception
-import           UnliftIO.MVar
 
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
@@ -98,8 +96,8 @@ createSwapchain :: VkDevice
                 -> VkSurfaceKHR
                 -> SyncMode
                 -> Maybe VkSwapchainKHR
-                -> Prog r (VkSwapchainKHR, SwapchainInfo)
-createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
+                -> Resource (VkSwapchainKHR, SwapchainInfo)
+createSwapchain dev scsd queues surf syncMode mayOldSwapchain = Resource $ do
 
   -- TODO not necessary every time I think
   surfFmt <- chooseSwapSurfaceFormat scsd
@@ -144,8 +142,11 @@ createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
         &* set @"clipped" VK_TRUE
         &* set @"oldSwapchain" (fromMaybe VK_NULL_HANDLE mayOldSwapchain)
 
-  swapchain <- withVkPtr swCreateInfo $ \swciPtr -> allocaPeek
-    $ runVk . vkCreateSwapchainKHR dev swciPtr VK_NULL
+  swapchain <-
+    autoDestroyCreate
+      (liftIO . flip (vkDestroySwapchainKHR dev) VK_NULL)
+      (withVkPtr swCreateInfo $ \swciPtr -> allocaPeek
+        $ runVk . vkCreateSwapchainKHR dev swciPtr VK_NULL)
 
   swapImgs <- asListVk
     $ \x -> runVk . vkGetSwapchainImagesKHR dev swapchain x
@@ -157,19 +158,3 @@ createSwapchain dev scsd queues surf syncMode mayOldSwapchain = do
         , swapMaxAcquired = length swapImgs - fromIntegral minIC + 1
         }
   return (swapchain, info)
-
-
-destroySwapchainIfNecessary :: VkDevice
-                            -> MVar (Maybe VkSwapchainKHR)
-                            -> Prog r ()
-destroySwapchainIfNecessary dev slot = do
-  maySwapchain <- takeMVar slot
-  liftIO $ sequence_ $ flip (vkDestroySwapchainKHR dev) VK_NULL <$> maySwapchain
-
-
--- TODO: this is a leaky abstraction. Improve after reworking resource management.
-createSwapchainSlot :: VkDevice -> Resource (MVar (Maybe VkSwapchainKHR))
-createSwapchainSlot dev =
-  elementaryResource
-    (destroySwapchainIfNecessary dev)
-    newEmptyMVar

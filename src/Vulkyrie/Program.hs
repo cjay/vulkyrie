@@ -24,7 +24,6 @@ module Vulkyrie.Program
       -- * Other
     , LoopControl (..)
     , loop
-    , occupyThreadAndFork
     , touchIORef
     ) where
 
@@ -40,8 +39,6 @@ import           Control.Monad.Trans.Reader (ReaderT, runReaderT)
 import           Data.Text
 import           GHC.Stack ( HasCallStack, callStack )
 import           Graphics.Vulkan.Core_1_0 ( VkResult(VK_SUCCESS) )
-import           System.Exit
-import           UnliftIO.Concurrent
 import           UnliftIO.Exception
 import           UnliftIO.IORef
 
@@ -127,22 +124,6 @@ loop action = go
   where go = action >>= \case
           ContinueLoop -> go
           AbortLoop a -> return a
-
-
--- | For C functions that have to run in the main thread as long as the program runs.
---
---   Caveat: The separate thread is not a bound thread, in contrast to the main thread.
---   Use `runInBoundThread` there if you need thread local state for C libs.
-occupyThreadAndFork :: Prog r () -- ^ the program to run in the main thread
-                    -> Prog r () -- ^ the program to run in a separate thread
-                    -> Prog r ()
-occupyThreadAndFork mainProg deputyProg = do
-  mainThreadId <- myThreadId
-  -- TODO proper thread management. at least wrap in some AsyncException.
-  void $ forkFinally deputyProg $ \case
-    Left exception -> throwTo mainThreadId exception
-    Right ()       -> throwTo mainThreadId ExitSuccess
-  mainProg
 
 
 -- | to make sure IORef writes arrive in other threads

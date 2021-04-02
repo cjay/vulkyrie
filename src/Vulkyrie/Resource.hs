@@ -20,7 +20,15 @@ module Vulkyrie.Resource
   , ResourceContext
   , Resource (..)
   , region
-  , regionResource
+
+  , ResourceOwner
+  , resourceOwner
+  , withResourceOwner
+  , takeOwnership
+
+  , resourceContext
+  , takeContextOwnership
+
   , onDestroy
   , autoDestroyCreate
   , elementaryResource
@@ -39,6 +47,7 @@ import           Vulkyrie.Program
 import           Vulkyrie.Utils (catchAsync, throwAsyncIO)
 import GHC.Stack (HasCallStack, prettyCallStack, callStack)
 import Data.Text (pack, Text)
+import UnliftIO.Concurrent
 
 class GenericResource res a where
   -- | Creates an action for use inside of region (see region below)
@@ -136,14 +145,6 @@ region res = withResourceContext () $ do
     readIORef destructorsVar >>= cleanup regionSrc Nothing
     return a
 
-regionResource :: HasCallStack => Resource ResourceContext
-regionResource = Resource $ do
-  let regionSrc = pack $ prettyCallStack callStack
-  autoDestroyCreate
-    (\ResourceContext{ destructorsVar } ->
-      withResourceContext () $ readIORef destructorsVar >>= cleanup regionSrc Nothing)
-    makeResourceContext
-
 data CleanupException = CleanupException
   { regionSrc :: Text
   , exceptionCausingCleanup :: Maybe SomeException
@@ -158,6 +159,65 @@ cleanup regionSrc origException destructors =
   lefts <$> mapM try destructors >>= \case
     e : es -> throwIO (CleanupException regionSrc origException (e :| es))
     [] -> return ()
+
+data ResourceOwner =
+  ResourceOwner
+  { destructorsMVar :: MVar [Prog () ()]
+  }
+
+resourceOwner :: HasCallStack => Resource ResourceOwner
+resourceOwner = Resource $ do
+  let regionSrc = pack $ prettyCallStack callStack
+  autoDestroyCreate
+    (\ResourceOwner{ destructorsMVar } ->
+      withResourceContext () $ takeMVar destructorsMVar >>= cleanup regionSrc Nothing)
+    (ResourceOwner <$> newMVar [])
+
+-- | Non-local registering of resources accross threads.
+--
+-- Like a region, but after successful completion it registers the resource
+-- destructors with the given ResourceOwner. This is thread-safe.
+--
+-- Warning: Only AFTER withResourceOwner finishes, the destructors get
+-- registered there. Beware of ordering issues when having multiple threads use
+-- withResourceOwner with the same owner to create resources that depend on each
+-- other.
+withResourceOwner :: HasCallStack => ResourceOwner -> Prog ResourceContext a -> Prog r a
+withResourceOwner ResourceOwner{ destructorsMVar } res = withResourceContext () $ do
+  let regionSrc = pack $ prettyCallStack callStack
+  ctx@ResourceContext{ destructorsVar } <- makeResourceContext
+  mask $ \restore -> do
+    a <- restore (withResourceContext ctx res)
+      `catchAsync` (\e -> readIORef destructorsVar >>= cleanup regionSrc (Just e) >> throwAsyncIO e)
+    destructors <- readIORef destructorsVar
+    modifyMVar_ destructorsMVar (pure . (destructors <>) )
+    return a
+
+takeOwnership :: ResourceOwner -> Prog ResourceContext ()
+takeOwnership ResourceOwner{ destructorsMVar = consumedDestructorsMVar } =
+  mask_ $ do
+    destructors <- takeMVar consumedDestructorsMVar
+    putMVar consumedDestructorsMVar []
+    ResourceContext{ destructorsVar } <- askResourceContext
+    modifyIORef' destructorsVar (destructors ++)
+
+resourceContext :: HasCallStack => Resource ResourceContext
+resourceContext = Resource $ do
+  let regionSrc = pack $ prettyCallStack callStack
+  autoDestroyCreate
+    (\ResourceContext{ destructorsVar } ->
+      withResourceContext () $ readIORef destructorsVar >>= cleanup regionSrc Nothing)
+    makeResourceContext
+
+takeContextOwnership :: ResourceContext -> Prog ResourceContext ()
+takeContextOwnership ResourceContext{ destructorsVar = consumedDestructorsVar } =
+  mask_ $ do
+    destructors <- readIORef consumedDestructorsVar
+    atomicWriteIORef consumedDestructorsVar []
+    ResourceContext{ destructorsVar } <- askResourceContext
+    modifyIORef' destructorsVar (destructors ++)
+
+
 
 -- | Exception-safe allocation of an elementary resource.
 --

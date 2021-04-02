@@ -1,4 +1,5 @@
 {-# LANGUAGE Strict #-}
+{-# LANGUAGE RankNTypes #-}
 module Vulkyrie.GLFW
     ( createGLFWVulkanInstance
     , initGLFWWindow
@@ -9,18 +10,19 @@ module Vulkyrie.GLFW
     ) where
 
 import           Control.Applicative
-import           Control.Monad       (forever, unless, when)
+import           Control.Monad
 import           Control.Monad.Trans.Maybe
+import           Data.Text (pack)
 import           Graphics.UI.GLFW    (ClientAPI (..), WindowHint (..))
 import qualified Graphics.UI.GLFW    as GLFW
 import           Graphics.Vulkan
 import           UnliftIO.Exception
 import           UnliftIO.IORef
 
+import           Vulkyrie.Concurrent
 import           Vulkyrie.Program
 import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Instance
-import Data.Text (pack)
 
 
 initGLFWWindow :: Int -- ^ Window width. Ignored if fullscreen.
@@ -87,11 +89,17 @@ glfwMainLoop w action = go
 --   Waits repeatedly with 1 second timeout to allow exceptions to be handled
 --   without events happening. If waiting without timeout, the waitEvents
 --   function would need to be marked interruptible in the GLFW binding.
-glfwWaitEventsMeanwhile :: IO () -> Prog r () -> Prog r ()
-glfwWaitEventsMeanwhile mainThreadHook =
-  occupyThreadAndFork
-    (liftIO $ forever $ GLFW.waitEventsTimeout 1 >> mainThreadHook)
-
+--
+--   Caveat: The separate thread is not a bound thread, in contrast to the main thread.
+--   Use `runInBoundThread` there if you need thread local state for C libs.
+glfwWaitEventsMeanwhile :: IO () -> (forall r. Prog r ()) -> Prog s ()
+glfwWaitEventsMeanwhile mainThreadHook prog = region $ do
+  doneVar <- newIORef False
+  void . auto $ threadRes (prog >> atomicWriteIORef doneVar True)
+  loop $ do
+    liftIO $ GLFW.waitEventsTimeout 1 >> mainThreadHook
+    done <- readIORef doneVar
+    return $ if done then AbortLoop () else ContinueLoop
 
 glfwWaitMinimized :: GLFW.Window -> Prog r ()
 glfwWaitMinimized win = liftIO go where

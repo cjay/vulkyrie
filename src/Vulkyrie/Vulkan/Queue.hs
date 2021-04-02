@@ -62,22 +62,19 @@ data ManagedPresentQueue =
     -- ^ needed because there is no single management thread for the queue
   }
 
-present :: ManagedPresentQueue -> [(MVar (Maybe VkSwapchainKHR), Word32)] -> [VkSemaphore] -> Prog r ()
+present :: ManagedPresentQueue -> [(MVar VkSwapchainKHR, Word32)] -> [VkSemaphore] -> Prog r ()
 present ManagedPresentQueue{..} images waitSems = do
   let (swapchainVars, imageIndices) = unzip images
   bracket
     (mapM takeMVar swapchainVars)
     (\swapchains -> sequence_ $ putMVar <$> ZipList swapchainVars <*> ZipList swapchains)
     (\swapchains -> do
-      actualSwapchains <- forM swapchains $ \case
-        Just sc -> return sc
-        Nothing -> error "unexpected Nothing in swapchain slot"
       let presentInfo = createVk @VkPresentInfoKHR
             $  set @"sType" VK_STRUCTURE_TYPE_PRESENT_INFO_KHR
             &* set @"pNext" VK_NULL
             &* setListRef @"pImageIndices" imageIndices
             &* setListCountAndRef @"waitSemaphoreCount" @"pWaitSemaphores" waitSems
-            &* setListCountAndRef @"swapchainCount" @"pSwapchains" actualSwapchains
+            &* setListCountAndRef @"swapchainCount" @"pSwapchains" swapchains
       withVkPtr presentInfo $ \ptr -> runAndCatchVk
         (vkQueuePresentKHR presentQueue ptr)
         ( \exception@(VulkanException ecode) ->

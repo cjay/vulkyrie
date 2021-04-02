@@ -67,14 +67,14 @@ threadRes prog = Resource $ do
                 "uncaught exception in a thread\n\nthread defined at: "
                   <> threadSrc <> "\n\n" <> showt e
               throwTo parentThreadId (ChildThreadException threadSrc e)
-      -- alive only gets written in one spot, no race conditions possible
-      writeIORef alive False
+      atomicWriteIORef alive False
     )
 
 data ThreadOwner =
   ThreadOwner
   -- MVar to allow threads to remove themselves
-  { threadsVar :: MVar (Set ThreadId) -- ^ keeps track of alive threads
+  { owningThreadId :: ThreadId
+  , threadsVar :: MVar (Set ThreadId) -- ^ keeps track of alive threads
   }
 
 -- | A  Resource that owns threads and limits their lifetime to the region.
@@ -86,6 +86,7 @@ data ThreadOwner =
 threadOwner :: HasCallStack => Resource ThreadOwner
 threadOwner = Resource $ do
   let ownerSrc = pack $ prettyCallStack callStack
+  owningThreadId <- myThreadId
   autoDestroyCreate
     (\ThreadOwner{ threadsVar } -> do
       threads <- takeMVar threadsVar
@@ -95,15 +96,14 @@ threadOwner = Resource $ do
             <> ownerSrc
       forM_ threads killThread
     )
-    (ThreadOwner <$> newMVar Set.empty)
+    (ThreadOwner owningThreadId <$> newMVar Set.empty)
 
 -- | Make a new thread owned by the ThreadOwner.
 --
 -- Make sure to only use this while the region that contains the thread owner is
 -- still alive.
 ownedThread :: HasCallStack => ThreadOwner -> (forall r. Prog r ()) -> Prog r' ThreadId
-ownedThread ThreadOwner{ threadsVar } prog = do
-  parentThreadId <- myThreadId
+ownedThread ThreadOwner{ owningThreadId, threadsVar } prog = do
   let threadSrc = pack $ prettyCallStack callStack
   mask_ $ do
     threads <- takeMVar threadsVar
@@ -112,7 +112,7 @@ ownedThread ThreadOwner{ threadsVar } prog = do
       unmask prog `catchAsync` \(e :: SomeException) ->
         unless (fromException e == Just ThreadKilled) $
           case fromException e of
-            Just (_ :: ChildThreadException) -> throwTo parentThreadId e
+            Just (_ :: ChildThreadException) -> throwTo owningThreadId e
             _ -> do
               -- Logging here just in case the recursive destruction of
               -- resources gets stuck somewhere or the user aborts the program
@@ -120,7 +120,7 @@ ownedThread ThreadOwner{ threadsVar } prog = do
               logErrorN $
                 "uncaught exception in a thread\n\nthread defined at: "
                   <> threadSrc <> "\n\n" <> showt e
-              throwTo parentThreadId (ChildThreadException threadSrc e)
+              throwTo owningThreadId (ChildThreadException threadSrc e)
       modifyMVar_ threadsVar $ pure . Set.delete threadId
     putMVar threadsVar $ Set.insert threadId threads
     pure threadId
@@ -132,6 +132,10 @@ data RedoSignal = SigRedo | SigExit deriving Eq
 --
 -- The argument action gets passed a redo trigger that causes the action to be
 -- restarted in a new thread while the old one is still running.
+-- The function blocks until the last redo has finished. Threads for older redo
+-- action that are still alive when the last redo has finished get killed at
+-- that point, though if they are stuck on destructors they will stay that way
+-- because of exception masking around the destructors.
 asyncRedo :: (forall r. (forall s. Prog s ()) -> Prog r ()) -> Prog t ()
 asyncRedo prog = region $ do
   owner <- auto threadOwner
