@@ -5,7 +5,9 @@
 
 module Vulkyrie.Program
     ( Prog (..)
+    , ResourceContext (..)
     , runProgram
+    , closedProgram
     , askResourceContext
     , withResourceContext
     , askRegion
@@ -43,39 +45,47 @@ import           UnliftIO.Exception
 import           UnliftIO.IORef
 
 import           Vulkyrie.BuildFlags
+import Data.Coerce (coerce)
 
 
 data ProgContext = ProgContext
 
-data Context r =
+data ResourceContext =
+  ResourceContext
+  { destructorsVar :: IORef [Prog () ()]
+  }
+
+data Context =
   Context
   {
-    resourceContext :: r
+    resourceContext :: ResourceContext
   , progContext :: ProgContext
   }
 
-newtype Prog r a = Prog (ReaderT (Context r) (LoggingT IO) a)
+newtype Prog r a = Prog (ReaderT Context (LoggingT IO) a)
   deriving (Functor, Applicative, Monad, MonadLogger, MonadIO, MonadUnliftIO)
 
 
-askResourceContext :: Prog r r
+askResourceContext :: Prog ResourceContext ResourceContext
 askResourceContext = resourceContext <$> Prog ask
 
 runProgram :: Prog () a -> IO a
-runProgram prog = run (Context () ProgContext) prog
+runProgram prog = run (Context undefined ProgContext) prog
 
-withResourceContext :: r -> Prog r a -> Prog r' a
+withResourceContext :: ResourceContext -> Prog ResourceContext a -> Prog r a
 withResourceContext rctx (Prog prog) = Prog $ do
   ctx <- ask
   lift $ runReaderT prog ctx{ resourceContext = rctx }
 
 -- | For registering a resource with a different (usually enclosing) region scope.
-askRegion :: Prog r (Prog r a -> Prog r' a)
+askRegion :: Prog ResourceContext (Prog ResourceContext a -> Prog r a)
 askRegion = withResourceContext <$> askResourceContext
 
-run :: Context r -> Prog r a -> IO a
+run :: Context -> Prog r a -> IO a
 run ctx (Prog prog) = runStdoutLoggingT $ runReaderT prog ctx
 
+closedProgram :: Prog () a -> Prog r a
+closedProgram = coerce
 
 
 

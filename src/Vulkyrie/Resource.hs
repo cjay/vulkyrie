@@ -17,7 +17,6 @@ module Vulkyrie.Resource
   , composeResource
 
     -- * Resource Monad
-  , ResourceContext
   , Resource (..)
   , region
 
@@ -69,8 +68,8 @@ instance GenericResource (Prog ResourceContext) a where
     let ResourceContext{ destructorsVar } = ctx
     a <-
       restore (withResourceContext ctx res)
-        `catchAsync` (\e -> readIORef destructorsVar >>= withResourceContext () . cleanup "manual" (Just e) >> throwAsyncIO e)
-    return (readIORef destructorsVar >>= withResourceContext () . cleanup "manual" Nothing, a)
+        `catchAsync` (\e -> readIORef destructorsVar >>= cleanup "manual" (Just e) >> throwAsyncIO e)
+    return (readIORef destructorsVar >>= cleanup "manual" Nothing, a)
   {-# INLINE manual #-}
 
 -- | A MetaResource is only meant to correctly destroy resources that it created itself.
@@ -111,11 +110,6 @@ composeResource ma fmb = auto ma >>= auto . fmb
 
 
 
-data ResourceContext =
-  ResourceContext
-  { destructorsVar :: IORef [Prog () ()]
-  }
-
 -- | Enforces explicitness at the use site.
 --
 -- Prog ResourceContext should never ever occur in top-level type signatures
@@ -136,7 +130,7 @@ makeResourceContext = do
 
 -- | region establishes a scope for automatic resource destruction
 region :: HasCallStack => Prog ResourceContext a -> Prog r a
-region res = withResourceContext () $ do
+region res = do
   let regionSrc = pack $ prettyCallStack callStack
   ctx@ResourceContext{ destructorsVar } <- makeResourceContext
   mask $ \restore -> do
@@ -154,11 +148,12 @@ data CleanupException = CleanupException
 instance Exception CleanupException
 
 -- | Runs the given destructors within a masked context.
-cleanup :: Text -> Maybe SomeException -> [Prog r ()] -> Prog r ()
+cleanup :: Text -> Maybe SomeException -> [Prog () ()] -> Prog r ()
 cleanup regionSrc origException destructors =
-  lefts <$> mapM try destructors >>= \case
-    e : es -> throwIO (CleanupException regionSrc origException (e :| es))
-    [] -> return ()
+  closedProgram $
+    lefts <$> mapM try destructors >>= \case
+      e : es -> throwIO (CleanupException regionSrc origException (e :| es))
+      [] -> return ()
 
 data ResourceOwner =
   ResourceOwner
@@ -170,7 +165,7 @@ resourceOwner = Resource $ do
   let regionSrc = pack $ prettyCallStack callStack
   autoDestroyCreate
     (\ResourceOwner{ destructorsMVar } ->
-      withResourceContext () $ takeMVar destructorsMVar >>= cleanup regionSrc Nothing)
+      takeMVar destructorsMVar >>= cleanup regionSrc Nothing)
     (ResourceOwner <$> newMVar [])
 
 -- | Non-local registering of resources accross threads.
@@ -183,7 +178,7 @@ resourceOwner = Resource $ do
 -- withResourceOwner with the same owner to create resources that depend on each
 -- other.
 withResourceOwner :: HasCallStack => ResourceOwner -> Prog ResourceContext a -> Prog r a
-withResourceOwner ResourceOwner{ destructorsMVar } res = withResourceContext () $ do
+withResourceOwner ResourceOwner{ destructorsMVar } res = do
   let regionSrc = pack $ prettyCallStack callStack
   ctx@ResourceContext{ destructorsVar } <- makeResourceContext
   mask $ \restore -> do
@@ -206,7 +201,7 @@ resourceContext = Resource $ do
   let regionSrc = pack $ prettyCallStack callStack
   autoDestroyCreate
     (\ResourceContext{ destructorsVar } ->
-      withResourceContext () $ readIORef destructorsVar >>= cleanup regionSrc Nothing)
+      readIORef destructorsVar >>= cleanup regionSrc Nothing)
     makeResourceContext
 
 takeContextOwnership :: ResourceContext -> Prog ResourceContext ()
