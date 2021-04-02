@@ -4,7 +4,9 @@
 {-# LANGUAGE StrictData            #-}
 
 module Vulkyrie.Program
-    ( Prog (..)
+    ( Prog
+    , OpenResourceContext
+    , ClosedResourceContext
     , ResourceContext (..)
     , runProgram
     , closedProgram
@@ -47,12 +49,24 @@ import           UnliftIO.IORef
 import           Vulkyrie.BuildFlags
 import Data.Coerce (coerce)
 
+-- | Marks a Prog to be using resources.
+--
+-- This should NEVER occur in the type of a top-level binding outside of this
+-- module and the Resource module. Instead, wrap your `Prog OpenResourceContext
+-- a` in a Resource. That way, all resource usages are explicit via `auto`.
+data OpenResourceContext
+
+-- | Marks a Prog to not be using resources.
+--
+-- Usually keep the type parameter to Prog open instead, to allow using it
+-- within a resource using action. See `closedProgram` for when you need this.
+data ClosedResourceContext
 
 data ProgContext = ProgContext
 
-data ResourceContext =
+newtype ResourceContext =
   ResourceContext
-  { destructorsVar :: IORef [Prog () ()]
+  { destructorsVar :: IORef [Prog ClosedResourceContext ()]
   }
 
 data Context =
@@ -66,25 +80,33 @@ newtype Prog r a = Prog (ReaderT Context (LoggingT IO) a)
   deriving (Functor, Applicative, Monad, MonadLogger, MonadIO, MonadUnliftIO)
 
 
-askResourceContext :: Prog ResourceContext ResourceContext
+askResourceContext :: Prog OpenResourceContext ResourceContext
 askResourceContext = resourceContext <$> Prog ask
 
-runProgram :: Prog () a -> IO a
-runProgram prog = run (Context undefined ProgContext) prog
+runProgram :: HasCallStack => Prog ClosedResourceContext a -> IO a
+runProgram prog = do
+  dummy <- newIORef $ impureThrow $ StringException "unexpected use of dummy resource context" callStack
+  run (Context (ResourceContext dummy) ProgContext) prog
 
-withResourceContext :: ResourceContext -> Prog ResourceContext a -> Prog r a
+withResourceContext :: ResourceContext -> Prog OpenResourceContext a -> Prog r a
 withResourceContext rctx (Prog prog) = Prog $ do
   ctx <- ask
   lift $ runReaderT prog ctx{ resourceContext = rctx }
 
 -- | For registering a resource with a different (usually enclosing) region scope.
-askRegion :: Prog ResourceContext (Prog ResourceContext a -> Prog r a)
+askRegion :: Prog OpenResourceContext (Prog OpenResourceContext a -> Prog r a)
 askRegion = withResourceContext <$> askResourceContext
 
 run :: Context -> Prog r a -> IO a
 run ctx (Prog prog) = runStdoutLoggingT $ runReaderT prog ctx
 
-closedProgram :: Prog () a -> Prog r a
+-- | Embeds a Prog with closed resource context.
+--
+-- This allows putting Progs in data structures without having to resort to
+-- existential types. Both `Prog r a` and `Prog ClosedResourceContext a`
+-- guarantee not to use the ResourceContext, only the polymorphic one can be
+-- embedded in resource using actions.
+closedProgram :: Prog ClosedResourceContext a -> Prog r a
 closedProgram = coerce
 
 

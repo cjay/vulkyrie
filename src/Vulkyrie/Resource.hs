@@ -50,16 +50,16 @@ import UnliftIO.Concurrent
 
 class GenericResource res a where
   -- | Creates an action for use inside of region (see region below)
-  auto :: res a -> Prog ResourceContext a
+  auto :: res a -> Prog OpenResourceContext a
   -- | Creates a destructor action along with allocating the resource.
   --
   --   Has to be called within a masked scope. Pass the restore, see UnliftIO.Exception.mask.
   manual :: (forall b. Prog r b -> Prog r b) -> res a -> Prog r (Prog r' (), a)
 
-auto_ :: GenericResource res a => res a -> Prog ResourceContext ()
+auto_ :: GenericResource res a => res a -> Prog OpenResourceContext ()
 auto_ = void . auto
 
-instance GenericResource (Prog ResourceContext) a where
+instance GenericResource (Prog OpenResourceContext) a where
   auto = id
   {-# INLINE auto #-}
 
@@ -102,7 +102,7 @@ instance GenericResource MetaResource a where
 -- | A bit more polymorphic than (>>=) of Resource.
 --
 --   Note that the resulting Resource is a GenericResource as well and can be further chained using composeResource.
-composeResource :: (GenericResource res1 a, GenericResource res2 b) => res1 a -> (a -> res2 b) -> Prog ResourceContext b
+composeResource :: (GenericResource res1 a, GenericResource res2 b) => res1 a -> (a -> res2 b) -> Prog OpenResourceContext b
 composeResource ma fmb = auto ma >>= auto . fmb
 {-# INLINE composeResource #-}
 
@@ -112,10 +112,10 @@ composeResource ma fmb = auto ma >>= auto . fmb
 
 -- | Enforces explicitness at the use site.
 --
--- Prog ResourceContext should never ever occur in top-level type signatures
+-- Prog OpenResourceContext should never ever occur in top-level type signatures
 -- (outside of this file) by convention. Resource can be converted back via
 -- auto, same treatment on the use site as any other GenericResource.
-newtype Resource a = Resource (Prog ResourceContext a)
+newtype Resource a = Resource (Prog OpenResourceContext a)
 
 instance GenericResource Resource a where
   auto (Resource res) = auto res
@@ -129,7 +129,7 @@ makeResourceContext = do
   return ResourceContext{..}
 
 -- | region establishes a scope for automatic resource destruction
-region :: HasCallStack => Prog ResourceContext a -> Prog r a
+region :: HasCallStack => Prog OpenResourceContext a -> Prog r a
 region res = do
   let regionSrc = pack $ prettyCallStack callStack
   ctx@ResourceContext{ destructorsVar } <- makeResourceContext
@@ -148,7 +148,7 @@ data CleanupException = CleanupException
 instance Exception CleanupException
 
 -- | Runs the given destructors within a masked context.
-cleanup :: Text -> Maybe SomeException -> [Prog () ()] -> Prog r ()
+cleanup :: Text -> Maybe SomeException -> [Prog ClosedResourceContext ()] -> Prog r ()
 cleanup regionSrc origException destructors =
   closedProgram $
     lefts <$> mapM try destructors >>= \case
@@ -157,7 +157,7 @@ cleanup regionSrc origException destructors =
 
 data ResourceOwner =
   ResourceOwner
-  { destructorsMVar :: MVar [Prog () ()]
+  { destructorsMVar :: MVar [Prog ClosedResourceContext ()]
   }
 
 resourceOwner :: HasCallStack => Resource ResourceOwner
@@ -177,7 +177,7 @@ resourceOwner = Resource $ do
 -- registered there. Beware of ordering issues when having multiple threads use
 -- withResourceOwner with the same owner to create resources that depend on each
 -- other.
-withResourceOwner :: HasCallStack => ResourceOwner -> Prog ResourceContext a -> Prog r a
+withResourceOwner :: HasCallStack => ResourceOwner -> Prog OpenResourceContext a -> Prog r a
 withResourceOwner ResourceOwner{ destructorsMVar } res = do
   let regionSrc = pack $ prettyCallStack callStack
   ctx@ResourceContext{ destructorsVar } <- makeResourceContext
@@ -188,7 +188,7 @@ withResourceOwner ResourceOwner{ destructorsMVar } res = do
     modifyMVar_ destructorsMVar (pure . (destructors <>) )
     return a
 
-takeOwnership :: ResourceOwner -> Prog ResourceContext ()
+takeOwnership :: ResourceOwner -> Prog OpenResourceContext ()
 takeOwnership ResourceOwner{ destructorsMVar = consumedDestructorsMVar } =
   mask_ $ do
     destructors <- takeMVar consumedDestructorsMVar
@@ -204,7 +204,7 @@ resourceContext = Resource $ do
       readIORef destructorsVar >>= cleanup regionSrc Nothing)
     makeResourceContext
 
-takeContextOwnership :: ResourceContext -> Prog ResourceContext ()
+takeContextOwnership :: ResourceContext -> Prog OpenResourceContext ()
 takeContextOwnership ResourceContext{ destructorsVar = consumedDestructorsVar } =
   mask_ $ do
     destructors <- readIORef consumedDestructorsVar
@@ -220,7 +220,7 @@ takeContextOwnership ResourceContext{ destructorsVar = consumedDestructorsVar } 
 -- Do not use this for composite resources.
 autoDestroyCreate :: (forall r. a -> Prog r ()) -- ^ free resource
                   -> (forall r. Prog r a) -- ^ allocate resource
-                  -> Prog ResourceContext a
+                  -> Prog OpenResourceContext a
 autoDestroyCreate free alloc =
   mask_ $ do
     a <- alloc
@@ -230,7 +230,7 @@ autoDestroyCreate free alloc =
 
 autoDestroyCreateWithUnmask :: (forall r. a -> Prog r ()) -- ^ free resource
                             -> (forall r. (Prog r b -> Prog r b) -> Prog r a) -- ^ allocate resource
-                            -> Prog ResourceContext a
+                            -> Prog OpenResourceContext a
 autoDestroyCreateWithUnmask free alloc = do
   ResourceContext{ destructorsVar } <- askResourceContext
   mask $ \unmask -> do
@@ -239,7 +239,7 @@ autoDestroyCreateWithUnmask free alloc = do
     return a
 
 -- TODO: this might behave unexpectedly with nested resources, as all destructor calls are reversed, even within nested ones
-inverseDestruction :: Prog ResourceContext a -> Prog ResourceContext a
+inverseDestruction :: Prog OpenResourceContext a -> Prog OpenResourceContext a
 inverseDestruction res = do
   ResourceContext outerDestrVar <- askResourceContext
   mask $ \restore -> do
@@ -265,7 +265,7 @@ asym ra rb =
 -- | Runs given program when destroying the resource. Destruction order is bottom to top.
 --
 --   Never use this to deallocate, that way you get no exception masking! Use elementaryResource!
-onDestroy :: Prog () () -> Prog ResourceContext ()
+onDestroy :: Prog ClosedResourceContext () -> Prog OpenResourceContext ()
 onDestroy prog = do
   ResourceContext{ destructorsVar } <- askResourceContext
   modifyIORef' destructorsVar (prog :)
