@@ -21,7 +21,10 @@ import           Control.Monad
 import           Graphics.UI.GLFW   (Key, KeyState)
 import qualified Graphics.UI.GLFW   as GLFW
 import           Numeric.DataFrame
+import           Vulkyrie.Concurrent
 import           Vulkyrie.GLFW (getTime)
+import           Vulkyrie.Program
+import           Vulkyrie.Resource
 
 
 newtype Position = Position Vec2i deriving Show
@@ -70,14 +73,14 @@ data Event
   | Tick Double
 
 
-runGame :: MVar GameState -> Chan Event -> IO ()
-runGame gsVar eventChan = do
-  w <- initWorld
-  _ <- forkIO $ forever $ do
+runGame :: MVar GameState -> Chan Event -> Prog r ()
+runGame gsVar eventChan = region $ do
+  w <- liftIO initWorld
+  void . auto $ threadRes $ liftIO $ forever $ do
     threadDelay 16667
     t <- getTime
     writeChan eventChan (Tick t)
-  runWith w $ do
+  liftIO $ runWith w $ do
     initialize
     forever $ do
       event <- liftIO $ readChan eventChan

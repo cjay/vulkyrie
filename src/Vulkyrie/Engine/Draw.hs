@@ -12,17 +12,18 @@ import           Control.Monad
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
-import           Graphics.Vulkan.Ext.VK_KHR_shared_presentable_image
+-- import           Graphics.Vulkan.Ext.VK_KHR_shared_presentable_image
 import           UnliftIO.Concurrent
 import           UnliftIO.Exception
+import           UnliftIO.IORef
 
+import           Vulkyrie.Concurrent
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Utils
 import           Vulkyrie.Vulkan.Engine
 import           Vulkyrie.Vulkan.Queue
 import           Vulkyrie.Vulkan.Sync
-import UnliftIO.IORef
 
 -- | Callback type for rendering into swapchain framebuffers.
 --
@@ -56,6 +57,8 @@ data RenderData
     -- ^ Additional semaphores that the graphics queue submission needs to wait on.
   , frameFinishedEvent        :: Event
     -- ^ Gets signalled every time a frame has finished rendering.
+  , frameFinishedThreadOwner  :: ThreadOwner
+    -- ^ Owns the threads that wait for frame finish to release sems
   , renderFun                 :: RenderFun
     -- ^ render function of application, with wait semaphores and signal semaphores
   , framebuffers              :: [VkFramebuffer]
@@ -127,7 +130,7 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
         when (result == VK_ERROR_OUT_OF_DATE_KHR) $ atomicWriteIORef swapOutdated True
         liftIO $ releaseToken swapImgTokens
 
-    void $ forkIO $ do
+    void $ ownedThread frameFinishedThreadOwner $ do
       waitDone nextEvent
       writeChan renderFinishedSems renderFinishedSem
       liftIO $ Event.signal frameFinishedEvent

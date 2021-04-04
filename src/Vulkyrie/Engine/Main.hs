@@ -80,17 +80,18 @@ runVulkanProgram App{ .. } = runProgram $ region $ do
 
     msp <- auto $ metaMasterSemaphorePool dev
     presentQueue <- ManagedPresentQueue (Device.presentQueue queues) <$> newMVar ()
-    gfxQueue <- auto $ metaManagedQueue dev (graphicsQueue queues) msp
-    cmdPoolPool <- auto $ metaCommandPoolPool dev (graphicsFamIdx queues)
+    gfxQueue <- auto $ managedQueue dev (graphicsQueue queues) msp
+    cmdPoolPool <- auto $ commandPoolPool dev (graphicsFamIdx queues)
 
     semPool <- auto $ metaSemaphorePool msp
     cmdCap <- auto $ metaCommandCapability cmdPoolPool
     memPool <- auto $ metaMemoryPool pdev dev
     descriptorPool <- auto $ createDescriptorPool dev 100 -- TODO make dynamic
+    engineThreadOwner <- auto threadOwner
     -- TODO create permanently mapped reusable staging buffer
     let cap = EngineCapability
           { pdev, dev, queues, cmdCap, cmdQueue=gfxQueue, queueFam=graphicsFamIdx queues,
-          semPool, memPool, descriptorPool }
+          semPool, memPool, descriptorPool, engineThreadOwner }
 
     logInfo "Starting App.."
     appState <- auto $ appStart winState cap
@@ -98,6 +99,7 @@ runVulkanProgram App{ .. } = runProgram $ region $ do
     renderFinishedSems <- newChan
     writeList2Chan renderFinishedSems =<< replicateM maxFramesInFlight (auto $ metaSemaphore dev)
     frameFinishedEvent <- liftIO Event.new
+    frameFinishedThreadOwner <- auto threadOwner
 
     let beforeSwapchainCreation :: Prog r ()
         beforeSwapchainCreation =
@@ -164,6 +166,7 @@ runVulkanProgram App{ .. } = runProgram $ region $ do
               , renderFinishedSems
               , nextSems
               , frameFinishedEvent
+              , frameFinishedThreadOwner
               , renderFun = appRenderFrame appState
               , framebuffers
               }

@@ -4,7 +4,6 @@ module Vulkyrie.Examples.Flat
   ( runMyVulkanProgram
   ) where
 
-import           Control.Concurrent       (forkIO)
 import           Control.Monad
 import qualified Graphics.UI.GLFW         as GLFW
 import           Graphics.Vulkan
@@ -14,6 +13,7 @@ import           Numeric.DataFrame
 import           UnliftIO.Chan
 import           UnliftIO.MVar
 
+import           Vulkyrie.Concurrent
 import           Vulkyrie.Examples.Flat.Game
 import           Vulkyrie.Engine.Main
 import           Vulkyrie.Engine.Simple2D
@@ -176,7 +176,7 @@ myAppNewWindow window = Resource $ do
   return WindowState {..}
 
 myAppMainThreadHook :: WindowState -> IO ()
-myAppMainThreadHook WindowState {..} = do
+myAppMainThreadHook _ = do
   return ()
 
 myAppStart :: WindowState -> EngineCapability -> Resource MyAppState
@@ -187,7 +187,8 @@ myAppStart winState@WindowState{ keyEvents } cap@EngineCapability{ dev } = Resou
   assets <- auto $ loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
   gameState <- newMVar initialGameState
-  _ <- liftIO $ forkIO $ runGame gameState keyEvents
+  void $ auto $ threadRes $ runGame gameState keyEvents
+  renderThreadOwner <- auto threadOwner
   return $ MyAppState{..}
 
 myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
@@ -199,14 +200,14 @@ myAppNewSwapchain MyAppState{..} swapInfo = Resource $ do
 
 myAppRenderFrame :: MyAppState -> RenderFun
 myAppRenderFrame MyAppState{..} framebuffer waitSemsWithStages signalSems = do
-  let WindowState{..} = winState
+  -- let WindowState{..} = winState
 
   gs <- readMVar gameState
   (camPos, objs) <- makeWorld gs assets
 
   renderContext <- readMVar renderContextVar
   viewProjTransform <- viewProjMatrix (extent renderContext) camPos
-  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf -> Resource $
+  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems renderThreadOwner $ \cmdBuf -> Resource $
     recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 data WindowState
@@ -224,6 +225,7 @@ data MyAppState
   , renderContextVar :: MVar RenderContext
   , winState         :: WindowState
   , gameState        :: MVar GameState
+  , renderThreadOwner :: ThreadOwner
   }
 
 

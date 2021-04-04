@@ -50,7 +50,7 @@ createTextureInfo cap@EngineCapability{ dev } magPixelated path = Resource $ do
 createTextureImageView :: EngineCapability
                        -> FilePath
                        -> Resource (QueueEvent, VkImageView, Word32)
-createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool } path = Resource $ do
+createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool, engineThreadOwner } path = Resource $ do
   Image { imageWidth, imageHeight, imageData }
     <- liftIO (readImage path) >>= \case
       Left err -> throwString err
@@ -70,12 +70,12 @@ createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPo
   let [sem0, sem1] = sems
 
   finishEvent <- do
-    postWith_ cmdCap cmdQueue [] [sem0] $ Resource .
+    postWith_ cmdCap cmdQueue [] [sem0] engineThreadOwner $ Resource .
       transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM Undef_TransDst mipLevels
 
     -- the local continuation context of postWith_ destroys the temporary staging
     -- buffer after data copy is complete
-    postWith_ cmdCap cmdQueue [(sem0, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem1] $ \cmdBuf -> Resource $ do
+    postWith_ cmdCap cmdQueue [(sem0, VK_PIPELINE_STAGE_TRANSFER_BIT)] [sem1] engineThreadOwner $ \cmdBuf -> Resource $ do
       (stagingMem, stagingBuf) <-
         auto $ createBuffer ecap bufSize VK_BUFFER_USAGE_TRANSFER_SRC_BIT
           ( VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT .|. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT )
@@ -90,7 +90,7 @@ createTextureImageView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPo
       copyBufferToImage cmdBuf stagingBuf image
         (fromIntegral imageWidth) (fromIntegral imageHeight)
 
-    postWith cmdCap cmdQueue [(sem1, VK_PIPELINE_STAGE_TRANSFER_BIT)] [] $ Resource .
+    postWith cmdCap cmdQueue [(sem1, VK_PIPELINE_STAGE_TRANSFER_BIT)] [] engineThreadOwner $ Resource .
       -- generateMipmaps does this as a side effect:
       -- transitionImageLayout image VK_FORMAT_R8G8B8A8_UNORM TransDst_ShaderRO mipLevels
       generateMipmaps pdev image VK_FORMAT_R8G8B8A8_UNORM (fromIntegral imageWidth) (fromIntegral imageHeight) mipLevels
@@ -438,7 +438,7 @@ copyBufferToImage :: VkCommandBuffer
                   -> Word32
                   -> Prog r ()
 copyBufferToImage cmdBuf buffer image width height = do
-  let region = createVk @VkBufferImageCopy
+  let bufRegion = createVk @VkBufferImageCopy
         $  set @"bufferOffset" 0
         &* set @"bufferRowLength" 0
         &* set @"bufferImageHeight" 0
@@ -458,7 +458,7 @@ copyBufferToImage cmdBuf buffer image width height = do
             &* set @"height" height
             &* set @"depth" 1
             )
-  withVkPtr region $ \regPtr -> liftIO $
+  withVkPtr bufRegion $ \regPtr -> liftIO $
     vkCmdCopyBufferToImage cmdBuf buffer image
       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL 1 regPtr
 
@@ -502,7 +502,7 @@ createDepthAttImgView :: EngineCapability
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
                       -> Resource ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
-createDepthAttImgView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool } extent samples = Resource $ do
+createDepthAttImgView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPool, engineThreadOwner } extent samples = Resource $ do
   depthFormat <- findDepthFormat pdev
 
   (_, depthImage) <- auto $ createImage ecap
@@ -511,7 +511,7 @@ createDepthAttImgView ecap@EngineCapability{ dev, pdev, cmdCap, cmdQueue, semPoo
 
   depthImageView <- auto $ createImageView dev depthImage depthFormat VK_IMAGE_ASPECT_DEPTH_BIT 1
   sem <- head <$> acquireSemaphores semPool 1
-  postWith_ cmdCap cmdQueue [] [sem] $ Resource .
+  postWith_ cmdCap cmdQueue [] [sem] engineThreadOwner $ Resource .
     transitionImageLayout depthImage depthFormat Undef_DepthStencilAtt 1
   return ((sem, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT), depthImageView)
 
@@ -521,7 +521,7 @@ createColorAttImgView :: EngineCapability
                       -> VkExtent2D
                       -> VkSampleCountFlagBits
                       -> Resource ((VkSemaphore, VkPipelineStageBitmask a), VkImageView)
-createColorAttImgView ecap@EngineCapability{ dev, cmdCap, cmdQueue, semPool } format extent samples = Resource $ do
+createColorAttImgView ecap@EngineCapability{ dev, cmdCap, cmdQueue, semPool, engineThreadOwner } format extent samples = Resource $ do
   (_, colorImage) <- auto $ createImage ecap
     (getField @"width" extent) (getField @"height" extent) 1 samples format
     VK_IMAGE_TILING_OPTIMAL
@@ -530,6 +530,6 @@ createColorAttImgView ecap@EngineCapability{ dev, cmdCap, cmdQueue, semPool } fo
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
   colorImageView <- auto $ createImageView dev colorImage format VK_IMAGE_ASPECT_COLOR_BIT 1
   sem <- head <$> acquireSemaphores semPool 1
-  postWith_ cmdCap cmdQueue [] [sem] $ Resource .
+  postWith_ cmdCap cmdQueue [] [sem] engineThreadOwner $ Resource .
     transitionImageLayout colorImage format Undef_ColorAtt 1
   return ((sem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT), colorImageView)

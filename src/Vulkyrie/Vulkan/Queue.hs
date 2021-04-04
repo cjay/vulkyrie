@@ -12,7 +12,7 @@ module Vulkyrie.Vulkan.Queue
   , isSubmitted
   , isDone
 
-  , metaManagedQueue
+  , managedQueue
   , ManagedQueue
 
   , post
@@ -54,6 +54,7 @@ import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Sync
+import Vulkyrie.Concurrent
 
 data ManagedPresentQueue =
   ManagedPresentQueue
@@ -148,6 +149,7 @@ data ManagedQueue = ManagedQueue
   , pumpThread          :: MVar (Maybe ThreadId)
     -- ^ handle for a optional thread that regularly causes submission of staged
     -- submit infos
+  , pumpThreadOwner     :: ThreadOwner
   }
 
 data QueueRequest = Shutdown
@@ -160,85 +162,85 @@ data Instruction = Post VkSubmitInfo
                  | Notify (MVar QueueEvent)
                  | Checkpoint Event
 
-metaManagedQueue :: VkDevice -> VkQueue -> MasterSemaphorePool -> MetaResource ManagedQueue
-metaManagedQueue dev queue msp =
-  let mFencePool = metaFencePool dev
-  in metaResource
-  (\ManagedQueue{..} -> do
-      -- Shutdown is dangerous: Staged VkSubmitInfos won't get submitted, other
-      -- threads might wait eternally for Events.
-      writeChan requestChan Shutdown
-      destroy mFencePool fencePool
-      takeMVar pumpThread >>= mapM_ killThread
-  )
-  (do
-      requestChan <- newChan
-      submitInfos <- newIORef mempty
-      nextEvent <- QueueEvent <$> liftIO Event.new <*> liftIO Event.new >>= newIORef
-      fencePool <- create mFencePool
-      pumpThread <- newMVar Nothing
+managedQueue :: VkDevice -> VkQueue -> MasterSemaphorePool -> Resource ManagedQueue
+managedQueue dev queue msp = Resource $ do
+  requestChan <- newChan
+  submitInfos <- newIORef mempty
+  nextEvent <- QueueEvent <$> liftIO Event.new <*> liftIO Event.new >>= newIORef
+  fencePool <- auto $ metaFencePool dev
+  pumpThreadOwner <- auto threadOwner
+  pumpThread <- newMVar Nothing
 
-      let mq = ManagedQueue { masterSemaphorePool=msp, .. }
-          submit_ :: Prog r ()
-          submit_ = do
-            fence <- acquireFence fencePool
-            fenceResetDone <- async $ resetFences fencePool
-            sIs <- DL.toList <$> readIORef submitInfos
-            writeIORef submitInfos mempty
-            runVk $ withArrayLen sIs $ \siLen siArr ->
-              liftIO $ vkQueueSubmit queue siLen siArr fence
-            QueueEvent{ submitEvent, doneEvent } <- readIORef nextEvent
-            liftIO $ Event.set submitEvent
-            writeIORef nextEvent =<< QueueEvent <$> liftIO Event.new <*> liftIO Event.new
-            void $ forkIO $ do
-              runVk $ Foreign.withArrayLen [fence] $ \len fencePtr ->
-                vkWaitForFences dev (fromIntegral len) fencePtr VK_TRUE (maxBound :: Word64)
-              liftIO $ Event.set doneEvent
-              releaseFence fencePool fence
-              sems <- concat <$> mapM submitInfoGetWaitSemaphores sIs
-              mspReleaseSemaphores msp sems
-            -- blocking because acquireFence is not allowed while resetFences is running
-            wait fenceResetDone
+  presentThreadOwner <- auto threadOwner
+  releaseThreadOwner <- auto threadOwner
 
-          post_ :: VkSubmitInfo -> Prog r ()
-          post_ submitInfo = do
-            sIs <- readIORef submitInfos
-            writeIORef submitInfos (sIs `DL.snoc` submitInfo)
+  let mq = ManagedQueue { masterSemaphorePool=msp, .. }
+      submit_ :: Prog r ()
+      submit_ = do
+        fence <- acquireFence fencePool
+        fenceResetDone <- async $ resetFences fencePool
+        sIs <- DL.toList <$> readIORef submitInfos
+        writeIORef submitInfos mempty
+        runVk $ withArrayLen sIs $ \siLen siArr ->
+          liftIO $ vkQueueSubmit queue siLen siArr fence
+        QueueEvent{ submitEvent, doneEvent } <- readIORef nextEvent
+        liftIO $ Event.set submitEvent
+        writeIORef nextEvent =<< QueueEvent <$> liftIO Event.new <*> liftIO Event.new
+        void $ ownedThread releaseThreadOwner $ do
+          runVk $ Foreign.withArrayLen [fence] $ \len fencePtr ->
+            vkWaitForFences dev (fromIntegral len) fencePtr VK_TRUE (maxBound :: Word64)
+          liftIO $ Event.set doneEvent
+          releaseFence fencePool fence
+          sems <- concat <$> mapM submitInfoGetWaitSemaphores sIs
+          mspReleaseSemaphores msp sems
+        -- blocking because acquireFence is not allowed while resetFences is running
+        wait fenceResetDone
 
-          queueLoop = do
-            -- TODO dependencies on submission in another queue (for semaphores)
-            -- TODO reordering when a dependency blocks
-            request <- readChan requestChan
-            case request of
-              Transaction instructions -> do
-                forM_ instructions $ \case
-                  SubmitIfNeeded -> do
-                    sIs <- readIORef submitInfos
-                    unless (null sIs) submit_
-                  Submit -> submit_
-                  Post submitInfo -> post_ submitInfo
-                  Notify eventBox -> do
-                    event <- readIORef nextEvent
-                    putMVar eventBox event
-                  Checkpoint event -> liftIO $ Event.set event
-                  Present (ManagedPresentQueue presentQueue mutex) presentAction postPresentAction ->
-                    if presentQueue == queue
-                      then presentAction >>= postPresentAction
-                      else void $ forkIO $ do
-                        -- TODO exception masking. Depends on how to handle actual async exceptions within Program
-                        takeMVar mutex
-                        result <- presentAction
-                        putMVar mutex ()
-                        postPresentAction result
-                queueLoop
-              Shutdown -> return ()
+      post_ :: VkSubmitInfo -> Prog r ()
+      post_ submitInfo = do
+        sIs <- readIORef submitInfos
+        writeIORef submitInfos (sIs `DL.snoc` submitInfo)
 
-      -- PERFORMANCE Could write to mutable vector instead of DList to avoid copies,
-      -- not sure how pointed-to arrays would be handled.
-      -- Also, could keep track of the length instead of using withArrayLen.
-      void $ forkIO queueLoop
-      return mq
-  )
+      queueLoop = do
+        -- TODO dependencies on submission in another queue (for semaphores)
+        -- TODO reordering when a dependency blocks
+        request <- readChan requestChan
+        case request of
+          Transaction instructions -> do
+            forM_ instructions $ \case
+              SubmitIfNeeded -> do
+                sIs <- readIORef submitInfos
+                unless (null sIs) submit_
+              Submit -> submit_
+              Post submitInfo -> post_ submitInfo
+              Notify eventBox -> do
+                event <- readIORef nextEvent
+                putMVar eventBox event
+              Checkpoint event -> liftIO $ Event.set event
+              Present (ManagedPresentQueue presentQueue mutex) presentAction postPresentAction ->
+                if presentQueue == queue
+                  then presentAction >>= postPresentAction
+                  else void $ ownedThread presentThreadOwner $ do
+                    -- TODO exception masking. Depends on how to handle actual async exceptions within Program
+                    takeMVar mutex
+                    result <- presentAction
+                    putMVar mutex ()
+                    postPresentAction result
+            queueLoop
+          Shutdown -> return ()
+
+  -- PERFORMANCE Could write to mutable vector instead of DList to avoid copies,
+  -- not sure how pointed-to arrays would be handled.
+  -- Also, could keep track of the length instead of using withArrayLen.
+  void $ auto $ threadRes queueLoop
+  -- TODO: Shutdown is dangerous: Staged VkSubmitInfos won't get submitted, other
+  -- threads might wait eternally for Events.
+
+  -- Not sure if the following has any benefits instead of just letting the thread be killed
+  -- Would need to wait after this, otherwise the thread just gets killed right away.
+  -- onDestroy $ writeChan requestChan Shutdown
+
+  return mq
 
 
 -- | Stage VkSubmitInfo for submission. Can stage many.
@@ -313,9 +315,9 @@ waitCheckpoint ManagedQueue{ requestChan } = do
 --
 --   Kills previous pump thread if it exists.
 attachQueuePump :: ManagedQueue -> Int -> Prog r ()
-attachQueuePump mq@ManagedQueue{ pumpThread } microSecs = do
+attachQueuePump mq@ManagedQueue{ pumpThread, pumpThreadOwner } microSecs = do
   takeMVar pumpThread >>= mapM_ killThread
-  tId <- forkIO $ forever $ do
+  tId <- ownedThread pumpThreadOwner $ forever $ do
     threadDelay microSecs
     submit mq
   putMVar pumpThread (Just tId)

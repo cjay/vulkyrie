@@ -11,6 +11,7 @@ import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Numeric.DataFrame
 import           UnliftIO.MVar
 
+import           Vulkyrie.Concurrent
 import           Vulkyrie.Engine.Main
 import           Vulkyrie.Engine.Simple3D
 import           Vulkyrie.GLFW
@@ -32,7 +33,7 @@ import           Vulkyrie.Vulkan.Shader
 -- import           Vulkyrie.Vulkan.UniformBufferObject
 import           Vulkyrie.Vulkan.VertexBuffer
 
-import Vulkyrie.Examples.Vertex
+import           Vulkyrie.Examples.Vertex
 
 rectVertices :: DataFrame Vertex '[XN 3]
 rectVertices = atLeastThree $ fromList
@@ -285,6 +286,7 @@ myAppStart winState cap@EngineCapability{ dev } = Resource $ do
   assets <- auto $ loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
   inputMutex <- newMVar ()
+  renderThreadOwner <- auto threadOwner
   return $ MyAppState{..}
 
 myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
@@ -322,7 +324,7 @@ myAppRenderFrame appState@MyAppState{..} framebuffer waitSemsWithStages signalSe
   putMVar inputMutex ()
 
   viewProjTransform <- viewProjMatrix (extent renderContext) lookDir
-  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems $ \cmdBuf -> Resource $
+  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems renderThreadOwner $ \cmdBuf -> Resource $
     recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 
@@ -342,6 +344,7 @@ data MyAppState
   , renderContextVar :: MVar RenderContext
   , winState         :: WindowState
   , inputMutex       :: MVar ()
+  , renderThreadOwner :: ThreadOwner
   }
 
 

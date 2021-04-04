@@ -5,22 +5,17 @@ module Vulkyrie.Vulkan.Command
   , metaCommandBuffers
   , makeCommandBufferBeginInfo
 
-  , forkWithCmdCap
   , postWithAndRetWait
   , postWith
   , postWith_
   , postWithAndRet
 
-  , ManagedCommandBuffer(..)
-  , releaseCommandBuffer
-
   , CommandCapability
   , metaCommandCapability
   , poolSwapOpportunity
-  , acquireCommandBuffer
 
   , CommandPoolPool
-  , metaCommandPoolPool
+  , commandPoolPool
   , acquireCommandPool
   , releaseCommandPool
 
@@ -43,6 +38,7 @@ import           Graphics.Vulkan.Marshal.Create
 import           UnliftIO.Concurrent
 import           UnliftIO.IORef
 
+import           Vulkyrie.Concurrent
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
@@ -106,7 +102,7 @@ postWithAndRetWait :: CommandCapability
                    -> Prog r a
 postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action =
   region $ do
-    managedCmdBuf <- acquireCommandBuffer cmdCap
+    managedCmdBuf <- auto $ resCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
     let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
     withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
@@ -115,11 +111,10 @@ postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action =
 
     queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
     waitDone queueEvent
-    releaseCommandBuffer managedCmdBuf
     return result
 
 
--- | Posts to ManagedQueue with new command buffer. Local continuation context.
+-- | Posts to ManagedQueue with new command buffer. Local region in a thread.
 --
 --   Asynchronously cleans up allocations from action after the command buffer
 --   has been executed.
@@ -127,16 +122,17 @@ postWithAndRet :: CommandCapability
                -> ManagedQueue
                -> [(VkSemaphore, VkPipelineStageFlags)]
                -> [VkSemaphore]
+               -> ThreadOwner
                -> (VkCommandBuffer -> Resource a)
                -> Prog r (a, QueueEvent)
-postWithAndRet cmdCap queue waitSemsWithStages signalSems action = do
+postWithAndRet cmdCap queue waitSemsWithStages signalSems actionThreadOwner action = do
   retBox <- newEmptyMVar
-  void $ forkIO $ run retBox
+  void $ ownedThread actionThreadOwner $ run retBox
   takeMVar retBox
 
   where
   run retBox = region $ do
-    managedCmdBuf <- acquireCommandBuffer cmdCap
+    managedCmdBuf <- auto $ resCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
     let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
     withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
@@ -146,11 +142,11 @@ postWithAndRet cmdCap queue waitSemsWithStages signalSems action = do
     queueEvent <- postNotify queue $ makeSubmitInfo waitSemsWithStages signalSems [cmdBuf]
     -- async return because caller doesn't care about internal cleanup
     putMVar retBox (result, queueEvent)
+    -- wait before command buffer and resources from action can be cleaned up
     waitDone queueEvent
-    releaseCommandBuffer managedCmdBuf
 
 
--- | Posts to ManagedQueue with new command buffer. Local continuation context.
+-- | Posts to ManagedQueue with new command buffer. Local region in a thread.
 --
 --   Asynchronously cleans up allocations from action after the command buffer
 --   has been executed.
@@ -158,14 +154,15 @@ postWith :: CommandCapability
          -> ManagedQueue
          -> [(VkSemaphore, VkPipelineStageFlags)]
          -> [VkSemaphore]
+         -> ThreadOwner
          -> (VkCommandBuffer -> Resource ())
          -> Prog r QueueEvent
-postWith cmdCap queue waitSemsWithStages signalSems action = do
-  ((), queueEvent) <- postWithAndRet cmdCap queue waitSemsWithStages signalSems action
+postWith cmdCap queue waitSemsWithStages signalSems actionThreadOwner action = do
+  ((), queueEvent) <- postWithAndRet cmdCap queue waitSemsWithStages signalSems actionThreadOwner action
   return queueEvent
 
 
--- | Posts to ManagedQueue with new command buffer. Local continuation context.
+-- | Posts to ManagedQueue with new command buffer. Local region in a thread.
 --
 --   Asynchronously cleans up allocations from action after the command buffer
 --   has been executed.
@@ -173,19 +170,11 @@ postWith_ :: CommandCapability
           -> ManagedQueue
           -> [(VkSemaphore, VkPipelineStageFlags)]
           -> [VkSemaphore]
+          -> ThreadOwner
           -> (VkCommandBuffer -> Resource ())
           -> Prog r ()
-postWith_ cmdCap queue waitSemsWithStages signalSems action =
-  void $ postWithAndRet cmdCap queue waitSemsWithStages signalSems action
-
-
-forkWithCmdCap :: CommandPoolPool
-               -> (forall r'. CommandCapability -> Prog r' ())
-               -> Prog r ThreadId
-forkWithCmdCap cmdPoolPool action =
-  forkIO $ region $ do
-    cmdCap <- auto $ metaCommandCapability cmdPoolPool
-    action cmdCap
+postWith_ cmdCap queue waitSemsWithStages signalSems actionThreadOwner action =
+  void $ postWithAndRet cmdCap queue waitSemsWithStages signalSems actionThreadOwner action
 
 
 data ManagedCommandBuffer = ManagedCommandBuffer
@@ -276,43 +265,45 @@ data CommandPoolPool = CommandPoolPool
 initialCmdPoolNum :: Int
 initialCmdPoolNum = 2
 
-metaCommandPoolPool :: VkDevice -> Word32 -> MetaResource CommandPoolPool
-metaCommandPoolPool device queueFamIdx =
-  metaResource
-  (\CommandPoolPool{..} -> do
-      -- WARNING destruction doesn't take into account CommandPools that are acquired
-      mvar <- newEmptyMVar
-      writeChan requestChan (Shutdown mvar)
-      takeMVar mvar
-
-      fresh <- takeMVar freshPools
+commandPoolPool :: VkDevice -> Word32 -> Resource CommandPoolPool
+commandPoolPool device queueFamIdx = Resource $ do
+  let mCommandPool = metaManagedCommandPool device queueFamIdx
+  freshPools <- autoDestroyCreate
+    (\mvar -> do
+      fresh <- takeMVar mvar
       mapM_ (destroy mCommandPool) fresh
-  )
-  (do
-      let mCommandPool = metaManagedCommandPool device queueFamIdx
+    )
+    (do
       initialCmdPools <- replicateM initialCmdPoolNum (create mCommandPool)
-      requestChan <- newChan
-      freshPools <- newMVar initialCmdPools
+      newMVar initialCmdPools
+    )
+  requestChan <- newChan
 
-      void $ forkIO $ loop $
-        readChan requestChan >>= \case
-          Shutdown mvar -> do
-            putMVar mvar ()
-            return $ AbortLoop ()
-          Release released -> do
-            -- TODO check if released pool has enough free buffers to be reused without reset
-            -- TODO pools that have outstanding buffers can not reset but can potentially still acquire buffers
+  void $ auto $ threadRes $ loop $
+    readChan requestChan >>= \case
+      Shutdown mvar -> do
+        putMVar mvar ()
+        return $ AbortLoop ()
+      Release released -> do
+        -- TODO check if released pool has enough free buffers to be reused without reset
+        -- TODO pools that have outstanding buffers can not reset but can potentially still acquire buffers
 
-            -- TODO not in separate thread for now because we would need to keep track of threads for clean shutdown
-            waitResetableCommandPool released
-            resetCommandPool released
-            touchCommandPool released -- make sure changes arrive in next thread that uses the pool
-            fresh <- takeMVar freshPools
-            putMVar freshPools (released:fresh)
-            return ContinueLoop
+        -- TODO not in separate thread for now because we would need to keep track of threads for clean shutdown
+        waitResetableCommandPool released
+        resetCommandPool released
+        touchCommandPool released -- make sure changes arrive in next thread that uses the pool
+        fresh <- takeMVar freshPools
+        putMVar freshPools (released:fresh)
+        return ContinueLoop
 
-      return CommandPoolPool{..}
-  )
+  onDestroy $ do
+    -- WARNING destruction doesn't take into account CommandPools that are acquired
+    mvar <- newEmptyMVar
+    writeChan requestChan (Shutdown mvar)
+    takeMVar mvar
+
+  return CommandPoolPool{..}
+
 
 
 acquireCommandPool :: CommandPoolPool -> Prog r ManagedCommandPool

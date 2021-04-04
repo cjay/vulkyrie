@@ -9,6 +9,7 @@ import           Vulkyrie.Vulkan.Device
 import           Vulkyrie.Vulkan.Memory
 import           Vulkyrie.Vulkan.Queue
 import           Vulkyrie.Vulkan.Sync
+import Vulkyrie.Concurrent
 
 data EngineCapability = EngineCapability
   { pdev     :: VkPhysicalDevice
@@ -20,4 +21,5 @@ data EngineCapability = EngineCapability
   , semPool  :: SemaphorePool
   , memPool  :: MemoryPool
   , descriptorPool :: VkDescriptorPool
+  , engineThreadOwner :: ThreadOwner
   }
