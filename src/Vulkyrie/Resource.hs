@@ -30,6 +30,7 @@ module Vulkyrie.Resource
 
   , onDestroy
   , autoDestroyCreate
+  , autoDestroyCreateWithUnmask
   , elementaryResource
   , inverseDestruction
   ) where
@@ -37,16 +38,16 @@ module Vulkyrie.Resource
 import           Control.Monad
 import           Data.Either
 import           Data.List.NonEmpty (NonEmpty(..))
+import           Data.Text (pack, Text)
 import           Data.Typeable
+import           GHC.Stack (HasCallStack, prettyCallStack, callStack)
+import           UnliftIO.Concurrent
 import           UnliftIO.Exception
     ( SomeException, Exception(..), finally, mask, mask_, try, throwIO )
 import           UnliftIO.IORef
 
 import           Vulkyrie.Program
 import           Vulkyrie.Utils (catchAsync, throwAsyncIO)
-import GHC.Stack (HasCallStack, prettyCallStack, callStack)
-import Data.Text (pack, Text)
-import UnliftIO.Concurrent
 
 class GenericResource res a where
   -- | Creates an action for use inside of region (see region below)
@@ -231,10 +232,10 @@ autoDestroyCreate free alloc =
 autoDestroyCreateWithUnmask :: (forall r. a -> Prog r ()) -- ^ free resource
                             -> (forall r. (Prog r b -> Prog r b) -> Prog r a) -- ^ allocate resource
                             -> Prog OpenResourceContext a
-autoDestroyCreateWithUnmask free alloc = do
-  ResourceContext{ destructorsVar } <- askResourceContext
+autoDestroyCreateWithUnmask free alloc =
   mask $ \unmask -> do
     a <- alloc unmask
+    ResourceContext{ destructorsVar } <- askResourceContext
     modifyIORef' destructorsVar (free a :)
     return a
 

@@ -50,11 +50,11 @@ import           UnliftIO.IORef
 import           UnliftIO.MVar
 import           UnliftIO.Concurrent
 
+import           Vulkyrie.Concurrent
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Sync
-import Vulkyrie.Concurrent
 
 data ManagedPresentQueue =
   ManagedPresentQueue

@@ -40,6 +40,7 @@ import qualified Control.Monad.Logger as Logger
 import           Control.Monad.Reader.Class
 import           Control.Monad.Trans (lift)
 import           Control.Monad.Trans.Reader (ReaderT, runReaderT)
+import           Data.Coerce (coerce)
 import           Data.Text
 import           GHC.Stack ( HasCallStack, callStack )
 import           Graphics.Vulkan.Core_1_0 ( VkResult(VK_SUCCESS) )
@@ -47,7 +48,6 @@ import           UnliftIO.Exception
 import           UnliftIO.IORef
 
 import           Vulkyrie.BuildFlags
-import Data.Coerce (coerce)
 
 -- | Marks a Prog to be using resources.
 --
@@ -62,7 +62,7 @@ data OpenResourceContext
 -- within a resource using action. See `closedProgram` for when you need this.
 data ClosedResourceContext
 
-data ProgContext = ProgContext
+-- data ProgContext = ProgContext
 
 newtype ResourceContext =
   ResourceContext
@@ -73,7 +73,7 @@ data Context =
   Context
   {
     resourceContext :: ResourceContext
-  , progContext :: ProgContext
+  -- , progContext :: ProgContext
   }
 
 newtype Prog r a = Prog (ReaderT Context (LoggingT IO) a)
@@ -86,7 +86,7 @@ askResourceContext = resourceContext <$> Prog ask
 runProgram :: HasCallStack => Prog ClosedResourceContext a -> IO a
 runProgram prog = do
   dummy <- newIORef $ impureThrow $ StringException "unexpected use of dummy resource context" callStack
-  run (Context (ResourceContext dummy) ProgContext) prog
+  run (Context (ResourceContext dummy)) prog
 
 withResourceContext :: ResourceContext -> Prog OpenResourceContext a -> Prog r a
 withResourceContext rctx (Prog prog) = Prog $ do
