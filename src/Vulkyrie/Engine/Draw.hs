@@ -22,6 +22,7 @@ import           Vulkyrie.Utils
 import           Vulkyrie.Vulkan.Engine
 import           Vulkyrie.Vulkan.Queue
 import           Vulkyrie.Vulkan.Sync
+import UnliftIO.IORef
 
 -- | Callback type for rendering into swapchain framebuffers.
 --
@@ -40,6 +41,8 @@ data RenderData
   = RenderData
   { swapchainVar              :: MVar VkSwapchainKHR
     -- ^ Swapchain in MVar to synchronize host access for vkAcquireNextImageKHR
+  , swapOutdated              :: IORef Bool
+    -- ^ Gets set to true if presentation faild with VK_ERROR_OUT_OF_DATE_KHR
   , presentQueue              :: ManagedPresentQueue
     -- ^ Presentation queue. Not necessarily the same as the graphics queue(s).
   , swapImgTokens             :: NatTokenVar
@@ -65,15 +68,25 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
     imageAvailSem <- head <$> acquireSemaphores semPool 1
 
     liftIO $ acquireToken swapImgTokens
-    imgIndex <- bracket
-      (takeMVar swapchainVar)
-      (putMVar swapchainVar)
+    -- A present that failed probably doesn't unacquire the image, for that
+    -- reason we HAVE to bail out here, as the vkAcquireNextImageKHR would
+    -- probably be an API violation if too many images are acquired, and indeed
+    -- the validation layers complain when that happens. "probably", because
+    -- acquiredness is not very well defined in the Vulkan spec.
+    -- See also:
+    -- - https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/1696
+    -- - https://github.com/KhronosGroup/Vulkan-Docs/issues/1242
+    readIORef swapOutdated >>= flip when
+      (do
+        releaseSemaphores semPool [imageAvailSem]
+        liftIO $ releaseToken swapImgTokens
+        throwIO $ VulkanException VK_ERROR_OUT_OF_DATE_KHR
+      )
+    (imgIndex, status) <- withMVar swapchainVar
       (\swapchain ->
         -- Acquiring an image from the swapchain
         -- Can throw VK_ERROR_OUT_OF_DATE_KHR
-        -- TODO: validation layer complaint about too many acquired images is
-        -- probably not justified, waiting for vulkan spec to be clarified
-        allocaPeek $ \imgIndexPtr -> runAndCatchVk
+        allocaPeekRet $ \imgIndexPtr -> runAndCatchVk
           ( vkAcquireNextImageKHR
                 dev swapchain maxBound
                 imageAvailSem VK_NULL_HANDLE imgIndexPtr
@@ -99,14 +112,29 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
 
     -- VK_ERROR_OUT_OF_DATE_KHR is supressed when presenting here, because ManagedQueue can't do anything with that
     let presentAction = present presentQueue [(swapchainVar, imgIndex)] [renderFinishedSem]
-    submitPresent cmdQueue presentQueue presentAction (liftIO $ releaseToken swapImgTokens)
+    submitPresent cmdQueue presentQueue presentAction $ \result -> do
+      if result < VK_SUCCESS && result /= VK_ERROR_OUT_OF_DATE_KHR then
+        throwIO $ VulkanException result
+      else do
+        -- The token release is kind of fake when out-of-date, but needed to
+        -- avoid deadlock in the next drawFrame call. The swapOutdated update
+        -- then tells that call what is going on.
+
+        -- TODO: It would be better to throw an exception at the asyncRedo
+        -- thread to abort things asap, but that needs a redesign of the
+        -- swapchain handling, and has to wait until everything is resourcified
+        -- to handle async exceptions gracefully.
+        when (result == VK_ERROR_OUT_OF_DATE_KHR) $ atomicWriteIORef swapOutdated True
+        liftIO $ releaseToken swapImgTokens
 
     void $ forkIO $ do
       waitDone nextEvent
       writeChan renderFinishedSems renderFinishedSem
       liftIO $ Event.signal frameFinishedEvent
 
-    -- TODO vkGetSwapchainStatusKHR not found, bug in vulkan-api?
+    -- TODO It would be nice to get a fresher swapchain status here, but
+    -- vkGetSwapchainStatusKHR not found, bug in vulkan-api?
     -- result <- runVkResult $ vkGetSwapchainStatusKHR dev swapchain
-    -- return (result == VK_SUBOPTIMAL_KHR)
-    return False
+
+    -- if it's VK_ERROR_OUT_OF_DATE_KHR instead, an exception will be thrown above
+    return (status == VK_SUBOPTIMAL_KHR)

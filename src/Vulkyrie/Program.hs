@@ -127,10 +127,11 @@ runVkResult action = do
 
 -- | Calls handler directly for error VkResult codes.
 -- TODO rewrite rule?
-runAndCatchVk :: MonadIO m => IO VkResult -> (VulkanException -> m ()) -> m ()
+runAndCatchVk :: MonadIO m => IO VkResult -> (VulkanException -> m ()) -> m VkResult
 runAndCatchVk action handler = do
   r <- liftIO action
   when (r < VK_SUCCESS) (handler $ VulkanException r)
+  pure r
 
 
 

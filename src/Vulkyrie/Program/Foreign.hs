@@ -14,7 +14,7 @@ module Vulkyrie.Program.Foreign
     , peek, peekArray, poke
     , ptrAtIndex
     , asListVk
-    , allocaPeek, allocaPeekVk, allocaPeekDF
+    , allocaPeek, allocaPeekRet, allocaPeekVk, allocaPeekDF
     , mallocRes, mallocArrayRes, newArrayRes
     , withUnsafeField
     , getListCountAndRef
@@ -108,6 +108,15 @@ allocaPeek :: Storable a
 allocaPeek f = alloca $ \ptr -> f ptr >> liftIO (Storable.peek ptr)
 {-# INLINE allocaPeek #-}
 
+allocaPeekRet :: Storable a
+              => (Ptr a -> Prog r b)
+              -> Prog r (a, b)
+allocaPeekRet f =
+  alloca $ \ptr -> do
+    result <- f ptr
+    content <- liftIO (Storable.peek ptr)
+    pure (content, result)
+{-# INLINE allocaPeekRet #-}
 
 peekArray :: Storable a => Int -> Ptr a -> Prog r [a]
 peekArray = Foreign.peekArray

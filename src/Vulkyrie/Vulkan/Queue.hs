@@ -62,7 +62,7 @@ data ManagedPresentQueue =
     -- ^ needed because there is no single management thread for the queue
   }
 
-present :: ManagedPresentQueue -> [(MVar VkSwapchainKHR, Word32)] -> [VkSemaphore] -> Prog r ()
+present :: ManagedPresentQueue -> [(MVar VkSwapchainKHR, Word32)] -> [VkSemaphore] -> Prog r VkResult
 present ManagedPresentQueue{..} images waitSems = do
   let (swapchainVars, imageIndices) = unzip images
   bracket
@@ -75,15 +75,9 @@ present ManagedPresentQueue{..} images waitSems = do
             &* setListRef @"pImageIndices" imageIndices
             &* setListCountAndRef @"waitSemaphoreCount" @"pWaitSemaphores" waitSems
             &* setListCountAndRef @"swapchainCount" @"pSwapchains" swapchains
-      withVkPtr presentInfo $ \ptr -> runAndCatchVk
+      -- not doing runVk here to let the postPresentAction handle the swapchain status
+      withVkPtr presentInfo $ \ptr -> liftIO
         (vkQueuePresentKHR presentQueue ptr)
-        ( \exception@(VulkanException ecode) ->
-            case ecode of
-              -- Ignoring this here is ok, vkAcquireNextImageKHR or
-              -- vkGetSwapchainStatusKHR will throw it again later.
-              VK_ERROR_OUT_OF_DATE_KHR -> return ()
-              _ -> throwIO exception
-        )
     )
 
 
@@ -162,7 +156,7 @@ data QueueRequest = Shutdown
 data Instruction = Post VkSubmitInfo
                  | SubmitIfNeeded
                  | Submit
-                 | Present ManagedPresentQueue (forall r. Prog r ()) (IO ())
+                 | Present ManagedPresentQueue (forall r. Prog r VkResult) (forall r. VkResult -> Prog r ())
                  | Notify (MVar QueueEvent)
                  | Checkpoint Event
 
@@ -229,13 +223,13 @@ metaManagedQueue dev queue msp =
                   Checkpoint event -> liftIO $ Event.set event
                   Present (ManagedPresentQueue presentQueue mutex) presentAction postPresentAction ->
                     if presentQueue == queue
-                      then presentAction >> liftIO postPresentAction
+                      then presentAction >>= postPresentAction
                       else void $ forkIO $ do
                         -- TODO exception masking. Depends on how to handle actual async exceptions within Program
                         takeMVar mutex
-                        presentAction
+                        result <- presentAction
                         putMVar mutex ()
-                        liftIO postPresentAction
+                        postPresentAction result
                 queueLoop
               Shutdown -> return ()
 
@@ -252,7 +246,7 @@ post :: ManagedQueue -> VkSubmitInfo -> Prog r ()
 post ManagedQueue{ requestChan } submitInfo =
   writeChan requestChan $ Transaction [Post submitInfo]
 
-postSubmitPresent :: ManagedQueue -> VkSubmitInfo -> ManagedPresentQueue -> (forall r'. Prog r' ()) -> IO () -> Prog r ()
+postSubmitPresent :: ManagedQueue -> VkSubmitInfo -> ManagedPresentQueue -> (forall r. Prog r VkResult) -> (forall r. VkResult -> Prog r ()) -> Prog r' ()
 postSubmitPresent ManagedQueue{ requestChan } submitInfo presentQueue presentAction postPresentAction =
   writeChan requestChan $ Transaction
     [Post submitInfo, Submit, Present presentQueue presentAction postPresentAction]
@@ -267,7 +261,7 @@ submit :: ManagedQueue -> Prog r ()
 submit ManagedQueue{ requestChan } =
   writeChan requestChan $ Transaction [Submit]
 
-submitPresent :: ManagedQueue -> ManagedPresentQueue -> (forall r'. Prog r' ()) -> IO () -> Prog r ()
+submitPresent :: ManagedQueue -> ManagedPresentQueue -> (forall r. Prog r VkResult) -> (forall r. VkResult -> Prog r ()) -> Prog r' ()
 submitPresent ManagedQueue{ requestChan } presentQueue presentAction postPresentAction =
   writeChan requestChan $ Transaction
     [Submit, Present presentQueue presentAction postPresentAction]
