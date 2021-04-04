@@ -13,6 +13,7 @@ module Vulkyrie.Vulkan.Command
   , CommandCapability
   , metaCommandCapability
   , poolSwapOpportunity
+  , createCommandBuffer
 
   , CommandPoolPool
   , commandPoolPool
@@ -102,7 +103,7 @@ postWithAndRetWait :: CommandCapability
                    -> Prog r a
 postWithAndRetWait cmdCap queue waitSemsWithStages signalSems action =
   region $ do
-    managedCmdBuf <- auto $ resCommandBuffer cmdCap
+    managedCmdBuf <- auto $ createCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
     let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
     withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
@@ -132,7 +133,7 @@ postWithAndRet cmdCap queue waitSemsWithStages signalSems actionThreadOwner acti
 
   where
   run retBox = region $ do
-    managedCmdBuf <- auto $ resCommandBuffer cmdCap
+    managedCmdBuf <- auto $ createCommandBuffer cmdCap
     let cmdBuf = actualCmdBuf managedCmdBuf
     let cmdbBI = makeCommandBufferBeginInfo VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT Nothing
     withVkPtr cmdbBI $ runVk . vkBeginCommandBuffer cmdBuf
@@ -219,8 +220,8 @@ poolSwapOpportunity CommandCapability{..} = do
   writeIORef currentPool newPool
 
 -- | Resource for automatic acquire and release of command buffers
-resCommandBuffer :: CommandCapability -> MetaResource ManagedCommandBuffer
-resCommandBuffer cap =
+createCommandBuffer :: CommandCapability -> MetaResource ManagedCommandBuffer
+createCommandBuffer cap =
   metaResource
     releaseCommandBuffer
     (acquireCommandBuffer cap)
