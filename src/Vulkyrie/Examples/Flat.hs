@@ -97,7 +97,7 @@ makePipelineLayouts dev = Resource $ do
 loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Resource Assets
 loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = Resource $ do
   let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg", "sprite.png"]
-  (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
+  (textureReadyEvents, descrTextureInfos) <- unzip <$> mapM
     (auto . createTextureInfo cap True) texturePaths
 
   loadEvents <- newMVar $ textureReadyEvents

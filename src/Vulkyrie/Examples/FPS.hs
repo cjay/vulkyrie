@@ -132,7 +132,7 @@ loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = Resource $
 
   (indexBufReady, indexBuffer) <- auto $ createIndexBuffer cap indices
   let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
-  (textureReadyEvents, descrTextureInfos) <- auto $ unzip <$> mapM
+  (textureReadyEvents, descrTextureInfos) <- unzip <$> mapM
     (auto . createTextureInfo cap False) texturePaths
 
   loadEvents <- newMVar $ textureReadyEvents <> [vertexBufReady, indexBufReady]

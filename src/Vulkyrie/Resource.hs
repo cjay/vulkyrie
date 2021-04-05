@@ -14,9 +14,6 @@ module Vulkyrie.Resource
   , create
   , metaResource
 
-  , composeResource
-
-    -- * Resource Monad
   , Resource (..)
   , region
 
@@ -31,7 +28,6 @@ module Vulkyrie.Resource
   , onDestroy
   , autoDestroyCreate
   , autoDestroyCreateWithUnmask
-  , elementaryResource
   , inverseDestruction
   ) where
 
@@ -60,19 +56,6 @@ class GenericResource res a where
 auto_ :: GenericResource res a => res a -> Prog OpenResourceContext ()
 auto_ = void . auto
 
-instance GenericResource (Prog OpenResourceContext) a where
-  auto = id
-  {-# INLINE auto #-}
-
-  manual restore res = do
-    ctx <- makeResourceContext
-    let ResourceContext{ destructorsVar } = ctx
-    a <-
-      restore (withResourceContext ctx res)
-        `catchAsync` (\e -> readIORef destructorsVar >>= cleanup "manual" (Just e) >> throwAsyncIO e)
-    return (readIORef destructorsVar >>= cleanup "manual" Nothing, a)
-  {-# INLINE manual #-}
-
 -- | A MetaResource is only meant to correctly destroy resources that it created itself.
 --   It can create and destroy multiple values though.
 --
@@ -96,16 +79,10 @@ instance GenericResource MetaResource a where
   auto MetaResource{..} = autoDestroyCreate destroy create
   {-# INLINE auto #-}
 
-  manual restore MetaResource{..} = manual restore (autoDestroyCreate destroy create)
+  manual _ MetaResource{..} = do
+    x <- create
+    pure (destroy x, x)
   {-# INLINE manual #-}
-
-
--- | A bit more polymorphic than (>>=) of Resource.
---
---   Note that the resulting Resource is a GenericResource as well and can be further chained using composeResource.
-composeResource :: (GenericResource res1 a, GenericResource res2 b) => res1 a -> (a -> res2 b) -> Prog OpenResourceContext b
-composeResource ma fmb = auto ma >>= auto . fmb
-{-# INLINE composeResource #-}
 
 
 
@@ -119,9 +96,16 @@ composeResource ma fmb = auto ma >>= auto . fmb
 newtype Resource a = Resource (Prog OpenResourceContext a)
 
 instance GenericResource Resource a where
-  auto (Resource res) = auto res
+  auto (Resource res) = res
   {-# INLINE auto #-}
-  manual restore (Resource res) = manual restore res
+
+  manual restore (Resource res) = do
+    ctx <- makeResourceContext
+    let ResourceContext{ destructorsVar } = ctx
+    a <-
+      restore (withResourceContext ctx res)
+        `catchAsync` (\e -> readIORef destructorsVar >>= cleanup "manual" (Just e) >> throwAsyncIO e)
+    return (readIORef destructorsVar >>= cleanup "manual" Nothing, a)
   {-# INLINE manual #-}
 
 makeResourceContext :: Prog r ResourceContext
@@ -129,7 +113,7 @@ makeResourceContext = do
   destructorsVar <- newIORef []
   return ResourceContext{..}
 
--- | region establishes a scope for automatic resource destruction
+-- | Establishes a scope for automatic resource destruction.
 region :: HasCallStack => Prog OpenResourceContext a -> Prog r a
 region res = do
   let regionSrc = pack $ prettyCallStack callStack
@@ -142,6 +126,7 @@ region res = do
 
 data CleanupException = CleanupException
   { regionSrc :: Text
+    -- ^ where the resource was registered, for error messages
   , exceptionCausingCleanup :: Maybe SomeException
   , exceptionsDuringCleanup :: NonEmpty SomeException
   }
@@ -156,11 +141,13 @@ cleanup regionSrc origException destructors =
       e : es -> throwIO (CleanupException regionSrc origException (e :| es))
       [] -> return ()
 
+-- | For non-local registering of resources accross threads.
 data ResourceOwner =
   ResourceOwner
   { destructorsMVar :: MVar [Prog ClosedResourceContext ()]
   }
 
+-- | For non-local registering of resources accross threads.
 resourceOwner :: HasCallStack => Resource ResourceOwner
 resourceOwner = Resource $ do
   let regionSrc = pack $ prettyCallStack callStack
@@ -169,15 +156,15 @@ resourceOwner = Resource $ do
       takeMVar destructorsMVar >>= cleanup regionSrc Nothing)
     (ResourceOwner <$> newMVar [])
 
--- | Non-local registering of resources accross threads.
+-- | For non-local registering of resources accross threads.
 --
 -- Like a region, but after successful completion it registers the resource
 -- destructors with the given ResourceOwner. This is thread-safe.
 --
--- Warning: Only AFTER withResourceOwner finishes, the destructors get
--- registered there. Beware of ordering issues when having multiple threads use
--- withResourceOwner with the same owner to create resources that depend on each
--- other.
+-- Warning: Only AFTER the action passed to withResourceOwner finishes, the
+-- destructors get registered at the resource owner. Beware of ordering issues
+-- when having multiple threads use withResourceOwner with the same owner to
+-- create resources that depend on each other.
 withResourceOwner :: HasCallStack => ResourceOwner -> Prog OpenResourceContext a -> Prog r a
 withResourceOwner ResourceOwner{ destructorsMVar } res = do
   let regionSrc = pack $ prettyCallStack callStack
@@ -189,14 +176,22 @@ withResourceOwner ResourceOwner{ destructorsMVar } res = do
     modifyMVar_ destructorsMVar (pure . (destructors <>) )
     return a
 
+-- | Re-registers owned resources to the current region.
+--
+-- Beware: This only takes ownership of resources that are owned by the resource
+-- owner at the time of this call. Further resources can be registered with the
+-- resource owner after that.
 takeOwnership :: ResourceOwner -> Prog OpenResourceContext ()
 takeOwnership ResourceOwner{ destructorsMVar = consumedDestructorsMVar } =
   mask_ $ do
     destructors <- takeMVar consumedDestructorsMVar
     putMVar consumedDestructorsMVar []
     ResourceContext{ destructorsVar } <- askResourceContext
-    modifyIORef' destructorsVar (destructors ++)
+    modifyIORef' destructorsVar (destructors <>)
 
+-- | Makes a sub-resource-context as a resource.
+--
+-- Like `ResourceOwner`, but not thread-safe.
 resourceContext :: HasCallStack => Resource ResourceContext
 resourceContext = Resource $ do
   let regionSrc = pack $ prettyCallStack callStack
@@ -205,13 +200,16 @@ resourceContext = Resource $ do
       readIORef destructorsVar >>= cleanup regionSrc Nothing)
     makeResourceContext
 
+-- | Re-registers resources to the current region.
+--
+-- Like `takeOwnership`, but not thread-safe.
 takeContextOwnership :: ResourceContext -> Prog OpenResourceContext ()
 takeContextOwnership ResourceContext{ destructorsVar = consumedDestructorsVar } =
   mask_ $ do
     destructors <- readIORef consumedDestructorsVar
     atomicWriteIORef consumedDestructorsVar []
     ResourceContext{ destructorsVar } <- askResourceContext
-    modifyIORef' destructorsVar (destructors ++)
+    modifyIORef' destructorsVar (destructors <>)
 
 
 
@@ -228,6 +226,7 @@ autoDestroyCreate free alloc =
     ResourceContext{ destructorsVar } <- askResourceContext
     modifyIORef' destructorsVar (free a :)
     return a
+{-# INLINE autoDestroyCreate #-}
 
 autoDestroyCreateWithUnmask :: (forall r. a -> Prog r ()) -- ^ free resource
                             -> (forall r. (Prog r b -> Prog r b) -> Prog r a) -- ^ allocate resource
@@ -238,8 +237,13 @@ autoDestroyCreateWithUnmask free alloc =
     ResourceContext{ destructorsVar } <- askResourceContext
     modifyIORef' destructorsVar (free a :)
     return a
+{-# INLINE autoDestroyCreateWithUnmask #-}
 
--- TODO: this might behave unexpectedly with nested resources, as all destructor calls are reversed, even within nested ones
+-- TODO: fix for nested resources
+-- | Reverses destruction order.
+--
+-- Beware: This does not deal with nested resources correctly, as it reverses a
+-- flat list of all destructors currently.
 inverseDestruction :: Prog OpenResourceContext a -> Prog OpenResourceContext a
 inverseDestruction res = do
   ResourceContext outerDestrVar <- askResourceContext
@@ -263,17 +267,16 @@ asym ra rb =
     return b
 -}
 
--- | Runs given program when destroying the resource. Destruction order is bottom to top.
+-- | Runs given action when destroying the resource. Destruction order is bottom to top.
 --
---   Never use this to deallocate, that way you get no exception masking! Use elementaryResource!
+--  Never use this if there is a corresponding creation action. If an exception
+--  hits between creation and onDestroy, your resource will not be destroyed. Use
+--  autoDestroyCreate or metaResource instead.
+--
+--  This can be useful for parts of the resource cleanup that only become
+--  relevant once the resource has been created and is in active use.
 onDestroy :: Prog ClosedResourceContext () -> Prog OpenResourceContext ()
 onDestroy prog = do
   ResourceContext{ destructorsVar } <- askResourceContext
   modifyIORef' destructorsVar (prog :)
 {-# INLINE onDestroy #-}
-
--- | Resource version of autoDestroyCreate
-elementaryResource :: (forall r. a -> Prog r ()) -- ^ free resource
-                   -> (forall r. Prog r a) -- ^ allocate resource
-                   -> Resource a
-elementaryResource free alloc = Resource $ autoDestroyCreate free alloc

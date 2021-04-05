@@ -149,20 +149,20 @@ asListVk action = alloca $ \counterPtr -> do
     action counterPtr valPtr
     Foreign.peekArray counter valPtr
 
-mallocArrayRes :: Storable a => Int -> Resource (Ptr a)
+mallocArrayRes :: Storable a => Int -> MetaResource (Ptr a)
 mallocArrayRes n =
-  elementaryResource
+  metaResource
     Foreign.free
     (Foreign.mallocArray n)
 {-# INLINE mallocArrayRes #-}
 
-mallocRes :: Storable a => Resource (Ptr a)
-mallocRes = elementaryResource Foreign.free Foreign.malloc
+mallocRes :: Storable a => MetaResource (Ptr a)
+mallocRes = metaResource Foreign.free Foreign.malloc
 {-# INLINE mallocRes #-}
 
-newArrayRes :: Storable a => [a] -> Resource (Ptr a)
+newArrayRes :: Storable a => [a] -> MetaResource (Ptr a)
 newArrayRes xs =
-  elementaryResource
+  metaResource
     Foreign.free
     (Foreign.newArray xs)
 {-# INLINE newArrayRes #-}
