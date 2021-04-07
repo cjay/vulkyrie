@@ -7,6 +7,10 @@ module Vulkyrie.Concurrent
   , threadOwner
   , ownedThread
 
+  , Async
+  , asyncRes
+  , wait
+
   , asyncRedo
   ) where
 
@@ -124,6 +128,37 @@ ownedThread ThreadOwner{ owningThreadId, threadsVar } prog = do
       modifyMVar_ threadsVar $ pure . Set.delete threadId
     putMVar threadsVar $ Set.insert threadId threads
     pure threadId
+
+
+-- | Like Async from the async lib, but with threadRes exception behavior.
+--
+-- Some of the operations from the async lib probably rely on STM while this
+-- uses MVar, so not sure if all operations could be ported. A integration with
+-- the lib could be built if needed, calling cancel followed by poll on resource
+-- destruction, and then rethrowing the exception if found.
+data Async a =
+  Async
+  { threadId :: ThreadId
+  , result :: MVar a
+  }
+
+-- | An Async thread as a resource.
+--
+-- Not suitable for large numbers of threads that mostly end on their own. See
+-- threadOwner and ownedThread for that.
+asyncRes :: HasCallStack => (forall r. Prog r a) -> Resource (Async a)
+asyncRes prog = Resource $ do
+  result <- newEmptyMVar
+  threadId <- auto $ threadRes $ do
+    prog >>= putMVar result
+  pure $ Async{ threadId, result }
+
+wait :: Async a -> Prog r a
+wait Async{ result } = takeMVar result
+
+-- asyncThreadId :: Async a -> ThreadId
+-- asyncThreadId Async{ threadId } = threadId
+-- -- Will make use of NoFieldSelectors at some point
 
 
 data RedoSignal = SigRedo | SigExit deriving Eq

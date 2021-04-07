@@ -113,7 +113,6 @@ drawFrame EngineCapability{ dev, semPool, cmdQueue } RenderData{..} = do
       ((imageAvailSem, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) : nextSems_)
       [renderFinishedSem]
 
-    -- VK_ERROR_OUT_OF_DATE_KHR is supressed when presenting here, because ManagedQueue can't do anything with that
     let presentAction = present presentQueue [(swapchainVar, imgIndex)] [renderFinishedSem]
     submitPresent cmdQueue presentQueue presentAction $ \result -> do
       if result < VK_SUCCESS && result /= VK_ERROR_OUT_OF_DATE_KHR then

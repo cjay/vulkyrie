@@ -42,7 +42,6 @@ import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Graphics.Vulkan.Ext.VK_KHR_swapchain
 import           Graphics.Vulkan.Marshal.Create
-import           UnliftIO.Async
 import           UnliftIO.Chan
 import           UnliftIO.Exception
 import qualified UnliftIO.Foreign as Foreign
@@ -176,9 +175,9 @@ managedQueue dev queue msp = Resource $ do
 
   let mq = ManagedQueue { masterSemaphorePool=msp, .. }
       submit_ :: Prog r ()
-      submit_ = do
+      submit_ = region $ do
         fence <- acquireFence fencePool
-        fenceResetDone <- async $ resetFences fencePool
+        fenceResetDone <- auto $ asyncRes $ resetFences fencePool
         sIs <- DL.toList <$> readIORef submitInfos
         writeIORef submitInfos mempty
         runVk $ withArrayLen sIs $ \siLen siArr ->
@@ -221,10 +220,7 @@ managedQueue dev queue msp = Resource $ do
                 if presentQueue == queue
                   then presentAction >>= postPresentAction
                   else void $ ownedThread presentThreadOwner $ do
-                    -- TODO exception masking. Depends on how to handle actual async exceptions within Program
-                    takeMVar mutex
-                    result <- presentAction
-                    putMVar mutex ()
+                    result <- withMVar mutex $ const presentAction
                     postPresentAction result
             queueLoop
           Shutdown -> return ()
