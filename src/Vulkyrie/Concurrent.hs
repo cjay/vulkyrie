@@ -93,7 +93,7 @@ threadOwner = Resource $ do
   owningThreadId <- myThreadId
   autoDestroyCreate
     (\ThreadOwner{ threadsVar } -> do
-      threads <- takeMVar threadsVar
+      threads <- uninterruptibleMask_ $ takeMVar threadsVar
       unless (null threads) $
         logDebugN $
           "killing some threads through ThreadOwner destruction\n\nowner defined at: "
@@ -109,7 +109,7 @@ threadOwner = Resource $ do
 ownedThread :: HasCallStack => ThreadOwner -> (forall r. Prog r ()) -> Prog r' ThreadId
 ownedThread ThreadOwner{ owningThreadId, threadsVar } prog = do
   let threadSrc = pack $ prettyCallStack callStack
-  mask_ $ do
+  uninterruptibleMask_ $ do
     threads <- takeMVar threadsVar
     threadId <- forkIOWithUnmask $ \unmask -> do
       threadId <- myThreadId

@@ -39,7 +39,7 @@ import           Data.Typeable
 import           GHC.Stack (HasCallStack, prettyCallStack, callStack)
 import           UnliftIO.Concurrent
 import           UnliftIO.Exception
-    ( SomeException, Exception(..), finally, mask, mask_, try, throwIO )
+    ( SomeException, Exception(..), finally, mask, mask_, try, throwIO, uninterruptibleMask_ )
 import           UnliftIO.IORef
 
 import           Vulkyrie.Program
@@ -114,6 +114,11 @@ makeResourceContext = do
   return ResourceContext{..}
 
 -- | Establishes a scope for automatic resource destruction.
+--
+-- Warning: The destructor calls happen within mask, but not
+-- uninterruptibleMask. This is a compromise to make the chance of getting stuck
+-- in destructors slightly less, but might lead to incomplete destruction. Not
+-- sure if this is the right decision.
 region :: HasCallStack => Prog OpenResourceContext a -> Prog r a
 region res = do
   let regionSrc = pack $ prettyCallStack callStack
@@ -153,7 +158,7 @@ resourceOwner = Resource $ do
   let regionSrc = pack $ prettyCallStack callStack
   autoDestroyCreate
     (\ResourceOwner{ destructorsMVar } ->
-      takeMVar destructorsMVar >>= cleanup regionSrc Nothing)
+      uninterruptibleMask_ (takeMVar destructorsMVar) >>= cleanup regionSrc Nothing)
     (ResourceOwner <$> newMVar [])
 
 -- | For non-local registering of resources accross threads.
@@ -173,7 +178,7 @@ withResourceOwner ResourceOwner{ destructorsMVar } res = do
     a <- restore (withResourceContext ctx res)
       `catchAsync` (\e -> readIORef destructorsVar >>= cleanup regionSrc (Just e) >> throwAsyncIO e)
     destructors <- readIORef destructorsVar
-    modifyMVar_ destructorsMVar (pure . (destructors <>) )
+    uninterruptibleMask_ $ modifyMVar_ destructorsMVar (pure . (destructors <>) )
     return a
 
 -- | Re-registers owned resources to the current region.
@@ -183,7 +188,7 @@ withResourceOwner ResourceOwner{ destructorsMVar } res = do
 -- resource owner after that.
 takeOwnership :: ResourceOwner -> Prog OpenResourceContext ()
 takeOwnership ResourceOwner{ destructorsMVar = consumedDestructorsMVar } =
-  mask_ $ do
+  uninterruptibleMask_ $ do
     destructors <- takeMVar consumedDestructorsMVar
     putMVar consumedDestructorsMVar []
     ResourceContext{ destructorsVar } <- askResourceContext
