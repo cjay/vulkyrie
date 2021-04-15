@@ -427,7 +427,7 @@ createImage EngineCapability{ dev, memPool } width height mipLevels samples form
     -- releasing the image before releasing the memory that is bound to it
     in Resource $ inverseDestruction $ do
       image <- auto metaImage
-      memLoc <- allocBindImageMem memPool propFlags image
+      memLoc <- auto $ allocBindImageMem memPool propFlags image
       return (memLoc, image)
 
 

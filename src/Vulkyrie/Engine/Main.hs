@@ -85,7 +85,7 @@ runVulkanProgram App{ .. } = runProgram $ region $ do
 
     semPool <- auto $ metaSemaphorePool msp
     cmdCap <- auto $ metaCommandCapability cmdPoolPool
-    memPool <- auto $ metaMemoryPool pdev dev
+    memPool <- auto $ createMemoryPool pdev dev
     descriptorPool <- auto $ createDescriptorPool dev 100 -- TODO make dynamic
     engineThreadOwner <- auto threadOwner
     -- TODO create permanently mapped reusable staging buffer

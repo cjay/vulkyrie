@@ -64,7 +64,6 @@ library
                       , containers
                       , dimensions
                       , dlist
-                      , dynamic-mvector
                       , easytensor
                       , easytensor-vulkan
                       , GLFW-b >= 3.3.0.0
@@ -72,6 +71,7 @@ library
                       , monad-logger
                       , mtl
                       , primitive
+                      , safe
                       , template-haskell
                       , text
                       , transformers
