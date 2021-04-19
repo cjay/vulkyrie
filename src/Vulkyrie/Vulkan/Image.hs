@@ -1,5 +1,5 @@
 module Vulkyrie.Vulkan.Image
-  ( createTextureInfo
+  ( createTextureFromFile
   , createTextureImageView
   , createTextureSampler
   , textureImageInfo
@@ -36,11 +36,11 @@ import           Vulkyrie.Vulkan.Queue
 import           Vulkyrie.Vulkan.Sync
 
 
-createTextureInfo :: EngineCapability
+createTextureFromFile :: EngineCapability
                   -> Bool
                   -> FilePath
                   -> Resource (QueueEvent, VkDescriptorImageInfo)
-createTextureInfo cap@EngineCapability{ dev } magPixelated path = Resource $ do
+createTextureFromFile cap@EngineCapability{ dev } magPixelated path = Resource $ do
     (finishEvent, textureView, mipLevels) <- auto $ createTextureImageView cap path
     textureSampler <- auto $ createTextureSampler dev mipLevels magPixelated
     let info = textureImageInfo textureView textureSampler

@@ -3,7 +3,6 @@
 
 layout( push_constant ) uniform MVPMatrix {
   mat4 mvpMatrix;
-  // vec2 size;
 };
 
 vec2 positions[6] = vec2[] (
@@ -21,7 +20,6 @@ out gl_PerVertex {
   vec4 gl_Position;
 };
 
-// TODO gl_VertexIndex
 void main() {
   gl_Position = mvpMatrix * vec4(positions[gl_VertexIndex], 0.0, 1.0);
   fragTexCoord = positions[gl_VertexIndex];

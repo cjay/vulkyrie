@@ -11,9 +11,6 @@ copyright:           Copyright: (c) 2018-2020 Johannes Krause, Artem Chirkin
 category:            vulkan, bsd3, graphics, game engine, library
 build-type:          Simple
 cabal-version:       1.22
-extra-source-files:
-    shaders/triangle.frag
-    shaders/triangle.vert
 
 flag dev
     description:

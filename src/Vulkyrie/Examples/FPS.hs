@@ -78,23 +78,25 @@ viewProjMatrix extent (yaw, pitch) = do
 
 loadShaders :: EngineCapability -> Resource [VkPipelineShaderStageCreateInfo]
 loadShaders EngineCapability{ dev } = Resource $ do
-    vertSM <- auto $ shaderModuleFile dev "shaders/triangle.vert.spv"
-    fragSM <- auto $ shaderModuleFile dev "shaders/triangle.frag.spv"
+  vertSM <- auto $ shaderModuleFile dev "shaders/single_texture.vert.spv"
+  fragSM <- auto $ shaderModuleFile dev "shaders/single_sampler.frag.spv"
 
-    shaderVert
-      <- createShaderStage vertSM
-            VK_SHADER_STAGE_VERTEX_BIT
-            Nothing
+  shaderVert <-
+    createShaderStage
+      vertSM
+      VK_SHADER_STAGE_VERTEX_BIT
+      Nothing
 
-    shaderFrag
-      <- createShaderStage fragSM
-            VK_SHADER_STAGE_FRAGMENT_BIT
-            Nothing
+  shaderFrag <-
+    createShaderStage
+      fragSM
+      VK_SHADER_STAGE_FRAGMENT_BIT
+      Nothing
 
-    logInfo $ "Createad vertex shader module: " <> showt shaderVert
-    logInfo $ "Createad fragment shader module: " <> showt shaderFrag
+  logInfo $ "Createad vertex shader module: " <> showt shaderVert
+  logInfo $ "Createad fragment shader module: " <> showt shaderFrag
 
-    return [shaderVert, shaderFrag]
+  return [shaderVert, shaderFrag]
 
 
 makePipelineLayouts :: VkDevice -> Resource (VkDescriptorSetLayout, VkPipelineLayout)
@@ -122,7 +124,7 @@ makePipelineLayouts dev = Resource $ do
 
 
 loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Resource Assets
-loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = Resource $ do
+loadAssets cap@EngineCapability{ dev, descriptorPool } materialDSL = Resource $ do
   let vertices = rectVertices
       indices = rectIndices
       indexCount = dfLen indices
@@ -133,7 +135,7 @@ loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = Resource $
   (indexBufReady, indexBuffer) <- auto $ createIndexBuffer cap indices
   let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg"]
   (textureReadyEvents, descrTextureInfos) <- unzip <$> mapM
-    (auto . createTextureInfo cap False) texturePaths
+    (auto . createTextureFromFile cap False) texturePaths
 
   loadEvents <- newMVar $ textureReadyEvents <> [vertexBufReady, indexBufReady]
 
@@ -142,7 +144,7 @@ loadAssets cap@EngineCapability { dev, descriptorPool } materialDSL = Resource $
   forM_ (zip descrTextureInfos materialDescrSets) $
     \(texInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [] [texInfo]
 
-  return $ Assets {..}
+  return Assets{..}
 
 data Assets
   = Assets
@@ -160,21 +162,21 @@ prepareRender :: EngineCapability
               -> VkPipelineLayout
               -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
 prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = Resource $ do
-  let SwapchainInfo { swapImgs, swapExtent, swapImgFormat } = swapInfo
+  let SwapchainInfo{ swapImgs, swapExtent, swapImgFormat } = swapInfo
   msaaSamples <- getMaxUsableSampleCount pdev
   depthFormat <- findDepthFormat pdev
 
   swapImgViews <-
     mapM (\image -> auto $ createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
   renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-  graphicsPipeline
-    <- auto $ createGraphicsPipeline dev swapExtent
-                              [vertIBD] vertIADs
-                              shaderStages
-                              renderPass
-                              pipelineLayout
-                              msaaSamples
-                              False
+  graphicsPipeline <-
+    auto $ createGraphicsPipeline dev swapExtent
+      [vertIBD] vertIADs
+      shaderStages
+      renderPass
+      pipelineLayout
+      msaaSamples
+      False
 
   (nextSems, privAttachments) <- auto $ createPrivateAttachments cap swapExtent swapImgFormat msaaSamples
   framebuffers <- mapM
@@ -268,10 +270,10 @@ myAppNewWindow window = Resource $ do
   --   _ <- swapMVar mousePos (x, y)
   --   return ()
 
-  return WindowState {..}
+  return WindowState{..}
 
 myAppMainThreadHook :: WindowState -> IO ()
-myAppMainThreadHook WindowState {..} = do
+myAppMainThreadHook WindowState{..} = do
   pos <- GLFW.getCursorPos window
   _ <- tryTakeMVar mousePos
   putMVar mousePos pos
@@ -282,12 +284,11 @@ myAppStart :: WindowState -> EngineCapability -> Resource MyAppState
 myAppStart winState cap@EngineCapability{ dev } = Resource $ do
   shaderStages <- auto $ loadShaders cap
   (materialDSL, pipelineLayout) <- auto $ makePipelineLayouts dev
-  -- TODO beware of automatic resource lifetimes when making assets dynamic
   assets <- auto $ loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
   inputMutex <- newMVar ()
   renderThreadOwner <- auto threadOwner
-  return $ MyAppState{..}
+  return MyAppState{..}
 
 myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
 myAppNewSwapchain MyAppState{..} swapInfo = Resource $ do
