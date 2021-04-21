@@ -9,4 +9,4 @@ just draw a triangle with Vulkan in Haskell.
 
 For a non-trivial example project see [some-roguelike](https://github.com/cjay/some-roguelike).
 
-If you want to try, as of right now you should use GHC 8.8, as I'm waiting for multiple dependencies to accept my pull requests for 8.10.
+If you want to try, the GHC version used for development currently is 8.10.4, cabal-install version 3.4.0.0.

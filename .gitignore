@@ -1,18 +1,17 @@
-*.o
-*.hi
-*.summary
+# Handle ignores for your editor and OS locally:
+# how: https://docs.github.com/en/github/getting-started-with-github/ignoring-files#configuring-ignored-files-for-all-repositories-on-your-computer
+# why: http://stratus3d.com/blog/2018/06/03/stop-excluding-editor-temp-files-in-gitignore/
+
+# haskell
 cabal.project.local
-dist/
-dist-*/
-.ghc.environment.*
-.ghc-sandbox/
-.ghcjs-sandbox/
-*.tmp
-*.ps
-*.hp
-*.pdf
-*.prof
-*.aux
-.dir-locals.el
-.DS_Store
-*.spv
+dist
+dist-newstyle
+hie.yaml
+.stack-work
+
+# compiled shaders
+shaders/*.spv
+
+# vulkan-tutorial example files
+models/chalet.obj
+textures/chalet.jpg

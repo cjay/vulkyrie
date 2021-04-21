@@ -1,23 +1,44 @@
+cabal-version:       2.2
 name:                vulkyrie
 version:             0.1.0.0
 synopsis:            Vulkan based Graphics Engine
 description:         A graphics engine based on Vulkan.
 homepage:            https://github.com/cjay/vulkyrie
-license:             BSD3
+license:             BSD-3-Clause
 license-file:        LICENSE
 author:              Johannes Krause
 maintainer:          cjay@brainuse.de
-copyright:           Copyright: (c) 2018-2020 Johannes Krause, Artem Chirkin
+copyright:           Copyright (C) 2019-2021 Johannes Krause,
+                     Copyright (C) 2018-2019 Artem Chirkin
 category:            vulkan, bsd3, graphics, game engine, library
 build-type:          Simple
-cabal-version:       1.22
+tested-with:         GHC == 8.10.4
 
 flag dev
     description:
         Turn on development settings, such as Vulkan validation layers.
     default: True
 
+common basic
+    default-language:    Haskell2010
+    default-extensions:  DataKinds
+                       , LambdaCase
+                       , NamedFieldPuns
+                       , OverloadedStrings
+                       , RecordWildCards
+                       , ScopedTypeVariables
+                       , TypeApplications
+    ghc-options: -Wall -fobject-code
+    if flag(dev)
+        cpp-options: -DDEVELOPMENT
+        -- asserts are ignored when optimization is turned on
+        ghc-options: -fno-ignore-asserts
+    else
+        ghc-options: -O2
+    build-depends: base >= 4.9     && < 4.15
+
 library
+    import:             basic
     hs-source-dirs:     src
     exposed-modules:    Vulkyrie.BuildFlags
                         Vulkyrie.Concurrent
@@ -56,13 +77,12 @@ library
                         Vulkyrie.Vulkan.UniformBufferObject
                         Vulkyrie.Vulkan.VertexBuffer
     build-depends:      apecs
-                      , base >= 4.9
                       , concurrent-extra
                       , containers
                       , dimensions
                       , dlist
-                      , easytensor
-                      , easytensor-vulkan
+                      , easytensor >= 2.1.1.1
+                      , easytensor-vulkan >= 2.0.2.1
                       , GLFW-b >= 3.3.0.0
                       , JuicyPixels
                       , monad-logger
@@ -75,36 +95,15 @@ library
                       , unliftio
                       , unliftio-core
                       , vector
-                      , vulkan-api >= 1.1.4.0
+                      , vulkan-api >= 1.4.0.0
                       , wavefront
-    default-language:    Haskell2010
-    default-extensions:  DataKinds
-                       , LambdaCase
-                       , NamedFieldPuns
-                       , OverloadedStrings
-                       , RecordWildCards
-                       , ScopedTypeVariables
-                       , TypeApplications
-    if flag(dev)
-        cpp-options: -DDEVELOPMENT
-        ghc-options: -O0 -Wall
-    else
-        ghc-options: -O2
 
 executable vulkan-experiment
+    import:              basic
     hs-source-dirs:      app
     main-is:             Main.hs
-    ghc-options:         -threaded -with-rtsopts=-N
-    build-depends:       base
-                       , vulkyrie
-    default-language:    Haskell2010
-    if flag(dev)
-        cpp-options: -DDEVELOPMENT
-        ghc-options: -O0 -Wall
-    else
-        ghc-options: -O2
-
-
+    build-depends:       vulkyrie
+    ghc-options: -threaded -with-rtsopts=-N
 
 source-repository head
     type:     git
