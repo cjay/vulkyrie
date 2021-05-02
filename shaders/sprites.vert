@@ -1,11 +1,16 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
-layout( push_constant ) uniform MVPMatrix {
-  mat4 mvpMatrix;
+layout( push_constant ) uniform Push {
+  mat4 transform;
+  vec2 pos;
+  vec2 size;
+  vec2 uvPos;
+  vec2 uvSize;
 };
 
-vec2 positions[6] = vec2[] (
+// a square with top left at origin and edge length 1
+vec2 vertices[6] = vec2[] (
    vec2(0.0, 0.0),
    vec2(1.0, 0.0),
    vec2(1.0, 1.0),
@@ -21,6 +26,6 @@ out gl_PerVertex {
 };
 
 void main() {
-  gl_Position = mvpMatrix * vec4(positions[gl_VertexIndex], 0.0, 1.0);
-  fragTexCoord = positions[gl_VertexIndex];
+  gl_Position = transform * vec4(pos + size * vertices[gl_VertexIndex], 1.0, 1.0);
+  fragTexCoord = uvPos + uvSize * vertices[gl_VertexIndex];
 }

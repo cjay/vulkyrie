@@ -4,6 +4,7 @@ module Vulkyrie.Vulkan.Shader
   , createShaderStage
   , metaShaderModule
   , shaderModuleFile
+  , shaderFile
   , specializationInfo
   ) where
 
@@ -78,6 +79,10 @@ shaderModuleFile dev fpath = Resource $ do
     content <- auto $ metaFileContent fpath
     outer $ auto $ metaShaderModule dev content
 
+shaderFile :: VkDevice -> VkShaderStageFlagBits -> FilePath -> Resource VkPipelineShaderStageCreateInfo
+shaderFile dev flags file = Resource $ do
+  sm <- auto $ shaderModuleFile dev file
+  createShaderStage sm flags Nothing
 
 specializationInfo :: [VkSpecializationMapEntry] -> CSize -> Ptr Void -> VkSpecializationInfo
 specializationInfo mapEntries dataSize pData = createVk

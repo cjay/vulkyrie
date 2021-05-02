@@ -1,15 +1,18 @@
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module Vulkyrie.Examples.Flat
   ( runMyVulkanProgram
   ) where
 
 import           Control.Monad
+import Data.Vector (Vector)
+import qualified Data.Vector as Vector
 import qualified Graphics.UI.GLFW         as GLFW
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
-import           Graphics.Vulkan.Ext.VK_KHR_swapchain
-import           Numeric.DataFrame
+import Numeric.DataFrame ( DataFrame(Vec2), Vector2(vec2), vec4, scalar )
 import           UnliftIO.Chan
 import           UnliftIO.MVar
 
@@ -19,82 +22,18 @@ import           Vulkyrie.Engine.Main
 import           Vulkyrie.Engine.Simple2D
 import           Vulkyrie.Program
 import           Vulkyrie.Resource
-import           Vulkyrie.Utils                (orthogonalVk, scale)
 import           Vulkyrie.Vulkan.Command
-import           Vulkyrie.Vulkan.Default.Pipeline
-import           Vulkyrie.Vulkan.Default.RenderPass
 import           Vulkyrie.Vulkan.Descriptor
-import           Vulkyrie.Vulkan.Device
 import           Vulkyrie.Vulkan.Engine
-import           Vulkyrie.Vulkan.Framebuffer
 import           Vulkyrie.Vulkan.Image
-import           Vulkyrie.Vulkan.PipelineLayout
 import           Vulkyrie.Vulkan.Presentation
 import           Vulkyrie.Vulkan.Queue
-import           Vulkyrie.Vulkan.Shader
--- import           Vulkyrie.Vulkan.UniformBufferObject
+import           Vulkyrie.Engine.Pipeline
+import qualified Vulkyrie.Engine.Pipeline.Sprite as Sprite
+import qualified Vulkyrie.Engine.Pipeline.ColorRect as ColorRect
+import Numeric.Matrix (Mat44f)
 
-
-
-
--- | cam pos using (x, y), ortho projection from z 0.1 to 10 excluding boundaries.
-viewProjMatrix :: VkExtent2D -> Vec2f -> Prog r Mat44f
-viewProjMatrix extent (Vec2 x y) = do
-  let width :: Float = fromIntegral $ getField @"width" extent
-      height :: Float = fromIntegral $ getField @"height" extent
-      camPos = Vec3 x y 0
-      view = translate3 (- camPos)
-      camHeight = 5
-      proj = orthogonalVk 0.1 10 (width/height * camHeight) camHeight
-  return $ view %* proj
-
-
-loadShaders :: EngineCapability -> Resource [VkPipelineShaderStageCreateInfo]
-loadShaders EngineCapability{ dev } = Resource $ do
-  vertSM <- auto $ shaderModuleFile dev "shaders/sprites.vert.spv"
-  fragSM <- auto $ shaderModuleFile dev "shaders/single_sampler.frag.spv"
-
-  shaderVert <-
-    createShaderStage
-      vertSM
-      VK_SHADER_STAGE_VERTEX_BIT
-      Nothing
-
-  shaderFrag <-
-    createShaderStage
-      fragSM
-      VK_SHADER_STAGE_FRAGMENT_BIT
-      Nothing
-
-  logInfo $ "Createad vertex shader module: " <> showt shaderVert
-  logInfo $ "Createad fragment shader module: " <> showt shaderFrag
-
-  return [shaderVert, shaderFrag]
-
-
-makePipelineLayouts :: VkDevice -> Resource (VkDescriptorSetLayout, VkPipelineLayout)
-makePipelineLayouts dev = Resource $ do
-  frameDSL <- auto $ createDescriptorSetLayout dev [] --[uniformBinding 0]
-  -- TODO automate bind ids
-  materialDSL <- auto $ createDescriptorSetLayout dev [samplerBinding 0]
-  pipelineLayout <- auto $ createPipelineLayout dev
-    -- descriptor set numbers 0,1,..
-    [frameDSL, materialDSL]
-    -- push constant ranges
-    [ pushConstantRange VK_SHADER_STAGE_VERTEX_BIT 0 64
-    ]
-
-  -- (transObjMems, transObjBufs) <- unzip <$> uboCreateBuffers pdev dev transObjSize maxFramesInFlight
-  -- descriptorBufferInfos <- mapM (uboBufferInfo transObjSize) transObjBufs
-
-  -- frameDescrSets <- allocateDescriptorSetsForLayout dev descriptorPool maxFramesInFlight frameDSL
-
-  -- forM_ (zip descriptorBufferInfos frameDescrSets) $
-    -- \(bufInfo, descrSet) -> updateDescriptorSet dev descrSet 0 [bufInfo] []
-
-  return (materialDSL, pipelineLayout)
-
-
+type Pipelines = NumberElems '[Sprite.Pipeline, ColorRect.Pipeline]
 
 loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Resource Assets
 loadAssets cap@EngineCapability{ dev, descriptorPool } materialDSL = Resource $ do
@@ -119,56 +58,60 @@ data Assets
   }
 
 
-prepareRender :: EngineCapability
-              -> SwapchainInfo
-              -> [VkPipelineShaderStageCreateInfo]
-              -> VkPipelineLayout
-              -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
-prepareRender cap@EngineCapability{ dev, pdev } swapInfo shaderStages pipelineLayout = Resource $ do
-  let SwapchainInfo{ swapImgs, swapExtent, swapImgFormat } = swapInfo
-  msaaSamples <- getMaxUsableSampleCount pdev
-  -- to turn off msaa:
-  -- let msaaSamples = VK_SAMPLE_COUNT_1_BIT
-  depthFormat <- findDepthFormat pdev
-
-  swapImgViews <-
-    mapM (\image -> auto $ createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
-  renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
-  graphicsPipeline <-
-    auto $ createGraphicsPipeline dev swapExtent
-      [] []
-      shaderStages
-      renderPass
-      pipelineLayout
-      msaaSamples
-      True
-
-  (nextSems, privAttachments) <- auto $ createPrivateAttachments cap swapExtent swapImgFormat msaaSamples
-  framebuffers <- mapM
-    (auto . createFramebuffer dev renderPass swapExtent . (privAttachments <>) . (:[]))
-    swapImgViews
-
-  return (framebuffers, nextSems, RenderContext graphicsPipeline renderPass pipelineLayout swapExtent)
-
-
-
-makeWorld :: GameState -> Assets -> Prog r (Vec2f, [Object])
-makeWorld GameState{..} Assets{..} = do
-
-  let objs = flip map walls $
-        \(Vec2 x y) ->
-          Object
-          { materialBindInfo = DescrBindInfo (materialDescrSets !! 1) []
-          , modelMatrix = (scale 1 1 1) %* (translate3 $ vec3 (realToFrac x) (realToFrac y) (1))
-          }
-
+renderWorld ::
+  forall pipelines spritePipelineIndex colorRectPipelineIndex r.
+  (
+    PipelineIndex pipelines Sprite.Pipeline spritePipelineIndex,
+    PipelineIndex pipelines ColorRect.Pipeline colorRectPipelineIndex
+  ) =>
+  Vector ProtoPipeline -> Vector VkPipeline -> Mat44f -> GameState -> Assets -> VkCommandBuffer -> Prog r ()
+renderWorld pipelines pipelineObjs transform GameState{..} Assets{..} cmdBuf = do
   -- a bit simplistic. when hot loading assets, better filter the objects that depend on them
   events <- takeMVar loadEvents
   notDone <- filterM (fmap not . isDone) events
   let allDone = null notDone
   putMVar loadEvents notDone
 
-  return (camPos, if allDone then objs else [])
+  when allDone $ do
+    do
+      let pipeline = pipelines Vector.! indexVal @spritePipelineIndex
+          ProtoPipeline { pipelineLayout } = pipeline
+          pipelineObj = pipelineObjs Vector.! indexVal @spritePipelineIndex
+
+      liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineObj
+      Sprite.pushTransform cmdBuf pipelineLayout transform
+      bindMat cmdBuf pipelineLayout $ DescrBindInfo (materialDescrSets !! 0) []
+      Sprite.pushSize cmdBuf pipelineLayout $ vec2 1 1
+      Sprite.pushUVPos cmdBuf pipelineLayout $ vec2 0 0
+      Sprite.pushUVSize cmdBuf pipelineLayout $ vec2 1 1
+      forM_ walls $ \(Vec2 x y) -> do
+        Sprite.pushPos cmdBuf pipelineLayout (vec2 (realToFrac x) (realToFrac y))
+        Sprite.draw cmdBuf
+    do
+      let pipeline = pipelines Vector.! indexVal @colorRectPipelineIndex
+          ProtoPipeline { pipelineLayout } = pipeline
+          pipelineObj = pipelineObjs Vector.! indexVal @colorRectPipelineIndex
+
+      liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineObj
+      -- TODO ensure in types that only the pushTransform of ColorRect can be used
+      ColorRect.pushTransform cmdBuf pipelineLayout transform
+      let Vec2 x y = playerPos
+      ColorRect.pushPos cmdBuf pipelineLayout (vec2 (realToFrac x + 0.5) (realToFrac y + 0.5))
+      ColorRect.pushSize cmdBuf pipelineLayout $ vec2 1 1.2
+      ColorRect.pushCenter cmdBuf pipelineLayout $ vec2 0.5 0.6
+      ColorRect.pushTurns cmdBuf pipelineLayout $ scalar (1/16)
+      ColorRect.pushColor cmdBuf pipelineLayout $ vec4 0.8 0.5 0.7 0.8
+      ColorRect.draw cmdBuf
+
+myAppRenderFrame :: MyAppState -> RenderFun
+myAppRenderFrame MyAppState{..} framebuffer waitSemsWithStages signalSems = do
+  -- let WindowState{..} = winState
+  gs@GameState{ camPos } <- readMVar gameState
+  renderContext@RenderContext{ pipelineObjs } <- readMVar renderContextVar
+  viewProjTransform <- viewProjMatrix (extent renderContext) camPos
+  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems renderThreadOwner $ \cmdBuf -> fakeResource $ do
+    withRenderPass renderContext cmdBuf framebuffer $ do
+      renderWorld @Pipelines pipelines pipelineObjs viewProjTransform gs assets cmdBuf
 
 myAppNewWindow :: GLFW.Window -> Resource WindowState
 myAppNewWindow window = Resource $ do
@@ -183,9 +126,12 @@ myAppMainThreadHook _ = do
   return ()
 
 myAppStart :: WindowState -> EngineCapability -> Resource MyAppState
-myAppStart winState@WindowState{ keyEventChan } cap@EngineCapability{ dev } = Resource $ do
-  shaderStages <- auto $ loadShaders cap
-  (materialDSL, pipelineLayout) <- auto $ makePipelineLayouts dev
+myAppStart winState@WindowState{ keyEventChan } cap = Resource $ do
+  (spritePipeline, materialDSL) <- auto $ Sprite.loadPipeline cap
+  colorRectPipeline <- auto $ ColorRect.loadPipeline cap
+  -- TODO the order needs to match the Pipelines type level list, and all needed pipelines need to be in there!
+  -- Maybe derive the type level list from a HList of tagged ProtoPipelines
+  let pipelines = Vector.fromList [spritePipeline, colorRectPipeline]
   assets <- auto $ loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
   gameState <- newMVar initialGameState
@@ -196,21 +142,9 @@ myAppStart winState@WindowState{ keyEventChan } cap@EngineCapability{ dev } = Re
 myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
 myAppNewSwapchain MyAppState{..} swapInfo = Resource $ do
   _ <- tryTakeMVar renderContextVar
-  (framebuffers, nextSems, renderContext) <- auto $ prepareRender cap swapInfo shaderStages pipelineLayout
+  (framebuffers, nextSems, renderContext) <- auto $ prepareRender cap swapInfo pipelines
   putMVar renderContextVar renderContext
   return (framebuffers, nextSems)
-
-myAppRenderFrame :: MyAppState -> RenderFun
-myAppRenderFrame MyAppState{..} framebuffer waitSemsWithStages signalSems = do
-  -- let WindowState{..} = winState
-
-  gs <- readMVar gameState
-  (camPos, objs) <- makeWorld gs assets
-
-  renderContext <- readMVar renderContextVar
-  viewProjTransform <- viewProjMatrix (extent renderContext) camPos
-  postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems renderThreadOwner $ \cmdBuf -> Resource $
-    recordAll renderContext viewProjTransform objs cmdBuf framebuffer
 
 data WindowState
   = WindowState
@@ -220,8 +154,7 @@ data WindowState
 
 data MyAppState
   = MyAppState
-  { shaderStages     :: [VkPipelineShaderStageCreateInfo]
-  , pipelineLayout   :: VkPipelineLayout
+  { pipelines        :: Vector ProtoPipeline
   , cap              :: EngineCapability
   , assets           :: Assets
   , renderContextVar :: MVar RenderContext

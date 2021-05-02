@@ -32,6 +32,7 @@ common basic
     if flag(dev)
         cpp-options: -DDEVELOPMENT
         -- asserts are ignored when optimization is turned on
+        -- cabal passes -O1 by default
         ghc-options: -fno-ignore-asserts
     else
         ghc-options: -O2
@@ -52,6 +53,9 @@ library
                         Vulkyrie.Engine.Simple3D
                         Vulkyrie.Engine.Simple2D
                         Vulkyrie.Engine.Config
+                        Vulkyrie.Engine.Pipeline
+                        Vulkyrie.Engine.Pipeline.Sprite
+                        Vulkyrie.Engine.Pipeline.ColorRect
                         Vulkyrie.GLFW
                         Vulkyrie.Program
                         Vulkyrie.Program.Foreign
@@ -72,6 +76,7 @@ library
                         Vulkyrie.Vulkan.Queue
                         Vulkyrie.Vulkan.PipelineLayout
                         Vulkyrie.Vulkan.Presentation
+                        Vulkyrie.Vulkan.PushConstant
                         Vulkyrie.Vulkan.Shader
                         Vulkyrie.Vulkan.Sync
                         Vulkyrie.Vulkan.UniformBufferObject
@@ -92,6 +97,7 @@ library
                       , template-haskell
                       , text
                       , transformers
+                      , type-errors
                       , unliftio
                       , unliftio-core
                       , vector

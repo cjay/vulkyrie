@@ -1,27 +1,55 @@
 {-# LANGUAGE Strict #-}
+{-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeOperators #-}
 module Vulkyrie.Engine.Simple2D
   ( DescrBindInfo(..)
   , frameSetId
   , materialSetId
   , objectSetId
-  , Object(..)
-  , recordObject
+  , bindMat
   , RenderContext(..)
-  , recordAll
+  , withRenderPass
+  , viewProjMatrix
+  , prepareRender
   ) where
 
-import           Control.Monad
-import           Foreign.Ptr                              (castPtr)
-import           Numeric.DataFrame
-import           Numeric.DataFrame.IO
-
+import Numeric.DataFrame
+    ( Mat44f,
+      (%*),
+      DataFrame(Vec3, Vec2),
+      HomTransform4(translate3),
+      Vec2f )
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
 import           Vulkyrie.Program
 import           Vulkyrie.Program.Foreign
 import           Vulkyrie.Resource
 import           Vulkyrie.Vulkan.Default.RenderPass
+import           Vulkyrie.Utils (orthogonalVk)
+import Data.Vector (Vector)
+import qualified Data.Vector as Vector
+import Vulkyrie.Vulkan.Engine
+import Vulkyrie.Vulkan.Presentation
+import Vulkyrie.Vulkan.Device
+import Vulkyrie.Vulkan.Image
+import Vulkyrie.Vulkan.Default.Pipeline
+import Graphics.Vulkan.Ext
+import Vulkyrie.Vulkan.Framebuffer
+import Vulkyrie.Engine.Pipeline
 
+
+-- | cam pos using (x, y), ortho projection from z 0.1 to 10 excluding boundaries.
+viewProjMatrix :: VkExtent2D -> Vec2f -> Prog r Mat44f
+viewProjMatrix extent (Vec2 x y) = do
+  let width :: Float = fromIntegral $ getField @"width" extent
+      height :: Float = fromIntegral $ getField @"height" extent
+      camPos = Vec3 x y 0
+      view = translate3 (- camPos)
+      camHeight = 5
+      proj = orthogonalVk 0.1 10 (width/height * camHeight) camHeight
+  return $ view %* proj
 
 data DescrBindInfo = DescrBindInfo
   { descrSet       :: VkDescriptorSet
@@ -41,16 +69,8 @@ materialSetId = 1
 objectSetId :: Word32
 objectSetId = 2
 
-
-data Object = Object
-  { modelMatrix      :: Mat44f
-    -- ^ placement in world space
-  , materialBindInfo :: DescrBindInfo
-  }
-
-
-bindDescrSet :: VkCommandBuffer -> VkPipelineLayout -> Word32 -> DescrBindInfo -> Prog r ()
-bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = region $ do
+bindDescrSet :: Word32 -> VkCommandBuffer -> VkPipelineLayout -> DescrBindInfo -> Prog r ()
+bindDescrSet descrSetId cmdBuf pipelineLayout DescrBindInfo{..} = region $ do
   descrSetPtr <- auto $ newArrayRes [descrSet]
   let descrSetCnt = 1
   let dynOffCnt = fromIntegral $ length dynamicOffsets
@@ -58,12 +78,15 @@ bindDescrSet cmdBuf pipelineLayout descrSetId DescrBindInfo{..} = region $ do
   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
     descrSetId descrSetCnt descrSetPtr dynOffCnt dynOffPtr
 
+bindMat :: VkCommandBuffer -> VkPipelineLayout -> DescrBindInfo -> Prog r ()
+bindMat = bindDescrSet materialSetId
+
 
 -- | Update push constants: transformation matrix
-pushTransform :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Prog r ()
-pushTransform cmdBuf pipelineLayout df =
-  liftIO $ thawPinDataFrame df >>= flip withDataFramePtr
-    (vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_VERTEX_BIT 0 64 . castPtr)
+--
+-- Assumes that the transformation matrix is in the push constant range.
+-- pushTransformUnsafe :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Prog r ()
+-- pushTransformUnsafe = pushDF 0 64 VK_SHADER_STAGE_VERTEX_BIT
 
 {-      not in use
 -- | Update push constants: texture index
@@ -73,54 +96,53 @@ pushTexIndex cmdBuf pipelineLayout texIndex = alloca $ \ptr -> do
     liftIO $ vkCmdPushConstants cmdBuf pipelineLayout VK_SHADER_STAGE_FRAGMENT_BIT 64 4 (castPtr ptr)
 -}
 
-recordObject :: VkPipelineLayout -> VkCommandBuffer -> Mat44f -> Object -> Prog r ()
-recordObject pipelineLayout cmdBuf transform Object{..} = do
-  -- not yet:
-  -- liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
-
-  pushTransform cmdBuf pipelineLayout transform
-
-  bindDescrSet cmdBuf pipelineLayout materialSetId materialBindInfo
-
-  liftIO $ vkCmdDraw cmdBuf
-    6 1 0 0 -- vertex count, instance count, first vertex, first instance
-
 
 data RenderContext
   = RenderContext
-  { pipeline       :: VkPipeline
+  { pipelineObjs   :: Vector VkPipeline
   , renderPass     :: VkRenderPass
-  , pipelineLayout :: VkPipelineLayout
   , extent         :: VkExtent2D
   }
 
-recordAll :: RenderContext
-          -> Mat44f
-          -> [Object]
-          -> VkCommandBuffer
-          -> VkFramebuffer
-          -> Prog r ()
-recordAll
-    RenderContext{..} viewProjTransform objects cmdBuf framebuffer = do
-
-  -- render pass
+withRenderPass :: RenderContext -> VkCommandBuffer -> VkFramebuffer -> Prog r () -> Prog r ()
+withRenderPass RenderContext{..} cmdBuf framebuffer prog = do
   let renderPassBeginInfo = createRenderPassBeginInfo renderPass framebuffer extent
   withVkPtr renderPassBeginInfo $ \rpbiPtr ->
     liftIO $ vkCmdBeginRenderPass cmdBuf rpbiPtr VK_SUBPASS_CONTENTS_INLINE
 
-  -- basic drawing commands
-  liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipeline
+  prog
 
-  -- region $ do
-  --   frameDsPtr <- newArrayRes [frameDescrSet]
-  --   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
-  --     -- first set, set count, sets, dyn offset count, dyn offsets
-  --     frameSetId 1 frameDsPtr 0 VK_NULL
-
-  -- objTransforms <- readIORef objTransformsRef
-
-  forM_ objects $ \object ->
-    recordObject pipelineLayout cmdBuf (modelMatrix object %* viewProjTransform) object
-
-  -- finishing up
   liftIO $ vkCmdEndRenderPass cmdBuf
+
+prepareRender :: EngineCapability
+              -> SwapchainInfo
+              -> Vector ProtoPipeline
+              -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)], RenderContext)
+prepareRender cap@EngineCapability{ dev, pdev } swapInfo pipelines = Resource $ do
+  let SwapchainInfo{ swapImgs, swapExtent, swapImgFormat } = swapInfo
+  msaaSamples <- getMaxUsableSampleCount pdev
+  -- to turn off msaa:
+  -- let msaaSamples = VK_SAMPLE_COUNT_1_BIT
+  depthFormat <- findDepthFormat pdev
+
+  swapImgViews <-
+    mapM (\image -> auto $ createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
+  renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+
+  pipelineObjs <- Vector.forM pipelines $ \ProtoPipeline{ shaderStages, pipelineLayout } -> do
+    -- TODO this is the default pipeline creation function. decision should be up to ProtoPipeline instead.
+    pipelineObj <- auto $ createGraphicsPipeline dev swapExtent
+      [] []
+      shaderStages
+      renderPass
+      pipelineLayout
+      msaaSamples
+      True
+    return pipelineObj
+
+  (nextSems, privAttachments) <- auto $ createPrivateAttachments cap swapExtent swapImgFormat msaaSamples
+  framebuffers <- mapM
+    (auto . createFramebuffer dev renderPass swapExtent . (privAttachments <>) . (:[]))
+    swapImgViews
+
+  return (framebuffers, nextSems, RenderContext{ pipelineObjs, renderPass, extent = swapExtent })

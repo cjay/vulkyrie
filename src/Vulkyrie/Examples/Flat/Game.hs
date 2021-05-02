@@ -97,19 +97,21 @@ data GameState
   = GameState
   { camPos :: Vec2f
   , walls :: [Vec2i]
+  , playerPos :: Vec2i
   }
 
 initialGameState :: GameState
 initialGameState = GameState
   { camPos = 0
   , walls = []
+  , playerPos = 0
   }
 
 gameStateUpdate :: GameState -> System' GameState
 gameStateUpdate oldGs = do
   mPos <- cfold (\_ (Player, Position pos) -> Just pos) Nothing
-  let Vec2 x y = case mPos of
+  let playerPos@(Vec2 x y) = case mPos of
         Just pl -> pl
         Nothing -> error "player entity doesn't exist"
   walls <- cfold (\ws (Wall, Position w) -> w:ws) []
-  return oldGs { camPos = Vec2 (fromIntegral x) (fromIntegral y), walls}
+  return oldGs { camPos = Vec2 (fromIntegral x) (fromIntegral y), walls, playerPos }

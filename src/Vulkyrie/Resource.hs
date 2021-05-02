@@ -15,6 +15,7 @@ module Vulkyrie.Resource
   , metaResource
 
   , Resource (..)
+  , fakeResource
   , region
 
   , ResourceOwner
@@ -112,6 +113,9 @@ makeResourceContext :: Prog r ResourceContext
 makeResourceContext = do
   destructorsVar <- newIORef []
   return ResourceContext{..}
+
+fakeResource :: (forall r. Prog r a) -> Resource a
+fakeResource = Resource
 
 -- | Establishes a scope for automatic resource destruction.
 --
