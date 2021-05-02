@@ -1,4 +1,3 @@
-{-# LANGUAGE Strict           #-}
 module Vulkyrie.Vulkan.Default.RenderPass
   ( createPrivateAttachments
   , createRenderPass
