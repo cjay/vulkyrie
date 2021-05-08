@@ -12,7 +12,10 @@ import Vulkyrie.Engine.Pipeline
 import Vulkyrie.Vulkan.Shader (shaderFile)
 import Vulkyrie.Vulkan.Descriptor
 import Vulkyrie.Vulkan.PipelineLayout
+import Vulkyrie.Vulkan.Default.Pipeline (createGraphicsPipeline)
+import Data.Tagged (Tagged(Tagged))
 
+-- | Handle for type-directed selection of pipelines
 data Pipeline
 
 type Fields =
@@ -70,11 +73,19 @@ makePipelineLayout dev = Resource $ do
   return (materialDSL, pipelineLayout)
 
 
-loadPipeline :: EngineCapability -> Resource (ProtoPipeline, VkDescriptorSetLayout)
+loadPipeline :: EngineCapability -> Resource (Tagged Pipeline ProtoPipeline, VkDescriptorSetLayout)
 loadPipeline cap@EngineCapability{ dev } = Resource $ do
   shaderStages <- auto $ loadShaders cap
   (materialDSL, pipelineLayout) <- auto $ makePipelineLayout dev
-  return (ProtoPipeline { shaderStages, pipelineLayout }, materialDSL)
+  let createPipeline renderPass swapExtent msaaSamples =
+        createGraphicsPipeline dev swapExtent
+          [] []
+          shaderStages
+          renderPass
+          pipelineLayout
+          msaaSamples
+          True
+  return (Tagged ProtoPipeline{ pipelineLayout, createPipeline }, materialDSL)
 
 draw :: VkCommandBuffer -> Prog r ()
 draw cmdBuf =

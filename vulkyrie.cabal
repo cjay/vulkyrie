@@ -94,6 +94,7 @@ library
                       , mtl
                       , primitive
                       , safe
+                      , tagged
                       , template-haskell
                       , text
                       , transformers

@@ -1,7 +1,10 @@
 {-# LANGUAGE Strict #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 module Vulkyrie.Examples.Flat
   ( runMyVulkanProgram
   ) where
@@ -32,8 +35,25 @@ import           Vulkyrie.Engine.Pipeline
 import qualified Vulkyrie.Engine.Pipeline.Sprite as Sprite
 import qualified Vulkyrie.Engine.Pipeline.ColorRect as ColorRect
 import Numeric.Matrix (Mat44f)
+import Data.Tagged (Tagged(unTagged))
 
-type Pipelines = NumberElems '[Sprite.Pipeline, ColorRect.Pipeline]
+-- | All pipelines that are in use.
+type PipelineOrder = '[Sprite.Pipeline, ColorRect.Pipeline]
+
+-- | This verifies that the all needed ProtoPipelines were created, and in the right order
+verifyPipelines :: Tagged PipelineOrder [ProtoPipeline] -> [ProtoPipeline]
+verifyPipelines = unTagged
+
+data Pipelines = Pipelines
+  { pipelineObjs :: Vector VkPipeline
+  , pipelineLayouts :: Vector VkPipelineLayout
+  }
+
+instance (PipelineIndex PipelineOrder pipeline pipelineIndex) => PipelineProvider Pipelines pipeline where
+  getPipeline_ Pipelines{ pipelineObjs, pipelineLayouts } =
+    ( pipelineLayouts Vector.! indexVal @pipelineIndex
+    , pipelineObjs Vector.! indexVal @pipelineIndex
+    )
 
 loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Resource Assets
 loadAssets cap@EngineCapability{ dev, descriptorPool } materialDSL = Resource $ do
@@ -59,13 +79,12 @@ data Assets
 
 
 renderWorld ::
-  forall pipelines spritePipelineIndex colorRectPipelineIndex r.
   (
-    PipelineIndex pipelines Sprite.Pipeline spritePipelineIndex,
-    PipelineIndex pipelines ColorRect.Pipeline colorRectPipelineIndex
+    PipelineProvider pipelines Sprite.Pipeline,
+    PipelineProvider pipelines ColorRect.Pipeline
   ) =>
-  Vector ProtoPipeline -> Vector VkPipeline -> Mat44f -> GameState -> Assets -> VkCommandBuffer -> Prog r ()
-renderWorld pipelines pipelineObjs transform GameState{..} Assets{..} cmdBuf = do
+  pipelines -> Mat44f -> GameState -> Assets -> VkCommandBuffer -> Prog r ()
+renderWorld pipelines transform GameState{..} Assets{..} cmdBuf = do
   -- a bit simplistic. when hot loading assets, better filter the objects that depend on them
   events <- takeMVar loadEvents
   notDone <- filterM (fmap not . isDone) events
@@ -74,9 +93,7 @@ renderWorld pipelines pipelineObjs transform GameState{..} Assets{..} cmdBuf = d
 
   when allDone $ do
     do
-      let pipeline = pipelines Vector.! indexVal @spritePipelineIndex
-          ProtoPipeline { pipelineLayout } = pipeline
-          pipelineObj = pipelineObjs Vector.! indexVal @spritePipelineIndex
+      let (pipelineLayout, pipelineObj) = getPipeline @Sprite.Pipeline pipelines
 
       liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineObj
       Sprite.pushTransform cmdBuf pipelineLayout transform
@@ -88,9 +105,7 @@ renderWorld pipelines pipelineObjs transform GameState{..} Assets{..} cmdBuf = d
         Sprite.pushPos cmdBuf pipelineLayout (vec2 (realToFrac x) (realToFrac y))
         Sprite.draw cmdBuf
     do
-      let pipeline = pipelines Vector.! indexVal @colorRectPipelineIndex
-          ProtoPipeline { pipelineLayout } = pipeline
-          pipelineObj = pipelineObjs Vector.! indexVal @colorRectPipelineIndex
+      let (pipelineLayout, pipelineObj) = getPipeline @ColorRect.Pipeline pipelines
 
       liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineObj
       -- TODO ensure in types that only the pushTransform of ColorRect can be used
@@ -108,10 +123,12 @@ myAppRenderFrame MyAppState{..} framebuffer waitSemsWithStages signalSems = do
   -- let WindowState{..} = winState
   gs@GameState{ camPos } <- readMVar gameState
   renderContext@RenderContext{ pipelineObjs } <- readMVar renderContextVar
+  let pipelineLayouts = Vector.map (\ProtoPipeline{ pipelineLayout } -> pipelineLayout) protoPipelines
+      pipelines = Pipelines{ pipelineLayouts, pipelineObjs }
   viewProjTransform <- viewProjMatrix (extent renderContext) camPos
   postWith (cmdCap cap) (cmdQueue cap) waitSemsWithStages signalSems renderThreadOwner $ \cmdBuf -> fakeResource $ do
     withRenderPass renderContext cmdBuf framebuffer $ do
-      renderWorld @Pipelines pipelines pipelineObjs viewProjTransform gs assets cmdBuf
+      renderWorld pipelines viewProjTransform gs assets cmdBuf
 
 myAppNewWindow :: GLFW.Window -> Resource WindowState
 myAppNewWindow window = Resource $ do
@@ -129,9 +146,8 @@ myAppStart :: WindowState -> EngineCapability -> Resource MyAppState
 myAppStart winState@WindowState{ keyEventChan } cap = Resource $ do
   (spritePipeline, materialDSL) <- auto $ Sprite.loadPipeline cap
   colorRectPipeline <- auto $ ColorRect.loadPipeline cap
-  -- TODO the order needs to match the Pipelines type level list, and all needed pipelines need to be in there!
-  -- Maybe derive the type level list from a HList of tagged ProtoPipelines
-  let pipelines = Vector.fromList [spritePipeline, colorRectPipeline]
+  let protoPipelines = Vector.fromList $ verifyPipelines
+        (spritePipeline +: colorRectPipeline +: nilTaggedList)
   assets <- auto $ loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
   gameState <- newMVar initialGameState
@@ -142,7 +158,7 @@ myAppStart winState@WindowState{ keyEventChan } cap = Resource $ do
 myAppNewSwapchain :: MyAppState -> SwapchainInfo -> Resource ([VkFramebuffer], [(VkSemaphore, VkPipelineStageBitmask a)])
 myAppNewSwapchain MyAppState{..} swapInfo = Resource $ do
   _ <- tryTakeMVar renderContextVar
-  (framebuffers, nextSems, renderContext) <- auto $ prepareRender cap swapInfo pipelines
+  (framebuffers, nextSems, renderContext) <- auto $ prepareRender cap swapInfo protoPipelines
   putMVar renderContextVar renderContext
   return (framebuffers, nextSems)
 
@@ -154,7 +170,7 @@ data WindowState
 
 data MyAppState
   = MyAppState
-  { pipelines        :: Vector ProtoPipeline
+  { protoPipelines   :: Vector ProtoPipeline
   , cap              :: EngineCapability
   , assets           :: Assets
   , renderContextVar :: MVar RenderContext

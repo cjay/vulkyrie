@@ -1,8 +1,4 @@
 {-# LANGUAGE Strict #-}
-{-# LANGUAGE MonoLocalBinds #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TypeOperators #-}
 module Vulkyrie.Engine.Simple2D
   ( DescrBindInfo(..)
   , frameSetId
@@ -34,7 +30,6 @@ import Vulkyrie.Vulkan.Engine
 import Vulkyrie.Vulkan.Presentation
 import Vulkyrie.Vulkan.Device
 import Vulkyrie.Vulkan.Image
-import Vulkyrie.Vulkan.Default.Pipeline
 import Graphics.Vulkan.Ext
 import Vulkyrie.Vulkan.Framebuffer
 import Vulkyrie.Engine.Pipeline
@@ -129,16 +124,8 @@ prepareRender cap@EngineCapability{ dev, pdev } swapInfo pipelines = Resource $ 
     mapM (\image -> auto $ createImageView dev image swapImgFormat VK_IMAGE_ASPECT_COLOR_BIT 1) swapImgs
   renderPass <- auto $ createRenderPass dev swapImgFormat depthFormat msaaSamples VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
 
-  pipelineObjs <- Vector.forM pipelines $ \ProtoPipeline{ shaderStages, pipelineLayout } -> do
-    -- TODO this is the default pipeline creation function. decision should be up to ProtoPipeline instead.
-    pipelineObj <- auto $ createGraphicsPipeline dev swapExtent
-      [] []
-      shaderStages
-      renderPass
-      pipelineLayout
-      msaaSamples
-      True
-    return pipelineObj
+  pipelineObjs <- Vector.forM pipelines $ \ProtoPipeline{ createPipeline } ->
+    auto $ createPipeline renderPass swapExtent msaaSamples
 
   (nextSems, privAttachments) <- auto $ createPrivateAttachments cap swapExtent swapImgFormat msaaSamples
   framebuffers <- mapM
