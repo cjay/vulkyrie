@@ -5,11 +5,13 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module Vulkyrie.Examples.Flat
   ( runMyVulkanProgram
   ) where
 
 import           Control.Monad
+import           Control.Monad.Reader
 import Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import qualified Graphics.UI.GLFW         as GLFW
@@ -77,7 +79,6 @@ data Assets
   , materialDescrSets :: [VkDescriptorSet]
   }
 
-
 renderWorld ::
   (
     PipelineProvider pipelines Sprite.Pipeline,
@@ -91,32 +92,26 @@ renderWorld pipelines transform GameState{..} Assets{..} cmdBuf = do
   let allDone = null notDone
   putMVar loadEvents notDone
 
-  when allDone $ do
-    do
-      let (pipelineLayout, pipelineObj) = getPipeline @Sprite.Pipeline pipelines
-
-      liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineObj
-      Sprite.pushTransform cmdBuf pipelineLayout transform
-      bindMat cmdBuf pipelineLayout $ DescrBindInfo (materialDescrSets !! 0) []
-      Sprite.pushSize cmdBuf pipelineLayout $ vec2 1 1
-      Sprite.pushUVPos cmdBuf pipelineLayout $ vec2 0 0
-      Sprite.pushUVSize cmdBuf pipelineLayout $ vec2 1 1
+  when allDone $ runCmd cmdBuf $ do
+    withPipeline @Sprite.Pipeline pipelines $ do
+      Sprite.pushTransform transform
+      bindMat $ DescrBindInfo (materialDescrSets !! 0) []
+      Sprite.pushSize $ vec2 1 1
+      Sprite.pushUVPos $ vec2 0 0
+      Sprite.pushUVSize $ vec2 1 1
       forM_ walls $ \(Vec2 x y) -> do
-        Sprite.pushPos cmdBuf pipelineLayout (vec2 (realToFrac x) (realToFrac y))
-        Sprite.draw cmdBuf
-    do
-      let (pipelineLayout, pipelineObj) = getPipeline @ColorRect.Pipeline pipelines
+        Sprite.pushPos (vec2 (realToFrac x) (realToFrac y))
+        Sprite.draw
 
-      liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineObj
-      -- TODO ensure in types that only the pushTransform of ColorRect can be used
-      ColorRect.pushTransform cmdBuf pipelineLayout transform
+    withPipeline @ColorRect.Pipeline pipelines $ do
+      ColorRect.pushTransform transform
       let Vec2 x y = playerPos
-      ColorRect.pushPos cmdBuf pipelineLayout (vec2 (realToFrac x + 0.5) (realToFrac y + 0.5))
-      ColorRect.pushSize cmdBuf pipelineLayout $ vec2 1 1.2
-      ColorRect.pushCenter cmdBuf pipelineLayout $ vec2 0.5 0.6
-      ColorRect.pushTurns cmdBuf pipelineLayout $ scalar (1/16)
-      ColorRect.pushColor cmdBuf pipelineLayout $ vec4 0.8 0.5 0.7 0.8
-      ColorRect.draw cmdBuf
+      ColorRect.pushPos (vec2 (realToFrac x + 0.5) (realToFrac y + 0.5))
+      ColorRect.pushSize $ vec2 1 1.2
+      ColorRect.pushCenter $ vec2 0.5 0.6
+      ColorRect.pushTurns $ scalar (1/16)
+      ColorRect.pushColor $ vec4 0.8 0.5 0.7 0.8
+      ColorRect.draw
 
 myAppRenderFrame :: MyAppState -> RenderFun
 myAppRenderFrame MyAppState{..} framebuffer waitSemsWithStages signalSems = do

@@ -64,8 +64,8 @@ materialSetId = 1
 objectSetId :: Word32
 objectSetId = 2
 
-bindDescrSet :: Word32 -> VkCommandBuffer -> VkPipelineLayout -> DescrBindInfo -> Prog r ()
-bindDescrSet descrSetId cmdBuf pipelineLayout DescrBindInfo{..} = region $ do
+bindDescrSet :: Word32 -> DescrBindInfo -> PlCmd r ()
+bindDescrSet descrSetId DescrBindInfo{..} = plCmd $ \pipelineLayout cmdBuf -> region $ do
   descrSetPtr <- auto $ newArrayRes [descrSet]
   let descrSetCnt = 1
   let dynOffCnt = fromIntegral $ length dynamicOffsets
@@ -73,7 +73,7 @@ bindDescrSet descrSetId cmdBuf pipelineLayout DescrBindInfo{..} = region $ do
   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
     descrSetId descrSetCnt descrSetPtr dynOffCnt dynOffPtr
 
-bindMat :: VkCommandBuffer -> VkPipelineLayout -> DescrBindInfo -> Prog r ()
+bindMat :: DescrBindInfo -> PlCmd r ()
 bindMat = bindDescrSet materialSetId
 
 

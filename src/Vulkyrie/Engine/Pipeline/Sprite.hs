@@ -26,19 +26,19 @@ type Fields =
     "uvSize" ::: Vec2f
   ]
 
-pushTransform :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Prog r ()
+pushTransform :: Mat44f -> PlCmd r ()
 pushTransform = pushField @Fields @"transform" VK_SHADER_STAGE_VERTEX_BIT
 
-pushPos :: VkCommandBuffer -> VkPipelineLayout -> Vec2f -> Prog r ()
+pushPos :: Vec2f -> PlCmd r ()
 pushPos = pushField @Fields @"pos" VK_SHADER_STAGE_VERTEX_BIT
 
-pushSize :: VkCommandBuffer -> VkPipelineLayout -> Vec2f -> Prog r ()
+pushSize :: Vec2f -> PlCmd r ()
 pushSize = pushField @Fields @"size" VK_SHADER_STAGE_VERTEX_BIT
 
-pushUVPos :: VkCommandBuffer -> VkPipelineLayout -> Vec2f -> Prog r ()
+pushUVPos :: Vec2f -> PlCmd r ()
 pushUVPos = pushField @Fields @"uvPos" VK_SHADER_STAGE_VERTEX_BIT
 
-pushUVSize :: VkCommandBuffer -> VkPipelineLayout -> Vec2f -> Prog r ()
+pushUVSize :: Vec2f -> PlCmd r ()
 pushUVSize = pushField @Fields @"uvSize" VK_SHADER_STAGE_VERTEX_BIT
 
 
@@ -87,7 +87,7 @@ loadPipeline cap@EngineCapability{ dev } = Resource $ do
           True
   return (Tagged ProtoPipeline{ pipelineLayout, createPipeline }, materialDSL)
 
-draw :: VkCommandBuffer -> Prog r ()
-draw cmdBuf =
+draw :: PlCmd r ()
+draw = plCmd $ \_ cmdBuf ->
   liftIO $ vkCmdDraw cmdBuf
     6 1 0 0 -- vertex count, instance count, first vertex, first instance

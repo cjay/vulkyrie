@@ -26,22 +26,22 @@ type Fields =
     "turns" ::: Scalar Float
   ]
 
-pushTransform :: VkCommandBuffer -> VkPipelineLayout -> Mat44f -> Prog r ()
+pushTransform :: Mat44f -> PlCmd r ()
 pushTransform = pushField @Fields @"transform" VK_SHADER_STAGE_VERTEX_BIT
 
-pushPos :: VkCommandBuffer -> VkPipelineLayout -> Vec2f -> Prog r ()
+pushPos :: Vec2f -> PlCmd r ()
 pushPos = pushField @Fields @"pos" VK_SHADER_STAGE_VERTEX_BIT
 
-pushSize :: VkCommandBuffer -> VkPipelineLayout -> Vec2f -> Prog r ()
+pushSize :: Vec2f -> PlCmd r ()
 pushSize = pushField @Fields @"size" VK_SHADER_STAGE_VERTEX_BIT
 
-pushCenter :: VkCommandBuffer -> VkPipelineLayout -> Vec2f -> Prog r ()
+pushCenter :: Vec2f -> PlCmd r ()
 pushCenter = pushField @Fields @"center" VK_SHADER_STAGE_VERTEX_BIT
 
-pushTurns :: VkCommandBuffer -> VkPipelineLayout -> Scalar Float -> Prog r ()
+pushTurns :: Scalar Float -> PlCmd r ()
 pushTurns = pushField @Fields @"turns" VK_SHADER_STAGE_VERTEX_BIT
 
-pushColor :: VkCommandBuffer -> VkPipelineLayout -> Vec4f -> Prog r ()
+pushColor :: Vec4f -> PlCmd r ()
 pushColor = pushField @Fields @"color" VK_SHADER_STAGE_VERTEX_BIT
 
 loadShaders :: EngineCapability -> Resource [VkPipelineShaderStageCreateInfo]
@@ -76,7 +76,7 @@ loadPipeline cap@EngineCapability{ dev } = Resource $ do
           True
   return $ Tagged ProtoPipeline{ pipelineLayout, createPipeline }
 
-draw :: VkCommandBuffer -> Prog r ()
-draw cmdBuf =
+draw :: PlCmd r ()
+draw = plCmd $ \_ cmdBuf ->
   liftIO $ vkCmdDraw cmdBuf
     6 1 0 0 -- vertex count, instance count, first vertex, first instance

@@ -33,6 +33,7 @@ import Graphics.Vulkan (VkPipelineLayout)
 import Numeric.Dimensions (Dimensions, Head, Last)
 import Numeric.DataFrame.IO (withDataFramePtr, thawPinDataFrame)
 import Foreign.Ptr (castPtr)
+import Vulkyrie.Vulkan.Engine
 
 type family Product (a :: [Nat]) :: Nat where
   Product (a:as) = a * Product as
@@ -136,11 +137,11 @@ pushDF :: (Dimensions dims, PrimArray t (DataFrame t dims))
        => Word32
        -> Word32
        -> VkShaderStageFlags
-       -> VkCommandBuffer
-       -> VkPipelineLayout
        -> DataFrame t dims
+       -> VkPipelineLayout
+       -> VkCommandBuffer
        -> Prog r ()
-pushDF offset len shaderStages cmdBuf pipelineLayout df =
+pushDF offset len shaderStages df pipelineLayout cmdBuf =
   liftIO $ thawPinDataFrame df >>= flip withDataFramePtr
     (vkCmdPushConstants cmdBuf pipelineLayout shaderStages offset len . castPtr)
 {-# INLINE pushDF #-}
@@ -154,11 +155,9 @@ pushField ::
     _
   ) =>
        VkShaderStageFlags
-    -> VkCommandBuffer
-    -> VkPipelineLayout
     -> DataFrame _t _dims
-    -> Prog _r ()
-pushField shaderStages cmdBuf pipelineLayout df =
+    -> PlCmd _r ()
+pushField shaderStages df =
   let (offset, len) = place @fields @f
-   in pushDF offset len shaderStages cmdBuf pipelineLayout df
+   in plCmd $ pushDF offset len shaderStages df
 {-# INLINE pushField #-}
