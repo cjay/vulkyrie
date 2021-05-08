@@ -64,7 +64,7 @@ materialSetId = 1
 objectSetId :: Word32
 objectSetId = 2
 
-bindDescrSet :: Word32 -> DescrBindInfo -> PlCmd r ()
+bindDescrSet :: Word32 -> DescrBindInfo -> PlCmd p r ()
 bindDescrSet descrSetId DescrBindInfo{..} = plCmd $ \pipelineLayout cmdBuf -> region $ do
   descrSetPtr <- auto $ newArrayRes [descrSet]
   let descrSetCnt = 1
@@ -73,7 +73,7 @@ bindDescrSet descrSetId DescrBindInfo{..} = plCmd $ \pipelineLayout cmdBuf -> re
   liftIO $ vkCmdBindDescriptorSets cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineLayout
     descrSetId descrSetCnt descrSetPtr dynOffCnt dynOffPtr
 
-bindMat :: DescrBindInfo -> PlCmd r ()
+bindMat :: DescrBindInfo -> PlCmd p r ()
 bindMat = bindDescrSet materialSetId
 
 

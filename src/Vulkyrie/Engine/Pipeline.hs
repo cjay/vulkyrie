@@ -20,8 +20,9 @@ import GHC.TypeLits (Nat, ErrorMessage (ShowType))
 import Type.Errors ( TypeError, ErrorMessage(Text, (:<>:)) )
 import Graphics.Vulkan.Core_1_0
 import Vulkyrie.Resource (Resource)
-import Control.Monad.Reader (MonadReader (ask), ReaderT (runReaderT))
+import Control.Monad.Reader (MonadReader (ask))
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import Vulkyrie.Vulkan.Engine
 
 -- Pairs each element with a number starting at 0, usable as array indices
 type NumberElems elems = NumberElems_ elems '[] 0
@@ -139,14 +140,11 @@ infixr 5 +:
 
 {-# INLINE withPipeline #-}
 withPipeline ::
-  forall pipeline provider m a.
-  ( PipelineProvider provider pipeline
-  , MonadReader VkCommandBuffer m
-  , MonadIO m
-  ) =>
-  provider -> ReaderT VkPipelineLayout m a -> m a
+  forall pipeline provider r a.
+  (PipelineProvider provider pipeline) =>
+  provider -> PlCmd pipeline r a -> Cmd r a
 withPipeline provider plAction = do
   let (pipelineLayout, pipelineObj) = getPipeline @pipeline provider
   cmdBuf <- ask
   liftIO $ vkCmdBindPipeline cmdBuf VK_PIPELINE_BIND_POINT_GRAPHICS pipelineObj
-  runReaderT plAction pipelineLayout
+  runPl pipelineLayout plAction

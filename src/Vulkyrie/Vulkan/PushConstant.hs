@@ -156,7 +156,7 @@ pushField ::
   ) =>
        VkShaderStageFlags
     -> DataFrame _t _dims
-    -> PlCmd _r ()
+    -> PlCmd _p _r ()
 pushField shaderStages df =
   let (offset, len) = place @fields @f
    in plCmd $ pushDF offset len shaderStages df

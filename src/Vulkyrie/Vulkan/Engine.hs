@@ -1,4 +1,5 @@
 {-# LANGUAGE Strict #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Vulkyrie.Vulkan.Engine where
 
 import           Graphics.Vulkan
@@ -26,19 +27,19 @@ data EngineCapability = EngineCapability
 
 
 type Cmd r = ReaderT VkCommandBuffer (Prog r)
-type PlCmd r = ReaderT VkPipelineLayout (Cmd r)
+newtype PlCmd p r a = PlCmd (ReaderT VkPipelineLayout (Cmd r) a) deriving (Functor, Applicative, Monad)
 
 cmd :: (VkCommandBuffer -> Prog r a) -> Cmd r a
 cmd = ReaderT
 
-plCmd :: (VkPipelineLayout -> VkCommandBuffer -> Prog r a) -> PlCmd r a
-plCmd = ReaderT . (ReaderT .)
+plCmd :: (VkPipelineLayout -> VkCommandBuffer -> Prog r a) -> PlCmd p r a
+plCmd = PlCmd . ReaderT . (ReaderT .)
 
 runCmd :: VkCommandBuffer -> Cmd r a -> Prog r a
 runCmd = flip runReaderT
 
-runPl :: VkPipelineLayout -> PlCmd r a -> Cmd r a
-runPl = flip runReaderT
+runPl :: VkPipelineLayout -> PlCmd p r a -> Cmd r a
+runPl pipelineLayout (PlCmd plAction) = runReaderT plAction pipelineLayout
 
-runPlCmd :: VkPipelineLayout -> VkCommandBuffer -> PlCmd r a -> Prog r a
+runPlCmd :: VkPipelineLayout -> VkCommandBuffer -> PlCmd p r a -> Prog r a
 runPlCmd pipelineLayout cmdBuf = runCmd cmdBuf . runPl pipelineLayout
