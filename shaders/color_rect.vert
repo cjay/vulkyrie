@@ -3,11 +3,11 @@
 
 layout( push_constant ) uniform Push {
   mat4 transform;
-  vec4 color;
-  vec2 pos;
-  vec2 size;
-  vec2 center; // rotation/placement center in sized rectangle
+  vec3 pos;
   float turns; // angle in multiples of tau
+  vec2 center; // rotation/placement center in sized rectangle
+  vec2 size;
+  vec4 color;
 };
 
 // a square with top left at origin and edge length 1
@@ -39,6 +39,6 @@ mat2 rotMat(float ts) {
 }
 
 void main() {
-  gl_Position = transform * vec4(pos + rotMat(turns) * (size * vertices[gl_VertexIndex] - center), 1.0, 1.0);
+  gl_Position = transform * vec4(pos.xy + rotMat(turns) * (size * vertices[gl_VertexIndex] - center), pos.z, 1.0);
   outColor = color;
 }

@@ -3,7 +3,9 @@
 
 layout( push_constant ) uniform Push {
   mat4 transform;
-  vec2 pos;
+  vec3 pos;
+  float turns; // angle in multiples of tau
+  vec2 center; // rotation/placement center in sized rectangle
   vec2 size;
   vec2 uvPos;
   vec2 uvSize;
@@ -25,7 +27,20 @@ out gl_PerVertex {
   vec4 gl_Position;
 };
 
+float tau = 6.283185307179586;
+
+mat2 rotMat(float ts) {
+  float angle = ts * tau;
+	float s = sin(angle);
+	float c = cos(angle);
+	return mat2(
+		c, -s,
+		s, c
+	);
+}
+
+
 void main() {
-  gl_Position = transform * vec4(pos + size * vertices[gl_VertexIndex], 1.0, 1.0);
+  gl_Position = transform * vec4(pos.xy + rotMat(turns) * (size * vertices[gl_VertexIndex] - center), pos.z, 1.0);
   fragTexCoord = uvPos + uvSize * vertices[gl_VertexIndex];
 }

@@ -19,17 +19,17 @@ data Pipeline
 
 type Fields =
   [ "transform" ::: Mat44f,
-    "color" ::: Vec4f,
-    "pos" ::: Vec2f,
-    "size" ::: Vec2f,
+    "pos" ::: Vec3f,
+    "turns" ::: Scalar Float,
     "center" ::: Vec2f,
-    "turns" ::: Scalar Float
+    "size" ::: Vec2f,
+    "color" ::: Vec4f
   ]
 
 pushTransform :: Mat44f -> PlCmd Pipeline r ()
 pushTransform = pushField @Fields @"transform" VK_SHADER_STAGE_VERTEX_BIT
 
-pushPos :: Vec2f -> PlCmd Pipeline r ()
+pushPos :: Vec3f -> PlCmd Pipeline r ()
 pushPos = pushField @Fields @"pos" VK_SHADER_STAGE_VERTEX_BIT
 
 pushSize :: Vec2f -> PlCmd Pipeline r ()

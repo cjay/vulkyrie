@@ -20,7 +20,9 @@ data Pipeline
 
 type Fields =
   [ "transform" ::: Mat44f,
-    "pos" ::: Vec2f,
+    "pos" ::: Vec3f,
+    "turns" ::: Scalar Float,
+    "center" ::: Vec2f,
     "size" ::: Vec2f,
     "uvPos" ::: Vec2f,
     "uvSize" ::: Vec2f
@@ -29,11 +31,17 @@ type Fields =
 pushTransform :: Mat44f -> PlCmd Pipeline r ()
 pushTransform = pushField @Fields @"transform" VK_SHADER_STAGE_VERTEX_BIT
 
-pushPos :: Vec2f -> PlCmd Pipeline r ()
+pushPos :: Vec3f -> PlCmd Pipeline r ()
 pushPos = pushField @Fields @"pos" VK_SHADER_STAGE_VERTEX_BIT
 
 pushSize :: Vec2f -> PlCmd Pipeline r ()
 pushSize = pushField @Fields @"size" VK_SHADER_STAGE_VERTEX_BIT
+
+pushCenter :: Vec2f -> PlCmd Pipeline r ()
+pushCenter = pushField @Fields @"center" VK_SHADER_STAGE_VERTEX_BIT
+
+pushTurns :: Scalar Float -> PlCmd Pipeline r ()
+pushTurns = pushField @Fields @"turns" VK_SHADER_STAGE_VERTEX_BIT
 
 pushUVPos :: Vec2f -> PlCmd Pipeline r ()
 pushUVPos = pushField @Fields @"uvPos" VK_SHADER_STAGE_VERTEX_BIT

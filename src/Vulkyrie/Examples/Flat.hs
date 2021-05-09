@@ -17,7 +17,7 @@ import qualified Data.Vector as Vector
 import qualified Graphics.UI.GLFW         as GLFW
 import           Graphics.Vulkan
 import           Graphics.Vulkan.Core_1_0
-import Numeric.DataFrame ( DataFrame(Vec2), Vector2(vec2), vec4, scalar )
+import Numeric.DataFrame ( DataFrame(Vec2), Vector2(vec2), vec4, scalar, Vector3 (vec3) )
 import           UnliftIO.Chan
 import           UnliftIO.MVar
 
@@ -97,16 +97,18 @@ renderWorld pipelines transform GameState{..} Assets{..} cmdBuf = do
       Sprite.pushTransform transform
       bindMat $ DescrBindInfo (materialDescrSets !! 0) []
       Sprite.pushSize $ vec2 1 1
+      Sprite.pushCenter $ vec2 0 0
+      Sprite.pushTurns $ scalar 0
       Sprite.pushUVPos $ vec2 0 0
       Sprite.pushUVSize $ vec2 1 1
       forM_ walls $ \(Vec2 x y) -> do
-        Sprite.pushPos (vec2 (realToFrac x) (realToFrac y))
+        Sprite.pushPos (vec3 (realToFrac x) (realToFrac y) 1.0)
         Sprite.draw
 
     withPipeline @ColorRect.Pipeline pipelines $ do
       ColorRect.pushTransform transform
       let Vec2 x y = playerPos
-      ColorRect.pushPos (vec2 (realToFrac x + 0.5) (realToFrac y + 0.5))
+      ColorRect.pushPos (vec3 (realToFrac x + 0.5) (realToFrac y + 0.5) 1.0)
       ColorRect.pushSize $ vec2 1 1.2
       ColorRect.pushCenter $ vec2 0.5 0.6
       ColorRect.pushTurns $ scalar (1/16)
