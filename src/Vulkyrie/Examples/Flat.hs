@@ -40,7 +40,7 @@ import Numeric.Matrix (Mat44f)
 import Data.Tagged (Tagged(unTagged))
 
 -- | All pipelines that are in use.
-type PipelineOrder = '[Sprite.Pipeline, ColorRect.Pipeline]
+type PipelineOrder = '[Sprite.AlphaBlendPipeline, Sprite.AlphaDiscardPipeline, Sprite.OpaquePipeline, ColorRect.Pipeline]
 
 -- | This verifies that the all needed ProtoPipelines were created, and in the right order
 verifyPipelines :: Tagged PipelineOrder [ProtoPipeline] -> [ProtoPipeline]
@@ -59,7 +59,7 @@ instance (PipelineIndex PipelineOrder pipeline pipelineIndex) => PipelineProvide
 
 loadAssets :: EngineCapability -> VkDescriptorSetLayout -> Resource Assets
 loadAssets cap@EngineCapability{ dev, descriptorPool } materialDSL = Resource $ do
-  let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg", "sprite.png"]
+  let texturePaths = map ("textures/" ++) ["texture.jpg", "texture2.jpg", "sprite.png", "sun.png"]
   (textureReadyEvents, descrTextureInfos) <- unzip <$> mapM
     (auto . createTextureFromFile cap True) texturePaths
 
@@ -81,7 +81,9 @@ data Assets
 
 renderWorld ::
   (
-    PipelineProvider pipelines Sprite.Pipeline,
+    PipelineProvider pipelines Sprite.AlphaBlendPipeline,
+    PipelineProvider pipelines Sprite.AlphaDiscardPipeline,
+    PipelineProvider pipelines Sprite.OpaquePipeline,
     PipelineProvider pipelines ColorRect.Pipeline
   ) =>
   pipelines -> Mat44f -> GameState -> Assets -> VkCommandBuffer -> Prog r ()
@@ -93,7 +95,22 @@ renderWorld pipelines transform GameState{..} Assets{..} cmdBuf = do
   putMVar loadEvents notDone
 
   when allDone $ runCmd cmdBuf $ do
-    withPipeline @Sprite.Pipeline pipelines $ do
+    -- sprite.png has only alpha 0 or 1. visible in front of walls thanks to depth write.
+    -- z=1
+    withPipeline @Sprite.AlphaDiscardPipeline pipelines $ do
+      Sprite.pushTransform transform
+      bindMat $ DescrBindInfo (materialDescrSets !! 2) []
+      Sprite.pushSize $ vec2 0.25 0.25
+      Sprite.pushCenter $ vec2 0 0
+      Sprite.pushTurns $ scalar 0
+      Sprite.pushUVPos $ vec2 0 0
+      Sprite.pushUVSize $ vec2 1 1
+      let Vec2 x y = playerPos
+      Sprite.pushPos (vec3 (realToFrac x + 0.25) (realToFrac y + 0.25) 1.0)
+      Sprite.draw
+
+    -- walls at z=2
+    withPipeline @Sprite.OpaquePipeline pipelines $ do
       Sprite.pushTransform transform
       bindMat $ DescrBindInfo (materialDescrSets !! 0) []
       Sprite.pushSize $ vec2 1 1
@@ -102,18 +119,33 @@ renderWorld pipelines transform GameState{..} Assets{..} cmdBuf = do
       Sprite.pushUVPos $ vec2 0 0
       Sprite.pushUVSize $ vec2 1 1
       forM_ walls $ \(Vec2 x y) -> do
-        Sprite.pushPos (vec3 (realToFrac x) (realToFrac y) 1.0)
+        Sprite.pushPos (vec3 (realToFrac x) (realToFrac y) 2.0)
         Sprite.draw
 
     withPipeline @ColorRect.Pipeline pipelines $ do
       ColorRect.pushTransform transform
-      let Vec2 x y = playerPos
+      let Vec2 x y = playerPos - vec2 1 1
       ColorRect.pushPos (vec3 (realToFrac x + 0.5) (realToFrac y + 0.5) 1.0)
       ColorRect.pushSize $ vec2 1 1.2
       ColorRect.pushCenter $ vec2 0.5 0.6
       ColorRect.pushTurns $ scalar (1/16)
       ColorRect.pushColor $ vec4 0.8 0.5 0.7 0.8
       ColorRect.draw
+
+    -- sun with transparent aura
+    -- z=1.5, overlapped by sprite.png thanks to depth test
+    withPipeline @Sprite.AlphaBlendPipeline pipelines $ do
+      Sprite.pushTransform transform
+      bindMat $ DescrBindInfo (materialDescrSets !! 3) []
+      Sprite.pushSize $ vec2 1 1
+      Sprite.pushCenter $ vec2 0 0
+      Sprite.pushTurns $ scalar 0
+      Sprite.pushUVPos $ vec2 0 0
+      Sprite.pushUVSize $ vec2 1 1
+      let Vec2 x y = playerPos
+      Sprite.pushPos (vec3 (realToFrac x) (realToFrac y) 1.5)
+      Sprite.draw
+
 
 myAppRenderFrame :: MyAppState -> RenderFun
 myAppRenderFrame MyAppState{..} framebuffer waitSemsWithStages signalSems = do
@@ -141,10 +173,16 @@ myAppMainThreadHook _ = do
 
 myAppStart :: WindowState -> EngineCapability -> Resource MyAppState
 myAppStart winState@WindowState{ keyEventChan } cap = Resource $ do
-  (spritePipeline, materialDSL) <- auto $ Sprite.loadPipeline cap
+  (spriteAlphaBlendPipeline, materialDSL) <- auto $ Sprite.loadPipeline Sprite.AlphaBlend cap
+  (spriteAlphaDiscardPipeline, _) <- auto $ Sprite.loadPipeline Sprite.AlphaDiscard cap
+  (spriteOpaquePipeline, _) <- auto $ Sprite.loadPipeline Sprite.Opaque cap
   colorRectPipeline <- auto $ ColorRect.loadPipeline cap
-  let protoPipelines = Vector.fromList $ verifyPipelines
-        (spritePipeline +: colorRectPipeline +: nilTaggedList)
+  let protoPipelines = Vector.fromList $ verifyPipelines $
+        spriteAlphaBlendPipeline
+        +: spriteAlphaDiscardPipeline
+        +: spriteOpaquePipeline
+        +: colorRectPipeline
+        +: nilTaggedList
   assets <- auto $ loadAssets cap materialDSL
   renderContextVar <- newEmptyMVar
   gameState <- newMVar initialGameState

@@ -124,7 +124,14 @@ createGraphicsPipeline
         $  set @"sType" VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
         &* set @"pNext" VK_NULL
         &* set @"flags" VK_ZERO_FLAGS
-        &* set @"depthTestEnable" (if enableAlpha then VK_FALSE else VK_TRUE)
+        -- Turning this off makes only sense when everything behind has already
+        -- been drawn and nothing in front of it has been drawn yet. Leaving it
+        -- on when alpha blending allows things in front to be already drawn, so
+        -- drawing transparent stuff can be postponed until after everything else.
+        &* set @"depthTestEnable" VK_TRUE
+        -- Not needed with alpha blending because everything behind has already
+        -- been drawn, and transparent things have to be in z-order relative to
+        -- each other
         &* set @"depthWriteEnable" (if enableAlpha then VK_FALSE else VK_TRUE)
         &* set @"depthCompareOp" VK_COMPARE_OP_LESS
         &* set @"depthBoundsTestEnable" VK_FALSE
