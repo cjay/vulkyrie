@@ -19,12 +19,13 @@
 
 module Vulkyrie.Vulkan.PushConstant where
 
+import Data.Int
 import Data.Kind (Type, Constraint)
 import Data.Type.Lits (Symbol, type (*), type (+), type (-), natVal, KnownNat)
 import Data.Proxy ( Proxy(Proxy) )
-import GHC.TypeLits (Nat)
+import GHC.TypeLits (Nat, Mod, ErrorMessage (ShowType))
 import GHC.Word ( Word8, Word16, Word32, Word64 )
-import Numeric.DataFrame ( DataFrame, PrimArray )
+import Numeric.DataFrame ( DataFrame, PrimArray, Scalar, Vector, Matrix )
 import Type.Errors ( TypeError, ErrorMessage(Text, (:<>:)) )
 import Vulkyrie.Program
 import Graphics.Vulkan.Core_1_0 (VkShaderStageFlags, vkCmdPushConstants)
@@ -35,6 +36,17 @@ import Numeric.DataFrame.IO (withDataFramePtr, thawPinDataFrame)
 import Foreign.Ptr (castPtr)
 import Vulkyrie.Vulkan.Engine
 
+-- wrapper to differentiate vectors from arrays, for different base alignment
+newtype GpuArray t n = GpuArray (ArrayType t n)
+
+type family ArrayType t n where
+  ArrayType (DataFrame t' dims) n = DataFrame t' (n ': dims)
+  ArrayType t n = DataFrame t '[n]
+
+-- rows on GPU become columns in DataFrames and vice versa
+-- glsl reads column-major by default and is column-major internally
+type GlslMatrix t cols rows = Matrix t rows cols
+
 type family Product (a :: [Nat]) :: Nat where
   Product (a:as) = a * Product as
   Product '[] = 1
@@ -44,9 +56,51 @@ type family SizeOf a :: Nat where
   SizeOf Word16 = 2
   SizeOf Word32 = 4
   SizeOf Word64 = 8
+  SizeOf Int8 = 1
+  SizeOf Int16 = 2
+  SizeOf Int32 = 4
+  SizeOf Int64 = 8
   SizeOf Float = 4
   SizeOf Double = 8
   SizeOf (DataFrame t dims) = Product dims * SizeOf t
+  SizeOf (GpuArray t n) = SizeOf (ArrayType t n)
+
+-- size of matrix rows (= columns in glsl) or array elements
+type ElemSize t = ElemSize_ (SizeOf t) (AlignmentOf t) (Mod (SizeOf t) (AlignmentOf t))
+type family ElemSize_ size alignment rem where
+  ElemSize_ size _ 0 = size
+  ElemSize_ size alignment rem = size + alignment - rem
+
+type family GpuSizeOf a :: Nat where
+  GpuSizeOf (Matrix t rows cols) = rows * ElemSize (Vector t cols)
+  GpuSizeOf (GpuArray t n) = n * ElemSize t
+  GpuSizeOf x = SizeOf x
+
+-- GPU alignment for std430 layout (note: not allowed for uniform buffers)
+type family AlignmentOf a :: Nat where
+  AlignmentOf (Scalar a) = SizeOf a
+  AlignmentOf (Vector t 2) = SizeOf t * 2
+  AlignmentOf (Vector t 3) = SizeOf t * 4
+  AlignmentOf (Vector t 4) = SizeOf t * 4
+  AlignmentOf (Matrix t rows cols) = AlignmentOf (Vector t cols)
+  AlignmentOf (GpuArray t n) = AlignmentOf t
+
+type VerifyOffset (field :: Symbol) (t :: Type) (offset :: Nat) =
+  VerifyOffset_ (Mod offset (AlignmentOf t)) (AlignmentOf t) field offset
+
+type family VerifyOffset_ rem alignment field offset where
+  VerifyOffset_ 0 _ _ offset = offset
+  VerifyOffset_ rem alignment field _ = TypeError
+    ('Text "Field " ':<>: 'Text field ':<>: 'Text " has wrong alignment. Reorder fields or insert padding of "
+      ':<>: 'ShowType (alignment - rem) ':<>: 'Text " bytes before the field.")
+
+type VerifyType t = VerifyType_ t (SizeOf t) (GpuSizeOf t)
+
+type family VerifyType_ t size gpuSize where
+  VerifyType_ t s s = t
+  VerifyType_ t s gs = TypeError
+    ('Text "The type " ':<>: 'ShowType t
+      ':<>: 'Text " can't be used in a field because the GPU equivalent needs internal padding.")
 
 -- TODO could encode the shader stage flags in the field list, like:
 -- data Field = Field Symbol Type | StageRangeBegin ShaderStage | StageRangeEnd ShaderStage
@@ -68,7 +122,7 @@ type family FieldType (fields :: [Field]) (field :: Symbol) :: Type where
 type Place fields f = Place_ fields f 0
 type family Place_ (fields :: [Field]) (f :: Symbol) (current :: Nat) :: (Nat, Nat) where
   Place_ '[] f cur = TypeError ('Text "Field not found: " ':<>: 'Text f)
-  Place_ (f ::: t : _) f cur = '(cur, SizeOf t)
+  Place_ (f ::: t : _) f cur = '(VerifyOffset f t cur, SizeOf (VerifyType t))
   Place_ (_ ::: t : xs) f cur = Place_ xs f (cur + SizeOf t)
 
 type HasPlacement (fields :: [Field]) (f :: Symbol) (offset :: Nat) (len :: Nat) =

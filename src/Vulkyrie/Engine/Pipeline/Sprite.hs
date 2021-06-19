@@ -37,13 +37,26 @@ data AlphaBlend
 --
 -- Having discard in a shader prevents certain optimizations in hardware. The
 -- cost of this has to be weighted against the cost of sorting the draw calls by
--- depth.
+-- depth and having more pipeline switches as a consequence of that.
 data AlphaDiscard
 
 -- | Alpha blend off, depth write on
 --
 -- Can be drawn in any order relative to anything else.
 data Opaque
+
+class KnownMode m where
+  modeVal :: Mode m
+
+instance KnownMode AlphaBlend where
+  modeVal = AlphaBlend
+
+instance KnownMode AlphaDiscard where
+  modeVal = AlphaDiscard
+
+instance KnownMode Opaque where
+  modeVal = Opaque
+
 
 type Fields =
   [ "transform" ::: Mat44f,
